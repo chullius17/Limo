@@ -96,7 +96,8 @@ def _launch_cv(context):
             )),
         ])
     if start_rviz:
-        config_dir = os.path.join(get_package_share_directory('cv_package'), 'config')
+        config_dir = os.path.join(
+            get_package_share_directory('limo_rviz'), 'config')
         nodes.append(Node(
             package='rviz2', executable='rviz2', name='cv_rviz',
             output='screen',

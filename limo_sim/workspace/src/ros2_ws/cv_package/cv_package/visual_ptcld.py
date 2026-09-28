@@ -16,7 +16,6 @@ from sensor_msgs.msg import (
     CompressedImage,
     Image,
     PointCloud2,
-    PointField,
 )
 import cv2
 from cv_bridge import CvBridge
@@ -30,8 +29,12 @@ from collections import deque
 from cv_package.boardwalk import (
     BOARDWALK_COUNTS, BOARDWALK_TIMINGS, BoardwalkClassifier,
 )
-from cv_package.cloud_cpu import RayCache, transform_xy, voxel_groups
-from array import array
+from cv_package import cloud_pipeline
+from cv_package.cloud_cpu import RayCache
+from cv_package.cloud_message import (
+    CLOUD_FIELDS as POINT_CLOUD_FIELDS,
+    make_pointcloud2,
+)
 
 
 CPU_PROFILE_FIELDS = (
@@ -52,29 +55,15 @@ PUBLISHED_CLASS_COUNTS = (
 
 class VisualPtcld(Node):
 
-    LABEL_INVALID = np.uint8(0)
-    LABEL_BLUE = np.uint8(1)
-    LABEL_TURQUOISE = np.uint8(2)
-    LABEL_BACKGROUND = np.uint8(3)
-    LABEL_BOARDWALK = np.uint8(4)
-    LABEL_INTERIOR_BLUE = np.uint8(5)
-    LABEL_INTERIOR_BOARDWALK = np.uint8(6)
-    CLOUD_DTYPE = np.dtype({
-        'names': ('x', 'y', 'z', 'class_id'),
-        'formats': ('<f4', '<f4', '<f4', 'u1'),
-        'offsets': (0, 4, 8, 12),
-        'itemsize': 16,
-    })
-    CLOUD_FIELDS = [
-        PointField(
-            name='x', offset=0, datatype=PointField.FLOAT32, count=1),
-        PointField(
-            name='y', offset=4, datatype=PointField.FLOAT32, count=1),
-        PointField(
-            name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-        PointField(
-            name='class_id', offset=12, datatype=PointField.UINT8, count=1),
-    ]
+    LABEL_INVALID = cloud_pipeline.LABEL_INVALID
+    LABEL_BLUE = cloud_pipeline.LABEL_BLUE
+    LABEL_TURQUOISE = cloud_pipeline.LABEL_TURQUOISE
+    LABEL_BACKGROUND = cloud_pipeline.LABEL_BACKGROUND
+    LABEL_BOARDWALK = cloud_pipeline.LABEL_BOARDWALK
+    LABEL_INTERIOR_BLUE = cloud_pipeline.LABEL_INTERIOR_BLUE
+    LABEL_INTERIOR_BOARDWALK = cloud_pipeline.LABEL_INTERIOR_BOARDWALK
+    CLOUD_DTYPE = cloud_pipeline.CLOUD_DTYPE
+    CLOUD_FIELDS = POINT_CLOUD_FIELDS
 
     def __init__(self):
         super().__init__('visual_ptcld')
@@ -326,84 +315,19 @@ class VisualPtcld(Node):
             f'{self.blue_boundary_kernel_size}.')
 
     def voxelize_points(self, raw_points, image_width):
-        """Replace all points in each 2D cell with their centroid."""
-        voxel_size = self.point_voxel_size
-        if voxel_size == 1 or len(raw_points) == 0:
-            return raw_points
-
-        voxel_columns = (image_width + voxel_size - 1) // voxel_size
-        voxel_ids = (
-            (raw_points[:, 0] // voxel_size) * voxel_columns
-            + raw_points[:, 1] // voxel_size
-        )
-        counts = np.bincount(voxel_ids)
-        sum_y = np.bincount(voxel_ids, weights=raw_points[:, 0])
-        sum_x = np.bincount(voxel_ids, weights=raw_points[:, 1])
-        occupied = np.flatnonzero(counts)
-
-        centroids_y = np.rint(
-            sum_y[occupied] / counts[occupied]).astype(np.int32)
-        centroids_x = np.rint(
-            sum_x[occupied] / counts[occupied]).astype(np.int32)
-        return np.column_stack((centroids_y, centroids_x))
+        """Replace all points in each 2D image cell with their centroid."""
+        return cloud_pipeline.voxelize_pixels(
+            raw_points, image_width, self.point_voxel_size)
 
     def voxelize_bev_cloud(self, points, class_ids):
-        """Downsample finite BEV points independently for every class.
-
-        Keeping the class identifier in the voxel key prevents blue,
-        yellow-line, soft-obstacle, boardwalk, interior-road and interior-
-        boardwalk points from being averaged together in one metric cell.
-        """
-        if len(points) == 0:
-            return points, class_ids
-
-        finite = np.isfinite(points).all(axis=1)
-        passthrough = ~finite
-        reduced_indices = np.flatnonzero(finite)
-        if not len(reduced_indices):
-            return points, class_ids
-
-        reduced_points = points[reduced_indices]
-        first, inverse = voxel_groups(
-            reduced_points, class_ids[reduced_indices],
-            self.pointcloud_voxel_size)
-        counts = np.bincount(inverse)
-        centroids = np.column_stack((
-            np.bincount(inverse, weights=reduced_points[:, 0]) / counts,
-            np.bincount(inverse, weights=reduced_points[:, 1]) / counts,
-        )).astype(points.dtype, copy=False)
-        # Boolean selection preserves first-observation order without sorting
-        # or concatenating a second time. Never mutate the caller's points.
-        representatives = reduced_indices[first]
-        keep = passthrough.copy()
-        keep[representatives] = True
-        output_points = points.copy()
-        output_points[representatives] = centroids
-        return output_points[keep], class_ids[keep]
+        """Downsample BEV points independently for every semantic class."""
+        return cloud_pipeline.voxelize_metric(
+            points, class_ids, self.pointcloud_voxel_size)
 
     @staticmethod
     def quaternion_to_rotation(quaternion):
         """Return the rotation matrix represented by a ROS quaternion."""
-        x = quaternion.x
-        y = quaternion.y
-        z = quaternion.z
-        w = quaternion.w
-        norm = x * x + y * y + z * z + w * w
-        if norm < 1e-12:
-            raise ValueError('TF contains an invalid zero quaternion')
-
-        scale = 2.0 / norm
-        return np.array([
-            [1.0 - scale * (y * y + z * z),
-             scale * (x * y - z * w),
-             scale * (x * z + y * w)],
-            [scale * (x * y + z * w),
-             1.0 - scale * (x * x + z * z),
-             scale * (y * z - x * w)],
-            [scale * (x * z - y * w),
-             scale * (y * z + x * w),
-             1.0 - scale * (x * x + y * y)],
-        ], dtype=np.float32)
+        return cloud_pipeline.quaternion_to_rotation(quaternion)
 
     def image_callback(self, msg):
         """ROS 2 Callback: Enqueues incoming frames, dropping stale frames if queue is full."""
@@ -845,53 +769,10 @@ class VisualPtcld(Node):
             )
             return skipped_result()
 
-        fx_raw, fy_raw, cx_raw, cy_raw, info_width, info_height = intrinsics
+        fx_raw, fy_raw, _, _, info_width, info_height = intrinsics
         if fx_raw <= 0.0 or fy_raw <= 0.0 or not info_width or not info_height:
             self.get_logger().error('Invalid RGB CameraInfo intrinsics')
             return skipped_result()
-
-        math_started_at = time.perf_counter()
-        point_groups = (
-            (blue_points, self.LABEL_BLUE),
-            (turquoise_points, self.LABEL_TURQUOISE),
-            (background_points, self.LABEL_BACKGROUND),
-        )
-        if interior_blue_points is not None:
-            point_groups += ((interior_blue_points, self.LABEL_INTERIOR_BLUE),)
-        nonempty_groups = [
-            (points, label) for points, label in point_groups if len(points)
-        ]
-        if nonempty_groups:
-            pixels = np.concatenate(
-                [group[0] for group in nonempty_groups], axis=0)
-            class_ids = np.concatenate([
-                np.full(len(group[0]), group[1], dtype=np.uint8)
-                for group in nonempty_groups
-            ])
-        else:
-            pixels = np.empty((0, 2), dtype=np.int32)
-            class_ids = np.empty(0, dtype=np.uint8)
-
-        rows = pixels[:, 0]
-        cols = pixels[:, 1]
-        z = depth[rows, cols]
-        valid = (
-            np.isfinite(z)
-            & (z >= self.cloud_min_depth)
-            & (z <= self.cloud_max_depth)
-        )
-        rows = rows[valid]
-        cols = cols[valid]
-        z = z[valid].astype(np.float32, copy=False)
-        class_ids = class_ids[valid]
-
-        ray_x, ray_y = self.ray_cache.get(
-            intrinsics, width, height, self.input_crop_y_min)
-        x = ray_x[cols] * z
-        y = ray_y[rows] * z
-        projection_ms = (time.perf_counter() - math_started_at) * 1000.0
-        math_ms += projection_ms
-
         if not header.frame_id:
             self.get_logger().warning(
                 'Cannot create BEV points with an empty input frame_id',
@@ -918,83 +799,55 @@ class VisualPtcld(Node):
             return skipped_result()
         tf_ms = (time.perf_counter() - tf_started_at) * 1000.0
 
-        math_started_at = time.perf_counter()
-        bev_points = transform_xy(x, y, z, rotation, (
-            transform.transform.translation.x,
-            transform.transform.translation.y,
-        ))
-        transform_ms = (time.perf_counter() - math_started_at) * 1000.0
-        math_ms += transform_ms
+        point_groups = [
+            (blue_points, self.LABEL_BLUE),
+            (turquoise_points, self.LABEL_TURQUOISE),
+            (background_points, self.LABEL_BACKGROUND),
+        ]
+        if interior_blue_points is not None:
+            point_groups.append(
+                (interior_blue_points, self.LABEL_INTERIOR_BLUE))
 
-        # Query metric BEV points directly in two nearest-neighbor passes before
-        # serialization. Soft-obstacle labels in the exterior-road distance
-        # band become boardwalk; those beyond its maximum radius become
-        # interior boardwalk.
-        # Coordinates, point order and the PointCloud2 layout remain unchanged.
-        # Time classification separately so projection timings stay comparable.
-        if self.enable_boardwalk:
-            boardwalk_stats = self.boardwalk_classifier.classify(
-                bev_points, class_ids,
-                self.blue_radius_min, self.blue_radius_max,
-                self.boardwalk_propagation_radius,
-                self.LABEL_BLUE, self.LABEL_BACKGROUND, self.LABEL_BOARDWALK,
-                self.LABEL_INTERIOR_BOARDWALK)
+        (
+            bev_points, class_ids, point_count_before_voxel,
+            boardwalk_stats, projection_ms, transform_ms, voxel_ms,
+        ) = cloud_pipeline.build_semantic_cloud(
+            point_groups=point_groups,
+            depth=depth,
+            intrinsics=intrinsics,
+            width=width,
+            height=height,
+            input_crop_y_min=self.input_crop_y_min,
+            ray_cache=self.ray_cache,
+            rotation=rotation,
+            translation=(
+                transform.transform.translation.x,
+                transform.transform.translation.y,
+            ),
+            cloud_min_depth=self.cloud_min_depth,
+            cloud_max_depth=self.cloud_max_depth,
+            boardwalk_classifier=(
+                self.boardwalk_classifier if self.enable_boardwalk else None),
+            blue_radius_min=self.blue_radius_min,
+            blue_radius_max=self.blue_radius_max,
+            boardwalk_propagation_radius=self.boardwalk_propagation_radius,
+            road_boardwalk_only=self.road_boardwalk_only,
+            voxel_size=self.pointcloud_voxel_size,
+        )
+        math_ms = projection_ms + transform_ms
 
-        # Background is needed as a candidate for boardwalk recognition.
-        # Filter after classification, preserving boundary/interior class IDs.
-        if self.road_boardwalk_only:
-            keep = np.isin(class_ids, (
-                self.LABEL_BLUE, self.LABEL_INTERIOR_BLUE,
-                self.LABEL_BOARDWALK, self.LABEL_INTERIOR_BOARDWALK))
-            bev_points, class_ids = bev_points[keep], class_ids[keep]
-
-        # Downsample only the outgoing cloud. The full-resolution points above
-        # remain available to both cKDTree passes. Classes use separate 2D
-        # metric voxel keys, including blue points.
-        point_count_before_voxel = len(bev_points)
-        voxel_started_at = time.perf_counter()
-        bev_points, class_ids = self.voxelize_bev_cloud(
-            bev_points, class_ids)
-        voxel_ms = (time.perf_counter() - voxel_started_at) * 1000.0
-        boardwalk_stats.update({
-            key: int(np.count_nonzero(class_ids == label))
-            for key, label in (
-                ('published_blue_count', self.LABEL_BLUE),
-                ('published_turquoise_count', self.LABEL_TURQUOISE),
-                ('published_background_count', self.LABEL_BACKGROUND),
-                ('published_boardwalk_count', self.LABEL_BOARDWALK),
-                ('published_interior_blue_count', self.LABEL_INTERIOR_BLUE),
-                ('published_interior_boardwalk_count',
-                 self.LABEL_INTERIOR_BOARDWALK),
-            )
-        })
-
-        math_started_at = time.perf_counter()
-        cloud_points = np.empty(len(bev_points), dtype=self.CLOUD_DTYPE)
-        cloud_points['x'] = bev_points[:, 0]
-        cloud_points['y'] = bev_points[:, 1]
-        cloud_points['z'] = 0.0
-        cloud_points['class_id'] = class_ids
-
-        cloud = PointCloud2()
-        cloud.header.stamp = header.stamp
-        cloud.header.frame_id = self.bev_frame
-        cloud.height = 1
-        cloud.width = len(cloud_points)
-        cloud.fields = self.CLOUD_FIELDS
-        cloud.is_bigendian = False
-        cloud.point_step = self.CLOUD_DTYPE.itemsize
-        cloud.row_step = cloud.point_step * cloud.width
-        
-        cloud.data = array('B', cloud_points.tobytes())
-        cloud.is_dense = True
-        serialize_ms = (time.perf_counter() - math_started_at) * 1000.0
+        serialize_started_at = time.perf_counter()
+        cloud = make_pointcloud2(
+            bev_points, class_ids, header, self.bev_frame)
+        serialize_ms = (
+            time.perf_counter() - serialize_started_at) * 1000.0
         math_ms += serialize_ms
         boardwalk_stats.update({
             'step8_projection': projection_ms,
             'step8_transform': transform_ms,
             'step8_serialize': serialize_ms,
         })
+
         prepare_ms = (
             time.perf_counter() - prepare_started_at) * 1000.0
         publish_started_at = time.perf_counter()
@@ -1002,7 +855,7 @@ class VisualPtcld(Node):
         publish_ms = (
             time.perf_counter() - publish_started_at) * 1000.0
         return (
-            len(cloud_points), prepare_ms, publish_ms,
+            len(bev_points), prepare_ms, publish_ms,
             lock_ms, tf_ms, math_ms, voxel_ms,
             point_count_before_voxel, boardwalk_stats,
         )

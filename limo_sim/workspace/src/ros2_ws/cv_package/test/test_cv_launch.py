@@ -75,7 +75,10 @@ def test_sim_detector_does_not_depend_on_clock(monkeypatch, clock):
 
 
 def test_desktop_starts_only_viewer_and_backend_ignores_rviz(monkeypatch):
-    assert set(pipeline(monkeypatch, mode='desktop')) == {'cv_rviz'}
+    desktop = pipeline(monkeypatch, mode='desktop')
+    assert set(desktop) == {'cv_rviz'}
+    assert desktop['cv_rviz']['arguments'] == [
+        '-d', str(PACKAGES / 'limo_rviz/config/cv_visual.rviz')]
     nodes = pipeline(monkeypatch, mode='backend', start_rviz='true',
                      visual_ptcld_enable_telemetry='false')
     assert 'cv_rviz' not in nodes
@@ -109,7 +112,7 @@ def test_real_profile_publishes_labels_on_the_consumer_topic():
     from rclpy.node import Node
     from rclpy.qos import qos_profile_sensor_data
     from sensor_msgs.msg import Image
-    from cv_package.lane_detector_waterfall import WaterfallLaneDetector
+    from cv_package.lane_detectors.lane_detector_waterfall import WaterfallLaneDetector
 
     profile = yaml.safe_load((PACKAGE / 'config/cv_real.yaml').read_text())
     arguments = ['--ros-args', '-r', '__node:=lane_node', '-r',

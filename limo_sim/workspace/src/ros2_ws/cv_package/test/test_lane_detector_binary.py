@@ -14,7 +14,7 @@ from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CompressedImage, Image
 
-from cv_package.lane_detector_binary import BinaryLaneDetector
+from cv_package.lane_detectors.lane_detector_binary import BinaryLaneDetector
 
 
 @pytest.fixture
