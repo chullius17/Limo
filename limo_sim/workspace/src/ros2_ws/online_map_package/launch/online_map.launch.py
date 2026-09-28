@@ -218,6 +218,7 @@ def _launch_online(context):
             package='rviz2', executable='rviz2', name='rviz2',
             output='screen',
             arguments=['-d', rviz_config, '-f', settings['fixed_frame']],
+            remappings=settings.get('rviz_remappings', []),
             parameters=[clock]))
     return actions
 

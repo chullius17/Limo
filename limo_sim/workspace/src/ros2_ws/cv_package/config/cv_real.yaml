@@ -4,6 +4,9 @@ launch:
   use_sim_time: false
   start_rviz: false
   rviz_config: cv_visual.rviz
+  rviz_remappings:
+    - [/limo/cv_package/detection/lane_overlay/compressed,
+       /limo/cv_package/detection/lane_waterfall_overlay/compressed]
 
 lane_detector:
   enable_telemetry: false

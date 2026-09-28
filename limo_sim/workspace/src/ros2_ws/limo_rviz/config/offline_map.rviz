@@ -9,6 +9,7 @@ Panels:
         - /LaserScan1
         - /Map1
         - /CV Semantic Points1
+        - /Lane Detection Overlay1
       Splitter Ratio: 0.5
     Tree Height: 611
   - Class: rviz_common/Views
@@ -87,6 +88,20 @@ Visualization Manager:
         Value: /limo/cv_package/visual_ptcld/points
       Use Fixed Frame: true
       Use rainbow: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /limo/cv_package/detection/lane_overlay
+      Max Value: 1.0
+      Median window: 5
+      Min Value: 0.0
+      Name: Lane Detection Overlay
+      Normalize Range: true
+      Transport Hint: compressed
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

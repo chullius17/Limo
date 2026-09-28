@@ -10,6 +10,9 @@ launch:
   start_gui: false
   rviz_config: offline_map.rviz  # Relative to limo_rviz/config, or an absolute path.
   fixed_frame: map
+  rviz_remappings:
+    - [/limo/cv_package/detection/lane_overlay/compressed,
+       /limo/cv_package/detection/lane_waterfall_overlay/compressed]
 
 slam_toolbox:
   odom_frame: odom

@@ -10,6 +10,9 @@ launch:
   start_rviz: false
   rviz_config: online_map.rviz  # Used by desktop_online.launch.py on the PC.
   fixed_frame: map
+  rviz_remappings:
+    - [/limo/cv_package/detection/lane_overlay/compressed,
+       /limo/cv_package/detection/lane_waterfall_overlay/compressed]
 
 map_servers:
   directory: ''  # ros2_maps/semantic in the workspace running the backend.

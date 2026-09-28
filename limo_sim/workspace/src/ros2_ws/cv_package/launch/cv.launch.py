@@ -102,6 +102,7 @@ def _launch_cv(context):
             output='screen',
             arguments=['-d', os.path.join(config_dir, settings['rviz_config'])],
             parameters=[{'use_sim_time': use_sim_time}],
+            remappings=settings.get('rviz_remappings', []),
         ))
     return nodes
 
