@@ -23,6 +23,18 @@ find_package(std_srvs REQUIRED)
 ############## YDLIDAR SDK START#####################################
 #find ydlidar_sdk package
 find_package(ydlidar_sdk REQUIRED)
+
+# The SDK config exports headers but leaves its library directory empty.
+# Resolve the archive next to the config file so we do not silently link a
+# stale system-wide copy from /usr/local/lib.
+find_library(YDLIDAR_SDK_LIBRARY
+  NAMES ydlidar_sdk
+  HINTS "${ydlidar_sdk_DIR}/../.."
+  NO_DEFAULT_PATH)
+if(NOT YDLIDAR_SDK_LIBRARY)
+  message(FATAL_ERROR "Could not find the YDLidar SDK library next to ${ydlidar_sdk_DIR}")
+endif()
+set(YDLIDAR_SDK_LIBRARIES "${YDLIDAR_SDK_LIBRARY};pthread;rt")
 ############## YDLIDAR SDK END#####################################
 
 #Include directories

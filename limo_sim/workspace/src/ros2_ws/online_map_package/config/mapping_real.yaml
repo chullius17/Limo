@@ -1,18 +1,15 @@
 # Read by online_map.launch.py; this is not a ROS --params-file.
-# Robot: wall clock and headless localization; CV/sensors already run onboard.
+# Robot: wall clock, headless localization and CV; sensors already run onboard.
 launch:
   use_sim_time: false
-  start_cv: false
+  start_cv: true
   cv_config: cv_real.yaml  # Profile identity is independent of the clock.
   start_maps: true
   start_amcl: true
   start_local_ctrl_map: true
   start_rviz: false
-  rviz_config: online_map.rviz  # Used by desktop_online.launch.py on the PC.
+  rviz_config: online_map_real.rviz  # Used by desktop_online.launch.py on the PC.
   fixed_frame: map
-  rviz_remappings:
-    - [/limo/cv_package/detection/lane_overlay/compressed,
-       /limo/cv_package/detection/lane_waterfall_overlay/compressed]
 
 map_servers:
   directory: ''  # ros2_maps/semantic in the workspace running the backend.

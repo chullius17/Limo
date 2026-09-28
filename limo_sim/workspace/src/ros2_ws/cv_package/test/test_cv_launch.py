@@ -78,7 +78,7 @@ def test_desktop_starts_only_viewer_and_backend_ignores_rviz(monkeypatch):
     desktop = pipeline(monkeypatch, mode='desktop')
     assert set(desktop) == {'cv_rviz'}
     assert desktop['cv_rviz']['arguments'] == [
-        '-d', str(PACKAGES / 'limo_rviz/config/cv_visual.rviz')]
+        '-d', str(PACKAGES / 'limo_rviz/config/cv_visual_real.rviz')]
     nodes = pipeline(monkeypatch, mode='backend', start_rviz='true',
                      visual_ptcld_enable_telemetry='false')
     assert 'cv_rviz' not in nodes

@@ -765,7 +765,16 @@ bool CYdLidar::doProcessSimple(LaserScan &outscan)
       if (count > all_node_count)
       {
         //如果点过多则直接删除多余的点并打印警告
-        warn("[YDLIDAR]: Real points %lu > fixed points %d", count, all_node_count);
+        // Keep fixed-size scans for downstream consumers, but avoid flooding
+        // the console when the motor consistently returns a few extra points.
+        static unsigned int oversized_scan_count = 0;
+        ++oversized_scan_count;
+        if (oversized_scan_count == 1 || oversized_scan_count % 500 == 0)
+        {
+          warn("[YDLIDAR]: Real points %lu > fixed points %d "
+               "(rate-limited, occurrences: %u)",
+               count, all_node_count, oversized_scan_count);
+        }
       	outscan.points.resize(all_node_count);
       }
       else

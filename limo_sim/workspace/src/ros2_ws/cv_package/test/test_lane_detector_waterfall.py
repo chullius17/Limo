@@ -40,7 +40,7 @@ def process_gray(detector, frame, **settings):
 
 @pytest.mark.parametrize('gray,label', [(0, 1), (80, 1), (81, 3), (255, 3)])
 def test_uniform_frames_and_seed_threshold_equality(detector, gray, label):
-    labels = process_gray(detector, np.full((240, 320), gray, np.uint8))
+    labels = process_gray(detector, np.full((240, 320), gray, np.uint8), seed_max_gray=80)
     assert labels.shape == (120, 320) and labels.dtype == np.uint8
     assert np.all(labels[:12] == 0)
     assert np.all(labels[12:] == label)
@@ -63,14 +63,16 @@ def test_strong_edge_stops_growth_without_becoming_thicker(detector):
     frame[:, 160:] = 200
     labels = process_gray(detector, frame, barrier_closing_iterations=0)
     assert np.all(labels[12:, :159] == 1)
-    assert np.all(labels[12:, 159:] == 3)
-    assert np.all(detector._buf_barriers[:, 159:161] == 255)
-    assert not np.any(detector._buf_seeds[:, 159:])
+    assert np.all(labels[12:, 161:] == 3)
+    # Interior Sobel bands become one pixel; ROI endpoints remain anchored.
+    assert np.all(np.count_nonzero(detector._buf_barriers[1:-1], axis=1) == 1)
+    assert np.all(detector._buf_barriers[[0, -1], 159:161] == 255)
+    assert not np.any(detector._buf_seeds[detector._buf_barriers != 0])
     old_barriers = detector._buf_barriers.copy()
     labels = process_gray(detector, frame, barrier_closing_iterations=1)
     np.testing.assert_array_equal(detector._buf_barriers, old_barriers)
     assert not np.any(detector._buf_seeds[detector._buf_barriers != 0])
-    assert np.all(labels[12:, 159:] == 3)
+    assert np.all(labels[12:, 161:] == 3)
 
 
 def test_closing_fills_a_small_barrier_gap_without_thickening(detector):
@@ -172,7 +174,8 @@ def test_debug_colors_subscriber_gating_and_frame_ownership(
         assert not np.any(mask[:12])
     if seeds_on:
         np.testing.assert_array_equal(seeds[60, 10], [0, 255, 0])
-        np.testing.assert_array_equal(seeds[60, 159], [0, 0, 255])
+        edge_x = np.flatnonzero(detector._buf_barriers[48])[0]
+        np.testing.assert_array_equal(seeds[60, edge_x], [0, 0, 255])
         np.testing.assert_array_equal(seeds[60, 200], [200, 200, 200])
         np.testing.assert_array_equal(seeds[:12], frame[120:132])
     saved = [None if item is None else item.copy() for item in images]
@@ -189,6 +192,7 @@ def test_debug_colors_subscriber_gating_and_frame_ownership(
     ('seed_y_min', -0.1), ('barrier_closing_iterations', -1),
     ('barrier_closing_iterations', 6), ('debug_jpeg_quality', 101),
     ('seed_erosion_iterations', -1), ('seed_erosion_iterations', 6),
+    ('barrier_thinning_max_iterations', -1), ('barrier_thinning_max_iterations', 33),
 ])
 def test_invalid_parameter_batch_is_atomic(detector, name, value):
     before = detector._settings.copy()

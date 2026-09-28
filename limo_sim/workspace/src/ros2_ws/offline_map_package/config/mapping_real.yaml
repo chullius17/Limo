@@ -2,17 +2,14 @@
 # Robot: wall clock, EKF publishes odom -> base_link; GUI runs on the PC.
 launch:
   use_sim_time: false
-  start_cv: false
+  start_cv: true
   cv_config: cv_real.yaml  # Profile identity is independent of the clock.
   start_slam: true
   start_mapper: true
   start_rviz: false
   start_gui: false
-  rviz_config: offline_map.rviz  # Relative to limo_rviz/config, or an absolute path.
+  rviz_config: offline_map_real.rviz  # Relative to limo_rviz/config, or an absolute path.
   fixed_frame: map
-  rviz_remappings:
-    - [/limo/cv_package/detection/lane_overlay/compressed,
-       /limo/cv_package/detection/lane_waterfall_overlay/compressed]
 
 slam_toolbox:
   odom_frame: odom

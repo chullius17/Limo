@@ -64,7 +64,7 @@ def online(monkeypatch, profile='sim', **overrides):
     return nodes, includes
 
 
-def test_simulation_starts_maps_amcl_and_rviz_without_cv(monkeypatch):
+def test_simulation_starts_maps_amcl_rviz_and_cv(monkeypatch):
     nodes, includes = online(monkeypatch)
     assert set(nodes) == {
         'complete_map_server', 'laser_map_server', 'cv_map_server',
@@ -72,7 +72,7 @@ def test_simulation_starts_maps_amcl_and_rviz_without_cv(monkeypatch):
     }
     assert all(node['values']['use_sim_time'] is True
                for node in nodes.values())
-    assert len(includes) == 1
+    assert len(includes) == 2
     include_arguments = [dict(action.launch_arguments) for action in includes]
     amcl = next(values for values in include_arguments
                 if 'cv_voxel_size' in values)
@@ -95,7 +95,7 @@ def test_simulation_starts_maps_amcl_and_rviz_without_cv(monkeypatch):
     assert nodes['local_ctrl_map']['values']['boardwalk_cost'] == 90
 
 
-def test_real_profile_is_headless_and_does_not_restart_cv(monkeypatch):
+def test_real_profile_is_headless_and_starts_cv(monkeypatch):
     nodes, includes = online(monkeypatch, 'real', mode='backend')
     assert set(nodes) == {
         'complete_map_server', 'laser_map_server', 'cv_map_server',
@@ -103,7 +103,7 @@ def test_real_profile_is_headless_and_does_not_restart_cv(monkeypatch):
     }
     assert all(node['values']['use_sim_time'] is False
                for node in nodes.values())
-    assert len(includes) == 1
+    assert len(includes) == 2
     include_arguments = [dict(action.launch_arguments) for action in includes]
     amcl = next(values for values in include_arguments
                 if 'cv_voxel_size' in values)
@@ -209,8 +209,8 @@ def test_amcl_launch_passes_typed_cloud_parameters(monkeypatch):
 
 
 @pytest.mark.parametrize('profile', ['real', 'sim'])
-def test_explicit_cv_opt_in_selects_matching_profile(monkeypatch, profile):
-    _, includes = online(monkeypatch, profile, start_cv='true')
+def test_default_cv_selects_matching_profile(monkeypatch, profile):
+    _, includes = online(monkeypatch, profile)
     cv = [dict(action.launch_arguments) for action in includes
           if 'config_file' in dict(action.launch_arguments)]
     assert len(cv) == 1

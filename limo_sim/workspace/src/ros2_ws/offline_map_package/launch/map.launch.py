@@ -115,7 +115,8 @@ def _launch_mapping(context):
         nodes.append(Node(
             package='rviz2', executable='rviz2', name='rviz2', output='screen',
             arguments=['-d', rviz_config, '-f', settings['fixed_frame']],
-            remappings=settings.get('rviz_remappings', []),
+            # YAML sequences become lists; Foxy requires tuple remap rules.
+            remappings=[tuple(rule) for rule in settings.get('rviz_remappings', [])],
             parameters=[clock]))
     return nodes
 

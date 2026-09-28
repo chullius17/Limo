@@ -38,7 +38,7 @@ def mapping(monkeypatch, profile='sim', **overrides):
     # Inspect the actual launch inputs without starting processes or moving hardware.
     monkeypatch.setattr(module, 'Node', lambda **kwargs: kwargs)
     actions = module._launch_mapping(context)
-    if overrides.get('start_cv', 'false') == 'false':
+    if overrides.get('start_cv', 'true') == 'false':
         assert all(isinstance(action, dict) for action in actions), 'CV started implicitly'
     nodes = [node for node in actions if isinstance(node, dict)]
     for node in nodes:
@@ -137,12 +137,12 @@ def test_invalid_launch_settings_fail(monkeypatch, overrides):
 
 @pytest.mark.parametrize('profile,clock', [('real', 'false'), ('sim', 'true'),
                                           ('real', 'true'), ('sim', 'false')])
-def test_cv_opt_in_keeps_profile_independent_of_clock(monkeypatch, profile, clock):
+def test_default_cv_keeps_profile_independent_of_clock(monkeypatch, profile, clock):
     module = load_launch('map.launch.py')
     context = LaunchContext()
     context.launch_configurations.update({
         'config_file': str(PACKAGE / 'config' / ('mapping_' + profile + '.yaml')),
-        'start_cv': 'true', 'use_sim_time': clock,
+        'use_sim_time': clock,
         'start_slam': 'false', 'start_mapper': 'false',
         'start_rviz': 'false', 'start_gui': 'false',
     })

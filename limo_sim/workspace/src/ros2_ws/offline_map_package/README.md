@@ -81,13 +81,12 @@ sensors and EKF already active:
 ros2 launch offline_map_package map_real.launch.py
 ~~~
 
-This uses 'mapping_real.yaml' and forces 'mode:=backend': SLAM and the mapper
+This uses 'mapping_real.yaml' and forces 'mode:=backend': CV, SLAM and the mapper
 run with real time and 'base_link', without a robot-side window. All shipped
-mapping profiles (real and simulation) have 'start_cv: false'. Start CV separately
-with 'ros2 launch cv_package cv_real.launch.py' on the robot, or
-'ros2 launch cv_package cv_sim.launch.py' in simulation. Explicit 'start_cv:=true'
-is still available when desired. On a PC, start only RViz and Save Map, connected
-to robot topics and service:
+mapping profiles (real and simulation) have 'start_cv: true' and automatically
+include the matching 'cv_real.yaml' or 'cv_sim.yaml' pipeline. If CV is already
+running separately, pass 'start_cv:=false' to avoid starting it twice. On a PC,
+start only RViz and Save Map, connected to robot topics and service:
 
 ~~~bash
 ros2 launch offline_map_package desktop_offline.launch.py
@@ -107,14 +106,14 @@ source install/setup.bash
 
 The workspace mounted in the PC Docker container can differ from this checkout;
 make sure it contains the updated launch files. Press 'Ctrl-C' in the respective
-terminals to stop mapping and windows. 'map.launch.py' without arguments keeps
-the simulation profile. To use a custom file:
+terminals to stop mapping and windows. 'map.launch.py' without arguments uses
+the real profile. To use a custom file:
 
 ~~~bash
 ros2 launch offline_map_package map.launch.py config_file:=/path/to/mapping.yaml
 ~~~
 
-The CLI overrides 'start_slam', 'start_mapper', 'start_rviz', 'start_gui',
+The CLI overrides 'start_cv', 'cv_config', 'start_slam', 'start_mapper', 'start_rviz', 'start_gui',
 'use_sim_time', 'rviz_config', 'fixed_frame', 'pose_source', 'trajectory_id',
 'resolution', and 'save_directory' remain available. An empty value uses YAML;
 'resolution' overrides both SLAM and mapper resolution, while 'use_sim_time'

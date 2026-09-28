@@ -88,7 +88,7 @@ source install/setup.bash
 ros2 launch online_map_package online_map_sim.launch.py
 ~~~
 
-With sensors, odometry, and CV already active on the LIMO:
+With sensors and odometry already active on the LIMO:
 
 ~~~bash
 ros2 launch online_map_package online_map_real.launch.py
@@ -109,7 +109,7 @@ ros2 launch online_map_package online_map_sim.launch.py \
 ~~~
 
 Change persistent values in the two YAML profiles; command-line arguments are
-for temporary trials. The real profile does not restart CV or open windows.
+for temporary trials. The real profile starts CV and localization without windows.
 'desktop_online.launch.py' uses that profile in desktop mode and launches RViz
 only. Planner and controller are started independently;
 `user_package/limo_app_sim.launch.py` and
@@ -118,13 +118,13 @@ complete simulation and physical-robot stacks, respectively.
 
 AMCL publishes 'map -> odom'; provide an initial pose through RViz or AMCL's
 global-localization service. Do not start SLAM concurrently if it publishes the
-same TF. The launch starts localization, map server, and optional RViz. CV must be
-started separately for both real and simulation profiles, using
-`ros2 launch cv_package cv_real.launch.py` or `cv_sim.launch.py`, respectively.
-An explicit `start_cv:=true` opts into starting CV with the matching profile:
-waterfall for real, HSV color for simulation. `launch.cv_config` in the mapping
-YAML selects this independently of `use_sim_time`; `cv_config:=/path/to/profile.yaml`
-provides an override. This also applies to the `user_package` application launches.
+same TF. The launch starts CV, localization, map servers, and optional RViz.
+Both mapping profiles default to `start_cv: true`: waterfall for real, HSV color
+for simulation. Pass `start_cv:=false` when CV is already running separately.
+`launch.cv_config` selects the CV profile independently of `use_sim_time`;
+`cv_config:=/path/to/profile.yaml` provides an override. The `user_package`
+application launches keep their own `start_cv` default; pass `start_cv:=true`
+there to include CV.
 The detector label remap is handled inside CV; the cloud topic remains unchanged. The
 temporal semantic pipeline directly uses 'local_ctrl_map', with 'local_grid' as
 the costmap support module and 'semantic_memory' as temporal memory.
