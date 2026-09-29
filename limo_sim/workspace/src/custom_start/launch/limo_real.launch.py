@@ -120,6 +120,7 @@ def generate_launch_description():
                     'depth_width': '640',
                     'depth_height': '400',
                     'enable_point_cloud': 'false',
+                    'enable_ir': 'false',
                     'color_depth_synchronization': 'true',
                     # The driver's camera_*_optical_frame transforms are
                     # rigid (computed once from calibration), but with the
