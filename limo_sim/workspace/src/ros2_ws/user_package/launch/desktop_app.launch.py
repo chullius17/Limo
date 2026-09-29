@@ -15,7 +15,20 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from user_package.app_launch import _boolean, _optional_boolean
+
+def _boolean(value):
+    """Parse a strict ROS launch boolean."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.lower() in ('true', 'false'):
+        return value.lower() == 'true'
+    raise ValueError('Expected true or false, got {!r}'.format(value))
+
+
+def _optional_boolean(context, name, default):
+    """Use the default when a boolean launch argument is empty."""
+    value = LaunchConfiguration(name).perform(context)
+    return default if value == '' else _boolean(value)
 
 
 def _desktop_include(package, filename, arguments):

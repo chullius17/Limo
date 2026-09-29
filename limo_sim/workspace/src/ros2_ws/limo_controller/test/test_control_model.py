@@ -1,3 +1,17 @@
+# Copyright 2026 Giulio Cataldo
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Check model YAML selection, clock overrides, controller geometry and mux."""
 
 import importlib.util
@@ -115,7 +129,7 @@ def test_mux_uses_selected_control_profile(monkeypatch, profile):
     params = mux_config['twist_mux']['ros__parameters']
     assert params['use_sim_time'] is (profile == 'sim')
     assert params['output_topic'] == '/cmd_vel'
-    assert params['publish_rate'] == 50.0
+    assert params['publish_rate'] == (20.0 if profile == 'real' else 50.0)
     assert params['topics'] == {
         'autonomy': {
             'topic': '/cmd_vel_autonomy', 'timeout': 0.5, 'priority': 10,
@@ -145,3 +159,47 @@ def test_custom_control_file_also_overrides_mux(monkeypatch, tmp_path, profile):
     assert actual['output_topic'] == '/test/cmd_vel'
     assert actual['topics']['teleop']['priority'] == 150
     assert actual['use_sim_time'] is (profile == 'sim')
+
+
+@pytest.mark.parametrize('profile', ['real', 'sim'])
+def test_executor_uses_selected_profile_and_real_chassis_guard(monkeypatch, profile):
+    context, config, description = controller(monkeypatch, robot_model=profile)
+    executor = next(action for action in description.entities
+                    if isinstance(action, dict) and action.get('name') == 'path_executor')
+    assert len(executor['parameters']) == 2
+    assert executor['parameters'][1]['require_chassis_status'].evaluate(
+        context) is (profile == 'real')
+    params = yaml.safe_load(Path(executor['parameters'][0].perform(context)).read_text())
+    assert params == config
+    guard = params.get('path_executor', {}).get('ros__parameters', {})
+    assert guard.get('require_chassis_status', False) is (profile == 'real')
+    if profile == 'real':
+        assert guard['commanded_control_mode'] == 1
+        assert guard['chassis_status_timeout'] == 1.0
+
+
+def test_custom_real_yaml_does_not_accidentally_disable_chassis_guard(
+        monkeypatch, tmp_path):
+    config = yaml.safe_load((PACKAGE / 'config/control_real.yaml').read_text())
+    del config['path_executor']
+    path = tmp_path / 'custom_without_guard.yaml'
+    path.write_text(yaml.safe_dump(config))
+    context, _, description = controller(
+        monkeypatch, robot_model='real', controller_params_file=str(path))
+    executor = next(action for action in description.entities
+                    if isinstance(action, dict) and action.get('name') == 'path_executor')
+    assert executor['parameters'][1]['require_chassis_status'].evaluate(context)
+
+
+def test_nano_budget_preserves_horizon_and_safety_timeouts():
+    config = yaml.safe_load((PACKAGE / 'config/control_real.yaml').read_text())
+    params = config['controller_server']['ros__parameters']
+    mpc = params['FollowPath']['MPC']
+    assert params['controller_frequency'] == 10.0
+    assert mpc['model_dt'] * params['controller_frequency'] == 1.0
+    assert mpc['model_dt'] * mpc['time_steps'] == 2.5
+    assert mpc['batch_size'] == 96
+    assert mpc['batch_size'] >= 2 + mpc['velocity_samples'] * mpc['curvature_samples']
+    timeout = config['twist_mux']['ros__parameters']['topics']['autonomy']['timeout']
+    assert 3 * mpc['model_dt'] < timeout == 0.5
+    assert params['progress_checker']['movement_time_allowance'] == 10.0

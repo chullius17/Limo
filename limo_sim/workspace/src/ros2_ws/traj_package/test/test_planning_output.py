@@ -56,6 +56,7 @@ def test_success_publishes_path_without_controller(bridge):
 
 def test_new_goal_invalidates_path_even_when_planner_is_unavailable(bridge):
     bridge.compute_path_client.wait_for_server = Mock(return_value=False)
+    bridge.tf_buffer.can_transform = Mock(return_value=True)
     old_goal = Mock()
     bridge.active_planning_goal_handle = old_goal
     pose = PoseStamped()
@@ -66,6 +67,17 @@ def test_new_goal_invalidates_path_even_when_planner_is_unavailable(bridge):
     assert bridge.search_generation == 1
     assert bridge.planning_status_publisher.publish.call_args[0][0].data == (
         'ERROR: planner server unavailable')
+
+
+def test_missing_localization_explains_how_to_activate_planning(bridge):
+    bridge.compute_path_client.wait_for_server = Mock(return_value=False)
+    bridge.tf_buffer.can_transform = Mock(return_value=False)
+    pose = PoseStamped()
+    pose.header.frame_id = 'map'
+    bridge._goal_callback(pose)
+    assert bridge.path_publisher.publish.call_args[0][0].poses == []
+    assert bridge.planning_status_publisher.publish.call_args[0][0].data == (
+        'ERROR: localization unavailable; set 2D Pose Estimate in RViz')
 
 
 def test_late_planning_result_cannot_restore_an_invalidated_path(bridge):

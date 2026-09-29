@@ -8,9 +8,10 @@ import yaml
 
 pytest.importorskip('launch')
 from launch import LaunchContext  # noqa: E402
-from launch.actions import DeclareLaunchArgument, OpaqueFunction  # noqa: E402
-
-from user_package import app_launch  # noqa: E402
+from launch.actions import (  # noqa: E402
+    DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction)
+from launch.utilities import (  # noqa: E402
+    normalize_to_list_of_substitutions, perform_substitutions)
 
 
 PACKAGE = Path(__file__).resolve().parents[1]
@@ -28,17 +29,33 @@ def load_launch(profile):
 
 
 def compose(monkeypatch, profile, **overrides):
-    monkeypatch.setattr(
-        app_launch, 'get_package_share_directory', lambda name: str(PACKAGES / name))
     module = load_launch(profile)
+    monkeypatch.setattr(
+        module, 'get_package_share_directory', lambda name: str(PACKAGES / name))
     description = module.generate_launch_description()
     context = LaunchContext()
     context.launch_configurations.update(overrides)
     for action in description.entities:
         if isinstance(action, DeclareLaunchArgument):
             action.execute(context)
+    if profile != 'legacy':
+        include = next(action for action in description.entities
+                       if isinstance(action, IncludeLaunchDescription))
+        assert isinstance(include, IncludeLaunchDescription)
+        include.launch_description_source.get_launch_description(context)
+        assert include.launch_description_source.location.endswith('/launch/limo_app.launch.py')
+        context.launch_configurations.update({
+            name: perform_substitutions(context, normalize_to_list_of_substitutions(value))
+            for name, value in include.launch_arguments})
+        module = load_launch('legacy')
+        monkeypatch.setattr(
+            module, 'get_package_share_directory', lambda name: str(PACKAGES / name))
+        description = module.generate_launch_description()
+    for action in description.entities:
+        if isinstance(action, DeclareLaunchArgument):
+            action.execute(context)
     monkeypatch.setattr(
-        app_launch, '_include',
+        module, '_include',
         lambda package, launch, arguments=None: {
             'package': package,
             'launch': launch,
@@ -91,8 +108,11 @@ def test_invalid_control_gui_setting_fails(monkeypatch):
 
 
 def test_invalid_internal_profile_fails():
+    module = load_launch('legacy')
+    context = LaunchContext()
+    context.launch_configurations['profile'] = 'invalid'
     with pytest.raises(ValueError):
-        app_launch.generate_app_launch_description('invalid')
+        module._launch_app(context)
 
 
 @pytest.mark.parametrize('profile', ['real', 'sim', 'legacy'])

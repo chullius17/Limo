@@ -28,6 +28,8 @@ from rclpy.time import Time
 from std_msgs.msg import Bool, String
 from std_srvs.srv import SetBool
 
+from limo_controller.chassis_safety import ChassisSafety
+
 
 class PathExecutor(Node):
     """Own path execution, cancellation and the GUI control services."""
@@ -38,6 +40,15 @@ class PathExecutor(Node):
         self.declare_parameter('follow_path_action', '/follow_path')
         self.declare_parameter('controller_id', 'FollowPath')
         self.declare_parameter('goal_checker_id', 'goal_checker')
+        self.declare_parameter('require_chassis_status', False)
+        self.declare_parameter('commanded_control_mode', 1)
+        self.declare_parameter('chassis_status_timeout', 1.0)
+        self.chassis_safety = ChassisSafety(
+            enabled=self.get_parameter('require_chassis_status').value,
+            commanded_mode=self.get_parameter('commanded_control_mode').value,
+            timeout=self.get_parameter('chassis_status_timeout').value,
+        )
+        self.safety_stop_reason = None
         self.controller_id = self.get_parameter('controller_id').value
         self.goal_checker_id = self.get_parameter('goal_checker_id').value
         self.follow_path_client = ActionClient(
@@ -71,6 +82,12 @@ class PathExecutor(Node):
             SetBool, '/limo/control/set_enabled', self._set_control_enabled)
         self.follow_path_retry_timer = self.create_timer(
             0.25, self._retry_waiting_control_goal)
+        if self.chassis_safety.enabled:
+            from limo_msgs.msg import LimoStatus
+            self.chassis_subscription = self.create_subscription(
+                LimoStatus, '/limo_status', self._chassis_callback, 1)
+            self.chassis_watchdog = self.create_timer(
+                0.1, self._monitor_chassis)
         self._publish_available_path()
 
     def destroy_node(self):
@@ -97,6 +114,7 @@ class PathExecutor(Node):
         self.control_requested = False
         self.control_paused = False
         self.waiting_for_server = False
+        self.safety_stop_reason = None
         self.control_path = copy.deepcopy(path) if path.poses else None
         if self.active_control_goal_handle is not None:
             self.active_control_goal_handle.cancel_goal_async()
@@ -104,6 +122,7 @@ class PathExecutor(Node):
 
     def _set_control_active(self, request, response):
         if not request.data:
+            self.safety_stop_reason = None
             self.control_requested = False
             self.control_paused = False
             self.waiting_for_server = False
@@ -127,12 +146,14 @@ class PathExecutor(Node):
                 'Control is already active.' if self.control_requested
                 else 'Wait for control abort to finish.')
         else:
+            self.safety_stop_reason = None
             self.control_requested = True
             self.control_paused = False
             response.success = self._send_control_goal()
             response.message = (
                 'Control start requested.' if response.success
-                else 'Unable to send path to FollowPath; see control status.')
+                else self.safety_stop_reason or
+                'Unable to send path to FollowPath; see control status.')
         return response
 
     def _set_control_enabled(self, request, response):
@@ -141,6 +162,10 @@ class PathExecutor(Node):
             response.message = 'Control has not been started.'
             return response
         if request.data:
+            if not self._chassis_ready():
+                response.success = False
+                response.message = self.safety_stop_reason
+                return response
             self.control_paused = False
             response.success = True
             if not self.goal_pending and self.active_control_goal_handle is None:
@@ -164,6 +189,24 @@ class PathExecutor(Node):
         self.get_logger().error(message)
         self._publish_control_state(f'ERROR: {message}')
 
+    def _chassis_callback(self, status):
+        self.chassis_safety.update(status)
+        self._monitor_chassis()
+
+    def _chassis_ready(self):
+        reason = self.chassis_safety.reason()
+        if reason is None:
+            return True
+        self.safety_stop_reason = reason
+        if self.active_control_goal_handle is not None:
+            self.active_control_goal_handle.cancel_goal_async()
+        self._fail(reason)
+        return False
+
+    def _monitor_chassis(self):
+        if self.control_requested and not self.control_paused:
+            self._chassis_ready()
+
     def _retry_waiting_control_goal(self):
         """Send a queued START as soon as the lifecycle action is available."""
         if not self.waiting_for_server:
@@ -174,6 +217,8 @@ class PathExecutor(Node):
         self._send_control_goal()
 
     def _send_control_goal(self):
+        if not self._chassis_ready():
+            return False
         try:
             if not self.follow_path_client.wait_for_server(timeout_sec=0.0):
                 self.waiting_for_server = True
@@ -267,6 +312,10 @@ class PathExecutor(Node):
         if self.active_control_goal_handle is goal_handle:
             self.active_control_goal_handle = None
         if generation != self.path_generation:
+            return
+        if self.safety_stop_reason is not None:
+            # Cancellation/late action results must not erase the safety fault.
+            self._publish_control_state(f'ERROR: {self.safety_stop_reason}')
             return
         try:
             response = future.result()

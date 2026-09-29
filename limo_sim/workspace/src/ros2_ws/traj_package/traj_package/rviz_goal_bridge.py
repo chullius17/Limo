@@ -276,6 +276,14 @@ class RvizGoalBridge(Node):
             self.active_planning_goal_handle = None
 
         if not self.compute_path_client.wait_for_server(timeout_sec=1.0):
+            if pose.header.frame_id == 'map' and not self.tf_buffer.can_transform(
+                    'map', self.robot_base_frame, Time()):
+                message = (
+                    'ERROR: localization unavailable; '
+                    'set 2D Pose Estimate in RViz')
+                self.get_logger().error(message)
+                self._publish_planning_state(message)
+                return
             self.get_logger().error(
                 'The ComputePathToPose action server is not available.'
             )

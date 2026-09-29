@@ -27,6 +27,7 @@ from rclpy.task import Future  # noqa: E402
 from std_srvs.srv import SetBool  # noqa: E402
 
 from limo_controller.path_executor import PathExecutor  # noqa: E402
+from limo_controller.chassis_safety import ChassisSafety  # noqa: E402
 
 
 def test_start_control_sends_the_stored_path():
@@ -209,3 +210,87 @@ def test_send_exception_returns_failure_without_killing_services(executor):
     assert not start(executor).success
     assert not executor.goal_pending
     assert not executor.control_requested
+
+
+def require_chassis(executor, mode=1):
+    executor.chassis_safety = ChassisSafety(enabled=True)
+    executor.chassis_safety.update(SimpleNamespace(
+        vehicle_state=0, error_code=0, control_mode=mode, motion_mode=2))
+
+
+@pytest.mark.parametrize('problem', ['missing', 'stale', 'phone', 'fault'])
+def test_real_start_never_sends_action_without_safe_chassis(executor, problem):
+    ready_path(executor)
+    require_chassis(executor)
+    if problem == 'missing':
+        executor.chassis_safety.status = None
+    elif problem == 'stale':
+        executor.chassis_safety.received_at -= 2.0
+    elif problem == 'phone':
+        executor.chassis_safety.status.control_mode = 2
+    else:
+        executor.chassis_safety.status.error_code = 4
+    response = start(executor)
+    assert not response.success
+    assert response.message == executor.safety_stop_reason
+    assert not executor.control_requested
+    executor.follow_path_client.send_goal_async.assert_not_called()
+
+
+def test_real_start_accepts_command_mode_with_stale_motion_mode_reporting(executor):
+    ready_path(executor)
+    require_chassis(executor)
+    assert start(executor).success
+    executor.follow_path_client.send_goal_async.assert_called_once()
+
+
+@pytest.mark.parametrize('pending', [False, True])
+def test_mode_loss_cancels_control_and_never_restarts_automatically(executor, pending):
+    from action_msgs.msg import GoalStatus
+    ready_path(executor)
+    require_chassis(executor)
+    assert start(executor).success
+    handle = None if pending else accept_pending_goal(executor)
+    executor._chassis_callback(SimpleNamespace(
+        vehicle_state=0, error_code=0, control_mode=2))
+    assert not executor.control_requested
+    if pending:
+        handle = accept_pending_goal(executor)
+    handle.cancel_goal_async.assert_called_once()
+    reason = executor.safety_stop_reason
+    handle.get_result_async.return_value.set_result(
+        SimpleNamespace(status=GoalStatus.STATUS_CANCELED))
+    assert executor.control_status_publisher.publish.call_args[0][0].data == (
+        'ERROR: ' + reason)
+    executor._chassis_callback(SimpleNamespace(
+        vehicle_state=0, error_code=0, control_mode=1))
+    executor._retry_waiting_control_goal()
+    assert not executor.control_requested
+    executor.follow_path_client.send_goal_async.assert_called_once()
+
+
+def test_stale_chassis_watchdog_cancels_active_control(executor):
+    ready_path(executor)
+    require_chassis(executor)
+    assert start(executor).success
+    handle = accept_pending_goal(executor)
+    executor.chassis_safety.received_at -= 2.0
+    executor._monitor_chassis()
+    handle.cancel_goal_async.assert_called_once()
+    assert not executor.control_requested
+    assert 'stale' in executor.safety_stop_reason
+
+
+def test_resume_rechecks_chassis_even_if_cancellation_is_pending(executor):
+    ready_path(executor)
+    require_chassis(executor)
+    assert start(executor).success
+    handle = accept_pending_goal(executor)
+    executor._set_control_enabled(SetBool.Request(data=False), SetBool.Response())
+    executor.chassis_safety.status.control_mode = 2
+    response = executor._set_control_enabled(
+        SetBool.Request(data=True), SetBool.Response())
+    assert not response.success
+    assert not executor.control_requested
+    assert handle.cancel_goal_async.call_count == 2
+    executor.follow_path_client.send_goal_async.assert_called_once()

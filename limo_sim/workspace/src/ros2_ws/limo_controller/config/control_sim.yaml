@@ -13,7 +13,8 @@ controller_server:
     failure_tolerance: 0.3
 
     progress_checker_plugin: "progress_checker"
-    goal_checker_plugins: ["goal_checker"]
+    # Foxy selects one goal checker with the singular parameter name.
+    goal_checker_plugin: "goal_checker"
     controller_plugins: ["FollowPath"]
 
     progress_checker:
@@ -203,6 +204,11 @@ local_costmap:
         enabled: true
         inflation_radius: 0.30  # Same obstacle-distance field as the Humble profile.
         cost_scaling_factor: 8.0
+
+# Simulation has no physical chassis feedback.
+path_executor:
+  ros__parameters:
+    require_chassis_status: false
 
 # Shared velocity arbitration for this runtime profile.
 twist_mux:

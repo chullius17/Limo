@@ -43,6 +43,9 @@ protected:
     auto options = rclcpp::NodeOptions().arguments(
       {"--ros-args", "--params-file", LIMO_MPC_PARAMS_PATH});
     node_ = std::make_shared<rclcpp_lifecycle::LifecycleNode>("controller_server", options);
+    // Nav2's controller_server declares this before configuring its plugin;
+    // mirror that lifecycle here so the YAML's 10 Hz override is visible.
+    node_->declare_parameter("controller_frequency", rclcpp::ParameterValue(20.0));
     costmap_ = std::make_shared<nav2_costmap_2d::Costmap2DROS>("mpc_test_costmap");
     costmap_->set_parameters({
       rclcpp::Parameter("plugins", std::vector<std::string>{}),
@@ -187,7 +190,7 @@ TEST_F(MppiCostsTest, RealYamlConfiguresAndRunsTheFullDwbControllerPipeline)
     std::chrono::steady_clock::now() - begin).count();
   RecordProperty("full_pipeline_ms", duration);
   EXPECT_GT(command.twist.linear.x, 0.0);
-  EXPECT_LE(command.twist.linear.x, 1.3 * 0.05 + 1e-12);
+  EXPECT_LE(command.twist.linear.x, 1.3 * 0.10 + 1e-12);
   EXPECT_DOUBLE_EQ(command.twist.linear.y, 0.0);
   EXPECT_LE(std::abs(command.twist.angular.z), command.twist.linear.x / 0.462 + 1e-12);
   controller.deactivate();

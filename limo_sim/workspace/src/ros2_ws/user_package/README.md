@@ -24,6 +24,11 @@ Explicit `start_cv` overrides are forwarded to online mapping, whose
 `cv_sim.yaml` and the HSV detector. `limo_app.launch.py` also uses the simulation
 profile, with a wall clock; changing the clock does not change the detector.
 
+The application composition lives in `launch/limo_app.launch.py`; the real and
+sim launches include it with their respective `profile` and `use_sim_time`
+settings. The common launch also accepts those arguments directly, defaulting
+to `profile:=sim use_sim_time:=false`.
+
 An optional `cv_config:=/absolute/path/to/profile.yaml` overrides the selected
 CV profile when starting CV. All consumers continue to receive the semantic
 cloud on `/limo/cv_package/visual_ptcld/points`; the CV launch connects waterfall
@@ -59,6 +64,25 @@ planner, controller, velocity mux, path executor or second goal bridge.
 RViz publishes goals to the robot; the GUI uses the robot's existing control
 services to start, pause, resume or abort a planned path.
 
+Before selecting a goal, use RViz's **2D Pose Estimate** tool to set the robot's
+actual position and heading on the map. AMCL must publish `map -> odom` before
+the planner can finish activation. Until then, the GUI reports localization
+unavailable. After localization is ready, select a **2D Goal Pose** to generate
+a path; execution starts only when requested in the control GUI.
+
+Before pressing START on the real robot, disconnect/release the AgileX phone
+app or remote control and verify `/limo_status.control_mode == 1`. The driver
+requests command mode only when the base node starts: if feedback stays at 2,
+stop the existing sensor/base launch, disconnect the phone, then restart that
+launch. Never run two base drivers. The GUI now refuses START while chassis
+status is missing, stale, faulty or outside command mode, and cancels an active
+path if command mode or feedback is lost. It never takes chassis ownership
+automatically; another explicit START is needed after recovery. Raw
+`motion_mode=2` is not used for this guard because this robot reports it even
+in the mechanically converted Ackermann configuration. The real controller
+profile is tuned for the Nano at 10 Hz with 96 MPC sequences; simulated control
+remains unchanged. Validate movement under supervision before unattended use.
+
 Optional desktop switches:
 
 ```bash
@@ -84,7 +108,10 @@ otherwise RViz and the GUI cannot reach the robot.
 
 ## Planner and controller configuration
 
-The app launch also passes its `robot_model` to both planning and control:
+The real and sim app launches explicitly select the YAML files created for
+trajectory and control, then forward them as `planner_params_file` and
+`controller_params_file` to the common app launch. It passes those files to
+`trajectory.launch.py` and `control.launch.py`, together with `robot_model`:
 
 | Application | Trajectory YAML | Controller YAML |
 | --- | --- | --- |

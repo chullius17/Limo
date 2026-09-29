@@ -24,6 +24,17 @@ public:
   void advanceTime(double seconds = 0.05) {time_ns_ += static_cast<std::int64_t>(seconds * 1e9);}
   void closedLoop() {open_loop_ = false;}
   void freezeRosClock() {node_->set_parameter(rclcpp::Parameter("use_sim_time", true));}
+  void nanoProfile()
+  {
+    limo_dwb_critics::MpcConfig config;
+    config.dt = 0.1;
+    config.time_steps = 25;
+    config.batch_size = 96;
+    config.velocity_samples = 6;
+    config.curvature_samples = 9;
+    config.steering_rate = 0.5;
+    mpc_ = std::make_unique<limo_dwb_critics::SamplingMpc>(config);
+  }
   std::int64_t controlTimeNs() const override {return time_ns_;}
 
   dwb_msgs::msg::TrajectoryScore scoreTrajectory(
@@ -137,4 +148,25 @@ TEST_F(MpcControllerTest, ClosedLoopOptionContinuesToUseMeasuredVelocity)
     EXPECT_LE(best.traj.velocity.x, 0.067 + 1e-9);
     controller.advanceTime();
   }
+}
+
+TEST_F(MpcControllerTest, NanoProfileRampsAtTenHzAndResetsAfterCommandTimeout)
+{
+  ControllerHarness controller;
+  controller.nanoProfile();
+  std::shared_ptr<dwb_msgs::msg::LocalPlanEvaluation> results;
+  double maximum_speed = 0.0;
+  for (int cycle = 0; cycle < 6; ++cycle) {
+    const auto best = controller.coreScoringAlgorithm(
+      geometry_msgs::msg::Pose2D(), nav_2d_msgs::msg::Twist2D(), results);
+    ASSERT_EQ(best.traj.poses.size(), 26U);
+    EXPECT_DOUBLE_EQ(rclcpp::Duration(best.traj.time_offsets.back()).seconds(), 2.5);
+    maximum_speed = std::max(maximum_speed, best.traj.velocity.x);
+    controller.advanceTime(0.1);
+  }
+  EXPECT_GT(maximum_speed, 0.2);
+  controller.advanceTime(0.5);
+  const auto restarted = controller.coreScoringAlgorithm(
+    geometry_msgs::msg::Pose2D(), nav_2d_msgs::msg::Twist2D(), results);
+  EXPECT_LE(restarted.traj.velocity.x, 0.13 + 1e-9);
 }

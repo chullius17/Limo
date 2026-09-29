@@ -21,7 +21,7 @@ Each cycle:
 5. Publish **only the first reachable command** of the winning sequence. Repeat
    from the measured pose at the next control cycle.
 
-The default budget is 768 sequences, 50 steps of 0.05 s, and five control
+The model default budget is 768 sequences, 50 steps of 0.05 s, and five control
 segments. This is a finite search, not a guarantee of a globally optimal or
 recursively feasible solution. If every candidate is invalid, the controller
 raises DWB's normal no-legal-trajectories exception; it never reuses a stale
@@ -155,9 +155,17 @@ guarantee identical behavior; simulation and hardware tuning remain necessary.
 
 Inside the Foxy workspace:
 
+Use GCC 9 or newer for this C++17 plugin. On the Jetson, GCC 8's
+`std::filesystem::path` layout is incompatible with the newer runtime library;
+the controller can segfault while pluginlib loads its trajectory generator.
+Select the compiler explicitly and clear the package's CMake cache when
+rebuilding an existing GCC 8 installation:
+
 ```bash
 source /opt/ros/foxy/setup.bash
-colcon build --symlink-install --packages-select limo_dwb_critics limo_controller
+colcon build --symlink-install --packages-select limo_dwb_critics limo_controller \
+  --cmake-clean-cache --cmake-args \
+  -DCMAKE_CXX_COMPILER=/usr/bin/g++-9 -DCMAKE_C_COMPILER=/usr/bin/gcc-9
 source install/setup.bash
 colcon test --packages-select limo_dwb_critics --event-handlers console_direct+
 colcon test-result --verbose
@@ -170,6 +178,8 @@ The `limo_controller` launch selects `config/control_real.yaml` or
 Before physical operation, validate closed-loop simulation on a straight path,
 tight curve, slalom, obstruction and goal approach. Measure lateral error,
 clearance, steering increments and controller execution time. At 20 Hz the
-whole control cycle must fit within 50 ms; a model-only benchmark does not
+whole control cycle must fit within 50 ms (simulation). The real Nano profile
+uses 10 Hz, 96 sequences and 25 steps of 0.10 s, retaining a 2.5 s horizon;
+its whole cycle must fit within 100 ms. A model-only benchmark does not
 include costmap or footprint scoring. Enable `publish_evaluation` temporarily
 for DWB candidate diagnostics (`MpcEffort` is the additional cost).

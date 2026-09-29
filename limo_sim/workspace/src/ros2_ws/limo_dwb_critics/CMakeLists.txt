@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.8)
 project(limo_dwb_critics)
 
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
+  message(FATAL_ERROR
+    "Use GCC 9 or newer for this C++17 plugin. GCC 8 std::filesystem headers "
+    "are incompatible with the newer libstdc++ used by the Foxy runtime. "
+    "Rebuild with --cmake-clean-cache --cmake-args "
+    "-DCMAKE_CXX_COMPILER=/usr/bin/g++-9 -DCMAKE_C_COMPILER=/usr/bin/gcc-9")
+endif()
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()

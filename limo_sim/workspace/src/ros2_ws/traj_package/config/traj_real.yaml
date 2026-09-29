@@ -1,5 +1,5 @@
 # real trajectory profile; selected by robot_model.
-# SMAC Hybrid-A* profile for ROS 2 Humble.
+# SMAC Hybrid-A* profile for ROS 2 Foxy.
 #
 # Profile assumptions:
 # - LIMO operating in Ackermann mode;
