@@ -22,7 +22,7 @@ map_servers:
 local_ctrl_map:
   output_cloud_topic: /limo/map_package/online/local_ctrl_map/points
   inner_trapezoid_inset: 0.20  # Inset of near and sloped edges; front stays aligned.
-  maximum_points: 300  # Highest-confidence persistent points across classes 2/4.
+  maximum_points: 300  # Highest-confidence persistent points across classes 1/2/4.
   minimum_confidence: 0.30
   confidence_decay_per_sec: 0.10
   yellow_decay_multiplier: 3.0
@@ -40,6 +40,8 @@ local_ctrl_map:
   live_cloud_timeout_sec: 0.50
   tf_wait_timeout_sec: 0.20  # Bounded non-blocking wait for exact cloud TF.
   max_pending_clouds: 10
+  persist_exterior_road: true
+  exterior_road_cost: 30
   yellow_line_cost: 60
   soft_obstacle_cost: 30
   boardwalk_cost: 90

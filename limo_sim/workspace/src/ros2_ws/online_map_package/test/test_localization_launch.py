@@ -233,3 +233,17 @@ def test_cv_config_override_reaches_include(monkeypatch):
     args = next(dict(action.launch_arguments) for action in includes
                 if 'config_file' in dict(action.launch_arguments))
     assert args['config_file'] == '/tmp/custom_cv.yaml'
+
+
+@pytest.mark.parametrize('profile', ['real', 'sim'])
+def test_local_exterior_road_settings_leave_amcl_on_the_original_cv_cloud(
+        monkeypatch, profile):
+    nodes, includes = online(monkeypatch, profile)
+    local = nodes['local_ctrl_map']['values']
+    assert local['persist_exterior_road'] is (profile == 'real')
+    assert local['exterior_road_cost'] == (30 if profile == 'real' else 0)
+    amcl = next(dict(action.launch_arguments) for action in includes
+                if 'cv_cloud_topic' in dict(action.launch_arguments))
+    assert amcl['cv_cloud_topic'] == '/limo/cv_package/visual_ptcld/points'
+    assert amcl['cv_enabled'] == 'true'
+    assert amcl['cv_weight_factor'] == amcl['laser_weight_factor'] == '1.0'

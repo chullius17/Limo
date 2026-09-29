@@ -164,7 +164,8 @@ are precomputed at initialization; publishing only updates timestamps.
 publishes '/limo/map_package/online/local_costmap' directly as a
 'nav_msgs/OccupancyGrid'. The grid matches the green rectangle: 2.50 x 2.66 m,
 origin '(0, -1.33)' in 'base_link', and exactly 125 x 133 cells at 2 cm
-resolution. All live classes 1--6 contribute: road (1/5) costs 0, yellow line
+resolution. All live classes 1--6 contribute: exterior road (1) costs 30 in
+the real profile and 0 in simulation; interior road (5) costs 0, yellow line
 (2) 60, soft obstacle (3) 30, and boardwalk (4/6) 90. Where multiple points
 fall in one cell, the greatest cost is retained. The source grid is not
 pre-inflated ('inflation_radius: 0.0'); Nav2's local-costmap 'InflationLayer'
@@ -174,10 +175,16 @@ the fixed class costs.
 At 10 Hz, all points used to build the grid are also published as
 'sensor_msgs/PointCloud2' on
 '/limo/map_package/online/local_ctrl_map/points': all recent-live points and
-classes, plus memory for classes 2/4 reprojected into the current frame and
-capped at 300 entries. The cloud is in 'base_link' and has 'x', 'y', 'z', and
-'class_id' fields. It is available for debugging; PointCloud2 displays exist in
+classes, plus memory for classes 1/2/4 in the real profile or 2/4 in simulation,
+reprojected into the current frame and capped at 300 entries. The cloud is in
+'base_link' and has 'x', 'y', 'z', and 'class_id' fields. It is available for debugging; PointCloud2 displays exist in
 the online RViz configuration but are disabled by default.
+
+The real profile enables 'persist_exterior_road: true' and
+'exterior_road_cost: 30' in its 'local_ctrl_map' section. These settings affect
+only the control grid and its local point memory. AMCL still receives the
+original CV cloud and retains its existing road classification and parameters.
+Simulation keeps 'persist_exterior_road: false' and 'exterior_road_cost: 0'.
 
 At every CV frame, all classes are retained as the live source for 0.50 s. In
 parallel, points **inside the yellow trapezoid and outside the red one** are
@@ -203,7 +210,7 @@ expire while stationary. 'cmd_vel_timeout_sec: 0.0' keeps the last command with
 no timeout. Confidence describes memory, not classifier certainty.
 
 A separate 3 cm class-wise voxel filter avoids duplicates. The
-'maximum_points: 300' limit is shared by both persistent classes: lowest
+'maximum_points: 300' limit is shared by all persistent classes: lowest
 confidence points are removed first; ties are distributed spatially. Configure
 parameters in the 'local_ctrl_map' profile section; override the cap with
 'local_map_maximum_points:=300' and restart to apply it. RViz displays the

@@ -1,7 +1,10 @@
 """Verify semantic-cloud ingestion and local OccupancyGrid generation."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
+import yaml
 
 rclpy = pytest.importorskip('rclpy')
 from geometry_msgs.msg import TransformStamped, Twist  # noqa: E402
@@ -361,3 +364,73 @@ def test_waiting_for_tf_does_not_stop_memory_publication(node, monkeypatch):
     # The debug cloud exposes both the live source and persistent memory.
     assert clouds[0].width == 2
     assert max(grids[0].data) == 60
+
+
+@pytest.fixture(params=['real', 'sim'])
+def control_profile_node(request):
+    config = Path(__file__).resolve().parents[1] / 'config' / (
+        'mapping_' + request.param + '.yaml')
+    parameters = yaml.safe_load(config.read_text())['local_ctrl_map']
+    arguments = ['--ros-args']
+    for name, value in parameters.items():
+        value = str(value).lower() if isinstance(value, bool) else str(value)
+        arguments.extend(['-p', name + ':=' + value])
+    rclpy.init(args=arguments)
+    instance = None
+    try:
+        instance = LocalCtrlMap()
+        yield instance, request.param
+    finally:
+        if instance is not None:
+            instance.destroy_node()
+        rclpy.shutdown()
+
+
+def test_profile_exterior_road_cost_keeps_interior_road_free_and_maximum(
+        control_profile_node):
+    node, profile = control_profile_node
+    expected_cost = 30 if profile == 'real' else 0
+    assert node.exterior_road_cost == expected_cost
+    grid = node.local_grid.rasterize(
+        np.array([[0.615, 0.115], [1.015, 0.115]]), np.array([1, 5]))
+    assert grid_cell(node, grid, 0.615, 0.115) == expected_cost
+    assert grid_cell(node, grid, 1.015, 0.115) == 0
+    merged = node.local_grid.rasterize(
+        np.array([[0.615, 0.115]] * 3), np.array([1, 4, 5]))
+    assert grid_cell(node, merged, 0.615, 0.115) == 90
+
+
+def test_real_exterior_road_reprojects_after_live_cloud_expires(
+        control_profile_node, monkeypatch):
+    from types import SimpleNamespace
+
+    node, profile = control_profile_node
+    monkeypatch.setattr(node, '_check_clock', lambda: Time(seconds=10.0))
+    stamp = Time(seconds=10.0).to_msg()
+    add_pose(node, stamp, 0.0)
+    node.cloud_callback(make_cloud(
+        [[0.615, 0.115], [0.615, -0.115]], [1, 4], stamp))
+    assert set(node.memory.classes) == ({1, 4} if profile == 'real' else {4})
+
+    # Expire live evidence and move the base: only persistent points survive.
+    monkeypatch.setattr(node, '_check_clock', lambda: Time(seconds=10.7))
+    add_pose(node, Time(seconds=10.7).to_msg(), 0.1)
+    grids, clouds = [], []
+    monkeypatch.setattr(node, 'grid_pub', SimpleNamespace(publish=grids.append))
+    monkeypatch.setattr(node, 'cloud_pub', SimpleNamespace(publish=clouds.append))
+    node.publish_grid()
+    grid = np.asarray(grids[-1].data).reshape(
+        node.local_grid.height, node.local_grid.width)
+    assert grid_cell(node, grid, 0.515, 0.115) == (30 if profile == 'real' else 0)
+    assert grid_cell(node, grid, 0.515, -0.115) == 90
+    points = np.frombuffer(clouds[-1].data, dtype=INPUT_DTYPE)
+    assert set(points['class_id']) == ({1, 4} if profile == 'real' else {4})
+    if profile == 'real':
+        np.testing.assert_allclose(points['x'][points['class_id'] == 1], [0.515])
+
+    # Re-entering the inner trapezoid removes exterior road like other memory.
+    monkeypatch.setattr(node, '_check_clock', lambda: Time(seconds=11.0))
+    add_pose(node, Time(seconds=11.0).to_msg(), -0.4)
+    node.publish_grid()
+    assert clouds[-1].width == 0
+    assert max(grids[-1].data) == 0

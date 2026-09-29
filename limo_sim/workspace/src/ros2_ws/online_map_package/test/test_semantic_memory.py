@@ -136,3 +136,29 @@ def test_new_observation_refreshes_voxel_but_stale_frame_is_ignored():
     state.reset()
     assert len(state.points) == 0
     assert state.last_observation_stamp is None
+
+
+def test_exterior_road_persistence_is_opt_in_and_uses_the_same_band():
+    xy = np.array([[0.615, 0.115], [0.615, -0.115], [0.615, 0.0],
+                   [0.2, 0.0], [1.0, 0.0]])
+    classes = np.array([1, 4, 5, 1, 1])
+    default = memory()
+    default.observe(xy, classes, POSE, 1.0)
+    np.testing.assert_array_equal(default.classes, [4])
+
+    state = memory(persist_exterior_road=True)
+    state.observe(xy, classes, POSE, 1.0)
+    assert set(state.classes) == {1, 4}
+    projected, labels, confidence = state.prune((0.1, 0.0, 0.0), 2.0)
+    np.testing.assert_allclose(projected[labels == 1], [[0.515, 0.115]])
+    np.testing.assert_allclose(confidence, [math.exp(-0.1)] * 2)
+    state.prune((0.1, 0.0, 0.0), 14.0)
+    assert not len(state.points)
+
+
+def test_exterior_road_shares_the_point_limit_and_keeps_class_identity():
+    state = memory(persist_exterior_road=True, maximum_points=3)
+    state.observe(np.array([[0.615, 0.115]] * 6),
+                  np.array([1, 2, 4, 1, 2, 4]), POSE, 1.0)
+    assert len(state.points) == 3
+    assert set(state.classes) == {1, 2, 4}

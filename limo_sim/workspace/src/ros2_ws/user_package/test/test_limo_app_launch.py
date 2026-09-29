@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytest.importorskip('launch')
 from launch import LaunchContext  # noqa: E402
@@ -13,6 +14,7 @@ from user_package import app_launch  # noqa: E402
 
 
 PACKAGE = Path(__file__).resolve().parents[1]
+PACKAGES = PACKAGE.parent
 
 
 def load_launch(profile):
@@ -90,9 +92,9 @@ def test_invalid_internal_profile_fails():
 
 
 @pytest.mark.parametrize('profile', ['real', 'sim', 'legacy'])
-def test_cv_is_explicit_and_forwarded_once(monkeypatch, profile):
+def test_cv_inherits_config_and_explicit_override_is_forwarded_once(monkeypatch, profile):
     actions = compose(monkeypatch, profile)
-    assert actions[0]['arguments']['start_cv'] == 'false'
+    assert 'start_cv' not in actions[0]['arguments']
     actions = compose(monkeypatch, profile, start_cv='true', cv_config='/tmp/custom_cv.yaml')
     assert len(actions) == 3
     assert actions[0]['arguments']['start_cv'] == 'true'
@@ -103,6 +105,92 @@ def test_cv_is_explicit_and_forwarded_once(monkeypatch, profile):
         assert actions[0]['arguments']['use_sim_time'] == 'false'
 
 
+@pytest.mark.parametrize('profile', ['real', 'sim', 'legacy'])
+def test_cv_can_be_disabled_when_already_running(monkeypatch, profile):
+    actions = compose(monkeypatch, profile, start_cv='false')
+    assert actions[0]['arguments']['start_cv'] == 'false'
+
+
 def test_invalid_cv_switch_fails(monkeypatch):
     with pytest.raises(ValueError):
         compose(monkeypatch, 'real', start_cv='typo')
+
+
+def load_subsystem(package, filename):
+    spec = importlib.util.spec_from_file_location(
+        package + '_launch_test', PACKAGES / package / 'launch' / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.get_package_share_directory = lambda name: str(PACKAGES / name)
+    return module
+
+
+def launch_context(module, arguments):
+    context = LaunchContext()
+    context.launch_configurations.update(arguments)
+    for action in module.generate_launch_description().entities:
+        if isinstance(action, DeclareLaunchArgument):
+            action.execute(context)
+    return context
+
+
+@pytest.mark.parametrize('profile', ['real', 'sim', 'legacy'])
+@pytest.mark.parametrize('enabled', [True, False])
+@pytest.mark.parametrize('override', ['', 'true', 'false'])
+def test_application_cv_follows_yaml_and_connects_to_mapping(
+        monkeypatch, tmp_path, profile, enabled, override):
+    pytest.importorskip('launch_ros')
+    from launch.actions import IncludeLaunchDescription
+
+    mapping_profile = 'sim' if profile == 'legacy' else profile
+    config_name = 'mapping_' + mapping_profile + '.yaml'
+    config = yaml.safe_load(
+        (PACKAGES / 'online_map_package' / 'config' / config_name).read_text())
+    config['launch']['start_cv'] = enabled
+    config_dir = tmp_path / 'config'
+    config_dir.mkdir()
+    (config_dir / config_name).write_text(yaml.safe_dump(config))
+
+    application = compose(monkeypatch, profile, start_cv=override)
+    wrapper = load_subsystem('online_map_package', application[0]['launch'])
+    wrapper.get_package_share_directory = lambda name: str(tmp_path)
+    include = wrapper.generate_launch_description().entities[0]
+    online = load_subsystem('online_map_package', 'online_map.launch.py')
+    context = launch_context(online, {
+        **dict(include.launch_arguments), **application[0]['arguments']})
+    monkeypatch.setattr(online, 'Node', lambda **kwargs: kwargs)
+    monkeypatch.setattr(online, 'GroupAction', lambda actions: actions)
+    actions = online._launch_online(context)
+    cv_includes = [include for action in actions if isinstance(action, list)
+                   for include in action]
+    expected_enabled = enabled if override == '' else override == 'true'
+    assert len(cv_includes) == int(expected_enabled)
+    if not expected_enabled:
+        return
+
+    cv_arguments = dict(cv_includes[0].launch_arguments)
+    assert cv_arguments['config_file'].endswith('/cv_' + mapping_profile + '.yaml')
+    assert cv_arguments['mode'] == 'backend'
+    expected_clock = 'true' if profile == 'sim' else 'false'
+    assert cv_arguments['use_sim_time'] == expected_clock
+    cv = load_subsystem('cv_package', 'cv.launch.py')
+    cv_context = launch_context(cv, cv_arguments)
+    monkeypatch.setattr(cv, 'Node', lambda **kwargs: kwargs)
+    monkeypatch.setattr(cv, 'OnProcessStart', lambda **kwargs: kwargs)
+    monkeypatch.setattr(cv, 'RegisterEventHandler', lambda handler: handler)
+    pipeline = cv._launch_cv(cv_context)
+    lane = next(node for node in pipeline if node.get('name') == 'lane_node')
+    expected_detector = 'lane_detector_waterfall' if profile == 'real' else 'lane_detector'
+    assert lane['executable'] == expected_detector
+    handler = next(action for action in pipeline if 'on_start' in action)
+    cloud = handler['on_start'][0]['parameters'][0]
+    amcl = next(dict(action.launch_arguments) for action in actions
+                if isinstance(action, IncludeLaunchDescription))
+    assert amcl['cv_enabled'] == 'true'
+    assert '/' + cloud['pointcloud_topic'].lstrip('/') == amcl['cv_cloud_topic']
+    local_map = next(action for action in actions
+                     if isinstance(action, dict) and action['name'] == 'local_ctrl_map')
+    local_parameters = local_map['parameters'][0]
+    assert local_parameters.get('input_topic', '/limo/cv_package/visual_ptcld/points') == (
+        amcl['cv_cloud_topic'])
+    assert cloud['use_sim_time'] is (profile == 'sim')

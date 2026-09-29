@@ -46,7 +46,7 @@ OUTPUT_CLOUD_DTYPE = np.dtype({
 
 
 class LocalCtrlMap(Node):
-    """Fuse live and reprojected boardwalk/yellow-line evidence into a grid."""
+    """Fuse live and reprojected semantic evidence into a control grid."""
 
     def __init__(self):
         super().__init__('local_ctrl_map')
@@ -140,6 +140,8 @@ class LocalCtrlMap(Node):
             'live_cloud_timeout_sec': 0.50,
             'tf_wait_timeout_sec': 0.20,
             'max_pending_clouds': 10,
+            'persist_exterior_road': False,
+            'exterior_road_cost': 0,
             'yellow_line_cost': 60,
             'soft_obstacle_cost': 30,
             'boardwalk_cost': 90,
@@ -170,6 +172,12 @@ class LocalCtrlMap(Node):
             value = getattr(self, name)
             if not isinstance(value, int) or value < 1 or value > 100:
                 raise ValueError(f'{name} must be an integer in [1, 100]')
+        if (not isinstance(self.exterior_road_cost, int)
+                or isinstance(self.exterior_road_cost, bool)
+                or not 0 <= self.exterior_road_cost <= 100):
+            raise ValueError('exterior_road_cost must be an integer in [0, 100]')
+        if not isinstance(self.persist_exterior_road, bool):
+            raise ValueError('persist_exterior_road must be a boolean')
         if not 0.0 < self.minimum_confidence <= 1.0:
             raise ValueError('minimum_confidence must be in (0, 1]')
         if (not math.isfinite(self.confidence_decay_per_sec)
@@ -200,12 +208,13 @@ class LocalCtrlMap(Node):
             self.inner_trapezoid_inset,
             self.maximum_points, self.minimum_confidence,
             self.confidence_decay_per_sec,
-            self.yellow_decay_multiplier, self.voxel_size)
+            self.yellow_decay_multiplier, self.voxel_size,
+            persist_exterior_road=self.persist_exterior_road)
         self.local_grid = LocalGrid(
             self.rectangle_length, self.rectangle_width,
             self.grid_resolution, self.inflation_radius,
             self.yellow_line_cost, self.soft_obstacle_cost,
-            self.boardwalk_cost)
+            self.boardwalk_cost, exterior_road_cost=self.exterior_road_cost)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.last_clock_ns = None
@@ -257,7 +266,8 @@ class LocalCtrlMap(Node):
         self.get_logger().info(
             f'Local semantic grid: {self.input_topic} -> {self.output_topic} '
             f'and {self.output_cloud_topic}, '
-            f'live/grid_classes=1..6, persistent_classes=2/4, '
+            f'live/grid_classes=1..6, '
+            f'persistent_classes={self.memory.persistent_classes}, '
             f'maximum_points={self.maximum_points}; '
             f'tf_wait={self.tf_wait_timeout_sec:g}s, '
             f'pending_clouds<={self.max_pending_clouds}; '
@@ -268,7 +278,8 @@ class LocalCtrlMap(Node):
             f'angular={self.angular_speed_at_max_decay:g}rad/s at maximum); '
             f'geometry={self.local_grid.width}x{self.local_grid.height} at '
             f'{self.grid_resolution:.3f}m, '
-            f'inflation={self.inflation_radius:g}m; costs=1/5:0,'
+            f'inflation={self.inflation_radius:g}m; '
+            f'costs=1:{self.exterior_road_cost},5:0,'
             f'2:{self.yellow_line_cost},3:{self.soft_obstacle_cost},'
             f'4/6:{self.boardwalk_cost}')
 

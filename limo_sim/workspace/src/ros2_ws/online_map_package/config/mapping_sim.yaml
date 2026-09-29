@@ -40,6 +40,8 @@ local_ctrl_map:
   live_cloud_timeout_sec: 0.50
   tf_wait_timeout_sec: 0.20  # Bounded non-blocking wait for exact cloud TF.
   max_pending_clouds: 10
+  persist_exterior_road: false
+  exterior_road_cost: 0
   yellow_line_cost: 60
   soft_obstacle_cost: 30
   boardwalk_cost: 90

@@ -23,7 +23,8 @@ class SemanticMemory:
     def __init__(self, length, width, height, near_width, inner_inset=0.2,
                  maximum_points=300,
                  minimum_confidence=0.3, confidence_decay_per_sec=0.1,
-                 yellow_decay_multiplier=3.0, voxel_size=0.03):
+                 yellow_decay_multiplier=3.0, voxel_size=0.03,
+                 persist_exterior_road=False):
         self.length = length
         self.width = width
         self.height = height
@@ -34,6 +35,7 @@ class SemanticMemory:
         self.decay = confidence_decay_per_sec
         self.yellow_decay_multiplier = yellow_decay_multiplier
         self.voxel_size = voxel_size
+        self.persistent_classes = (1, 2, 4) if persist_exterior_road else (2, 4)
         self.reset()
 
     def reset(self):
@@ -72,12 +74,12 @@ class SemanticMemory:
                 & (np.abs(xy[:, 1]) <= width / 2.0 + 1e-9))
 
     def observe(self, xy, classes, pose, stamp):
-        """Immediately admit class 2/4 points in the yellow-red band."""
+        """Immediately admit configured classes in the yellow-red band."""
         if (self.last_observation_stamp is not None
                 and stamp <= self.last_observation_stamp):
             return
         self.last_observation_stamp = stamp
-        selected = (np.isin(classes, [2, 4])
+        selected = (np.isin(classes, self.persistent_classes)
                     & np.isfinite(xy).all(axis=1)
                     & self.inside_trapezoid(xy)
                     & ~self.inside_inner_trapezoid(xy))

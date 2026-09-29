@@ -25,7 +25,8 @@ class LocalGrid:
     """Rasterize semantic points and serialize the local OccupancyGrid."""
 
     def __init__(self, length, width, resolution, inflation_radius,
-                 yellow_line_cost, soft_obstacle_cost, boardwalk_cost):
+                 yellow_line_cost, soft_obstacle_cost, boardwalk_cost,
+                 exterior_road_cost=0):
         self.length = float(length)
         self.metric_width = float(width)
         self.resolution = float(resolution)
@@ -41,7 +42,7 @@ class LocalGrid:
                 'grid_resolution must divide rectangle dimensions exactly')
         self.origin_y = -0.5 * self.metric_width
         self.class_costs = np.array([
-            0, 0, yellow_line_cost, soft_obstacle_cost,
+            0, exterior_road_cost, yellow_line_cost, soft_obstacle_cost,
             boardwalk_cost, 0, boardwalk_cost,
         ], dtype=np.int16)
         radius_cells = int(math.ceil(

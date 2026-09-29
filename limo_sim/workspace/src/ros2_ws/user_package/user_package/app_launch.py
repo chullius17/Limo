@@ -52,9 +52,10 @@ def _launch_app(context, profile, use_sim_time_override=None):
         context, 'start_control_gui', simulation)
 
     map_topic = LaunchConfiguration('map_topic').perform(context)
-    online_map_arguments = {
-        'start_cv': str(_optional_boolean(context, 'start_cv', False)).lower(),
-    }
+    online_map_arguments = {}
+    start_cv = LaunchConfiguration('start_cv').perform(context)
+    if start_cv:
+        online_map_arguments['start_cv'] = str(_boolean(start_cv)).lower()
     cv_config = LaunchConfiguration('cv_config').perform(context)
     if cv_config:
         online_map_arguments['cv_config'] = cv_config
@@ -99,8 +100,10 @@ def generate_app_launch_description(profile, use_sim_time=None):
             'map_topic', default_value='/map',
             description='Global OccupancyGrid consumed by traj_package.'),
         DeclareLaunchArgument(
-            'start_cv', default_value='false',
-            description='Start CV via online mapping; false when CV is already running.'),
+            'start_cv', default_value='',
+            description=(
+                'Override the mapping profile CV setting; empty uses launch.start_cv '
+                'from YAML. Set false when CV is already running.')),
         DeclareLaunchArgument(
             'cv_config', default_value='',
             description='Optional CV YAML override; empty uses the real/sim mapping profile.'),
