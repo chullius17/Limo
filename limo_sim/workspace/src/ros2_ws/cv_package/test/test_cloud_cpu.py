@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from cv_package.cloud_cpu import RayCache, transform_xy, voxel_groups
+from cv_package.visual_ptcld.cloud_cpu import RayCache, transform_xy, voxel_groups
 
 
 def reference_projection(rows, cols, z, intrinsics, width, height, crop, r, t):

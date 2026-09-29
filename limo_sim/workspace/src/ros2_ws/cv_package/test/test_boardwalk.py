@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import cv2
 
-from cv_package.boardwalk import (
+from cv_package.visual_ptcld.boardwalk import (
     BOARDWALK_COUNTS, BOARDWALK_TIMINGS, classify_boardwalk,
 )
 
@@ -110,7 +110,7 @@ def test_distances_use_both_bev_axes():
     np.testing.assert_array_equal(labels, [1, 4, 6, 4])
 
 
-from cv_package.boardwalk import BoardwalkClassifier
+from cv_package.visual_ptcld.boardwalk import BoardwalkClassifier
 
 
 def test_points_in_one_former_grid_cell_remain_distinct():

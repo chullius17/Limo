@@ -5,7 +5,7 @@ from array import array
 import numpy as np
 from sensor_msgs.msg import PointCloud2, PointField
 
-from cv_package.cloud_pipeline import CLOUD_DTYPE
+from .cloud_pipeline import CLOUD_DTYPE
 
 
 CLOUD_FIELDS = [

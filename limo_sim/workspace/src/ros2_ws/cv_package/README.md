@@ -226,3 +226,24 @@ To replace the classic detector, stop it and add this remap to the command:
 ```bash
 -r limo/cv_package/detection/lane_waterfall_labels/raw:=/limo/cv_package/detection/lane_labels/raw
 ```
+
+
+## Point-cloud implementation
+
+The node and its support modules are grouped in `cv_package/visual_ptcld/`:
+
+- `visual_ptcld.py`: ROS node, subscriptions and publication.
+- `cloud_pipeline.py`: semantic-cloud projection and classification pipeline.
+- `cloud_cpu.py`: cached camera rays, planar transforms and voxel grouping.
+- `cloud_message.py`: `PointCloud2` serialization.
+- `boardwalk.py`: metric boardwalk classification and exterior-road filtering.
+
+Python imports use `cv_package.visual_ptcld.<module>`. The ROS executable remains
+`visual_ptcld`; its entry point is `cv_package.visual_ptcld.visual_ptcld:main`.
+After changing the package layout, rebuild `cv_package` and source the workspace
+so the installed executable uses the new entry point:
+
+```bash
+colcon build --packages-select cv_package --symlink-install
+source install/setup.bash
+```

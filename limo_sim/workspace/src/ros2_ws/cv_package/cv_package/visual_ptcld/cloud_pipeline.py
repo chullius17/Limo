@@ -4,7 +4,7 @@ import time
 
 import numpy as np
 
-from cv_package.cloud_cpu import transform_xy, voxel_groups
+from .cloud_cpu import transform_xy, voxel_groups
 
 
 LABEL_INVALID = np.uint8(0)

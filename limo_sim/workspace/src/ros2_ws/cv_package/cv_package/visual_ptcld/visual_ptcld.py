@@ -26,12 +26,12 @@ import time
 import threading
 from queue import Queue, Empty
 from collections import deque
-from cv_package.boardwalk import (
+from .boardwalk import (
     BOARDWALK_COUNTS, BOARDWALK_TIMINGS, BoardwalkClassifier,
 )
-from cv_package import cloud_pipeline
-from cv_package.cloud_cpu import RayCache
-from cv_package.cloud_message import (
+from . import cloud_pipeline
+from .cloud_cpu import RayCache
+from .cloud_message import (
     CLOUD_FIELDS as POINT_CLOUD_FIELDS,
     make_pointcloud2,
 )

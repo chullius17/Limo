@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 
-from cv_package.cloud_cpu import RayCache, transform_xy, voxel_groups
+from cv_package.visual_ptcld.cloud_cpu import RayCache, transform_xy, voxel_groups
 from test_cloud_cpu import reference_projection
 
 
