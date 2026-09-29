@@ -1,3 +1,4 @@
+# sim trajectory profile; selected by robot_model.
 # SMAC Hybrid-A* profile for ROS 2 Humble.
 #
 # Profile assumptions:
@@ -6,12 +7,11 @@
 # - controller speed range from -0.10 m/s to 0.50 m/s;
 # - execution alongside the CV pipeline on a Jetson Nano.
 #
-# use_sim_time is a false placeholder rewritten by the launch file for either
-# simulation or the real robot.
+# The profile clock can be overridden by the launch without changing tuning.
 
 planner_server:
   ros__parameters:
-    use_sim_time: false
+    use_sim_time: true
 
     # Nav2 uses this frequency to report slow planning; it does not make the
     # Behavior Tree replan at 1 Hz by itself. Since the LIMO moves slowly, there
@@ -59,9 +59,8 @@ planner_server:
       analytic_expansion_ratio: 3.5
       analytic_expansion_max_length: 7.5
 
-      # The theoretical centre-line limit is 0.462 m. Use a conservative
-      # operational radius so every planned primitive remains comfortably
-      # inside the steering capability of the physical robot.
+      # Preserve the existing conservative simulation planning radius.
+      # It remains above the controller's 0.55 m kinematic minimum.
       minimum_turning_radius: 0.7
 
       change_penalty: 0.0
@@ -149,3 +148,23 @@ global_costmap:
         inter_lane_peak_cost: 100
         far_cost_slope: 10.0
         far_max_cost: 8
+
+# Goal selection and validation use the same footprint as the planner/controller.
+rviz_goal_bridge:
+  ros__parameters:
+    use_sim_time: true
+    planner_id: GridBased
+    costmap_topic: /global_costmap/costmap
+    adjusted_goal_topic: /adjusted_goal_pose
+    adjusted_start_topic: /adjusted_start_pose
+    robot_base_frame: base_link
+    start_transform_timeout: 0.20
+    enable_start_adjustment: true
+    enable_goal_adjustment: true
+    position_search_radius: 0.75
+    position_search_step: 0.10
+    angle_search_step_deg: 22.5
+    max_planning_attempts: 48
+    footprint_length: 0.322
+    footprint_width: 0.220
+    collision_cost_threshold: 99

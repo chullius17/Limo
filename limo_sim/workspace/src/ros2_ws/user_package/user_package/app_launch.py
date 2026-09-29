@@ -28,7 +28,7 @@ def _boolean(value):
     """Parse a strict ROS launch boolean."""
     if isinstance(value, bool):
         return value
-    if value.lower() in ('true', 'false'):
+    if isinstance(value, str) and value.lower() in ('true', 'false'):
         return value.lower() == 'true'
     raise ValueError('Expected true or false, got {!r}'.format(value))
 
@@ -51,8 +51,22 @@ def _launch_app(context, profile, use_sim_time_override=None):
     start_gui = _optional_boolean(
         context, 'start_control_gui', simulation)
 
+    if not simulation and start_gui:
+        raise ValueError(
+            'The real application is headless; use desktop_app.launch.py '
+            'for the control GUI.')
+
     map_topic = LaunchConfiguration('map_topic').perform(context)
     online_map_arguments = {}
+    online_map_file = 'online_map_{}.launch.py'.format(profile)
+    mapping_config = LaunchConfiguration('mapping_config').perform(context)
+    if mapping_config:
+        online_map_file = 'online_map.launch.py'
+        online_map_arguments['config_file'] = os.path.expanduser(mapping_config)
+        online_map_arguments['use_sim_time'] = use_sim_time
+    if not simulation:
+        online_map_arguments.update(
+            mode='backend', start_rviz='false', use_sim_time=use_sim_time)
     start_cv = LaunchConfiguration('start_cv').perform(context)
     if start_cv:
         online_map_arguments['start_cv'] = str(_boolean(start_cv)).lower()
@@ -62,31 +76,31 @@ def _launch_app(context, profile, use_sim_time_override=None):
     if use_sim_time_override is not None:
         online_map_arguments['use_sim_time'] = use_sim_time
 
+    trajectory_arguments = {
+        'robot_model': profile,
+        'map_topic': map_topic,
+        'use_sim_time': use_sim_time,
+        'autostart': 'true',
+    }
+    controller_arguments = {
+        'robot_model': profile,
+        'use_sim_time': use_sim_time,
+        'autostart': 'true',
+        'start_gui': str(start_gui).lower(),
+    }
+    for name, arguments, package, prefix in (
+            ('planner_params_file', trajectory_arguments, 'traj_package', 'traj'),
+            ('controller_params_file', controller_arguments, 'limo_controller', 'control')):
+        params_file = LaunchConfiguration(name).perform(context)
+        # Explicit filenames replace the app's empty launch configuration in
+        # each child; an inherited empty value would suppress its YAML default.
+        arguments[name] = os.path.expanduser(params_file) if params_file else os.path.join(
+            get_package_share_directory(package), 'config', prefix + '_' + profile + '.yaml')
+
     return [
-        _include(
-            'online_map_package',
-            'online_map_{}.launch.py'.format(profile),
-            online_map_arguments,
-        ),
-        _include(
-            'traj_package',
-            'trajectory.launch.py',
-            {
-                'map_topic': map_topic,
-                'use_sim_time': use_sim_time,
-                'autostart': 'true',
-            },
-        ),
-        _include(
-            'limo_controller',
-            'control.launch.py',
-            {
-                'robot_model': profile,
-                'use_sim_time': use_sim_time,
-                'autostart': 'true',
-                'start_gui': str(start_gui).lower(),
-            },
-        ),
+        _include('online_map_package', online_map_file, online_map_arguments),
+        _include('traj_package', 'trajectory.launch.py', trajectory_arguments),
+        _include('limo_controller', 'control.launch.py', controller_arguments),
     ]
 
 
@@ -96,6 +110,15 @@ def generate_app_launch_description(profile, use_sim_time=None):
         raise ValueError('profile must be sim or real')
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'mapping_config', default_value='',
+            description='Mapping YAML override; empty uses the real/sim profile.'),
+        DeclareLaunchArgument(
+            'planner_params_file', default_value='',
+            description='Planner/bridge YAML override; empty follows the app profile.'),
+        DeclareLaunchArgument(
+            'controller_params_file', default_value='',
+            description='Controller YAML override; empty follows the app profile.'),
         DeclareLaunchArgument(
             'map_topic', default_value='/map',
             description='Global OccupancyGrid consumed by traj_package.'),
@@ -109,7 +132,8 @@ def generate_app_launch_description(profile, use_sim_time=None):
             description='Optional CV YAML override; empty uses the real/sim mapping profile.'),
         DeclareLaunchArgument(
             'start_control_gui', default_value='',
-            description='Override the profile default for the control GUI.'),
+            description=(
+                'Simulation GUI override; the real GUI runs in desktop_app.launch.py.')),
         OpaqueFunction(
             function=_launch_app,
             args=[profile, use_sim_time],

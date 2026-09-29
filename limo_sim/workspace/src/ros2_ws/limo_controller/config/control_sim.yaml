@@ -1,3 +1,4 @@
+# sim controller profile; selected by robot_model.
 # Nav2 Foxy sampled MPC for the AgileX LIMO in Ackermann mode.
 # Uses DWB critics to score constrained, time-varying control sequences.
 # Steering dynamics and odometry/model agreement need calibration on the robot.
@@ -38,7 +39,7 @@ controller_server:
       publish_local_plan: true
       publish_cost_grid_pc: false
 
-      # Match the real LIMO limits used by the Humble MPPI profile.
+      # Preserve the LIMO velocity limits; geometry below matches Gazebo.
       min_vel_x: -0.10
       max_vel_x: 0.50
       min_vel_y: 0.0
@@ -79,8 +80,8 @@ controller_server:
         batch_size: 768
         velocity_samples: 8
         curvature_samples: 15
-        wheelbase: 0.20
-        rear_axle_to_base: 0.10
+        wheelbase: 0.24
+        rear_axle_to_base: 0.12
         max_steering_rate: 0.5  # Bicycle steering rad/s; 0.025 rad per control cycle.
         velocity_std: 0.12
         steering_std: 0.10
@@ -107,7 +108,7 @@ controller_server:
         - "MppiPath"
 
       AckermannKinematics.scale: 1.0
-      AckermannKinematics.min_turning_radius: 0.462
+      AckermannKinematics.min_turning_radius: 0.55
       AckermannKinematics.lateral_tolerance: 0.000001
       AckermannKinematics.stopped_velocity: 0.001
 
@@ -202,3 +203,19 @@ local_costmap:
         enabled: true
         inflation_radius: 0.30  # Same obstacle-distance field as the Humble profile.
         cost_scaling_factor: 8.0
+
+# Shared velocity arbitration for this runtime profile.
+twist_mux:
+  ros__parameters:
+    use_sim_time: true
+    output_topic: /cmd_vel
+    publish_rate: 50.0
+    topics:
+      autonomy:
+        topic: /cmd_vel_autonomy
+        timeout: 0.5
+        priority: 10
+      teleop:
+        topic: /cmd_vel_teleop
+        timeout: 0.5
+        priority: 100

@@ -28,6 +28,8 @@ def load_launch(profile):
 
 
 def compose(monkeypatch, profile, **overrides):
+    monkeypatch.setattr(
+        app_launch, 'get_package_share_directory', lambda name: str(PACKAGES / name))
     module = load_launch(profile)
     description = module.generate_launch_description()
     context = LaunchContext()
@@ -56,6 +58,8 @@ def test_sim_launches_map_trajectory_and_controller(monkeypatch):
         ('limo_controller', 'control.launch.py'),
     ]
     assert actions[1]['arguments'] == {
+        'robot_model': 'sim',
+        'planner_params_file': str(PACKAGES / 'traj_package/config/traj_sim.yaml'),
         'map_topic': '/map',
         'use_sim_time': 'true',
         'autostart': 'true',
@@ -75,7 +79,7 @@ def test_real_uses_wall_clock_and_robot_feedback(monkeypatch):
 
 def test_application_overrides_are_forwarded(monkeypatch):
     actions = compose(
-        monkeypatch, 'real', map_topic='/custom_map',
+        monkeypatch, 'sim', map_topic='/custom_map',
         start_control_gui='true')
     assert actions[1]['arguments']['map_topic'] == '/custom_map'
     assert actions[2]['arguments']['start_gui'] == 'true'
@@ -194,3 +198,73 @@ def test_application_cv_follows_yaml_and_connects_to_mapping(
     assert local_parameters.get('input_topic', '/limo/cv_package/visual_ptcld/points') == (
         amcl['cv_cloud_topic'])
     assert cloud['use_sim_time'] is (profile == 'sim')
+
+
+def test_real_application_rejects_a_local_control_gui(monkeypatch):
+    with pytest.raises(ValueError, match='desktop_app.launch.py'):
+        compose(monkeypatch, 'real', start_control_gui='true')
+
+
+def test_real_mapping_is_forced_headless(monkeypatch):
+    actions = compose(monkeypatch, 'real')
+    assert actions[0]['arguments']['mode'] == 'backend'
+    assert actions[0]['arguments']['start_rviz'] == 'false'
+    assert actions[0]['arguments']['use_sim_time'] == 'false'
+
+
+def test_custom_mapping_profile_is_forwarded_to_backend(monkeypatch):
+    actions = compose(
+        monkeypatch, 'real', mapping_config='/tmp/custom_mapping.yaml',
+        start_cv='false')
+    assert actions[0]['launch'] == 'online_map.launch.py'
+    assert actions[0]['arguments']['config_file'] == '/tmp/custom_mapping.yaml'
+    assert actions[0]['arguments']['mode'] == 'backend'
+    assert actions[0]['arguments']['start_cv'] == 'false'
+    assert actions[2]['arguments']['start_gui'] == 'false'
+
+
+@pytest.mark.parametrize('profile,expected', [
+    ('real', 'real'), ('sim', 'sim'), ('legacy', 'sim')])
+def test_application_selects_matching_planner_and_control_models(
+        monkeypatch, profile, expected):
+    actions = compose(monkeypatch, profile)
+    assert actions[1]['arguments']['robot_model'] == expected
+    assert actions[2]['arguments']['robot_model'] == expected
+    assert actions[1]['arguments']['planner_params_file'].endswith(
+        '/traj_' + expected + '.yaml')
+    assert actions[2]['arguments']['controller_params_file'].endswith(
+        '/control_' + expected + '.yaml')
+
+
+def test_application_forwards_custom_planner_and_controller_files(monkeypatch):
+    actions = compose(
+        monkeypatch, 'real', planner_params_file='/tmp/planner.yaml',
+        controller_params_file='/tmp/control.yaml')
+    assert actions[1]['arguments']['planner_params_file'] == '/tmp/planner.yaml'
+    assert actions[2]['arguments']['controller_params_file'] == '/tmp/control.yaml'
+
+
+@pytest.mark.parametrize('profile,model,clock', [
+    ('real', 'real', False), ('sim', 'sim', True), ('legacy', 'sim', False)])
+def test_application_resolves_yaml_defaults_despite_empty_parent_arguments(
+        monkeypatch, profile, model, clock):
+    application = compose(monkeypatch, profile)
+    for include in application[1:]:
+        module = load_subsystem(include['package'], include['launch'])
+        monkeypatch.setattr(module, 'Node', lambda **kwargs: kwargs)
+        context = launch_context(module, {
+            'planner_params_file': '', 'controller_params_file': '',
+            **include['arguments']})
+        description = module.generate_launch_description()
+        if include['package'] == 'traj_package':
+            node = next(action for action in description.entities
+                        if isinstance(action, dict) and action['name'] == 'planner_server')
+            selected = context.launch_configurations['planner_params_file']
+        else:
+            action = next(action for action in description.entities
+                          if isinstance(action, OpaqueFunction))
+            node = action.execute(context)[0]
+            selected = context.launch_configurations['controller_params_file']
+        assert selected.endswith('_' + model + '.yaml')
+        config = yaml.safe_load(Path(node['parameters'][0].perform(context)).read_text())
+        assert config[node['name']]['ros__parameters']['use_sim_time'] is clock

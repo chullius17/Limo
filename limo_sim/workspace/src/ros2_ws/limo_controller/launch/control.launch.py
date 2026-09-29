@@ -1,4 +1,4 @@
-"""Launch the Foxy-compatible Nav2 DWB controller for the physical LIMO."""
+"""Launch the Nav2 controller using a real or simulation YAML profile."""
 
 import os
 
@@ -6,34 +6,23 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from nav2_common.launch import RewrittenYaml
 
 
-def model_overrides(profile):
-    """Match the different physical and Gazebo Ackermann geometries."""
-    if profile == 'real':
-        return {}  # Preserve the physical/custom values in the supplied YAML.
-    if profile == 'sim':
-        return {
-            'FollowPath.MPC.wheelbase': 0.24,
-            'FollowPath.MPC.rear_axle_to_base': 0.12,
-            'FollowPath.AckermannKinematics.min_turning_radius': 0.55,
-        }
-    raise ValueError('robot_model must be sim or real')
-
-
 def controller_node(context, configured_params, log_level):
-    """Apply simulation geometry only when explicitly selected by the launch."""
+    """Use the chosen YAML without injecting geometry over custom parameters."""
     profile = LaunchConfiguration('robot_model').perform(context)
+    if profile not in ('real', 'sim'):
+        raise ValueError('robot_model must be sim or real')
     return [Node(
         package='nav2_controller',
         executable='controller_server',
         name='controller_server',
         output='screen',
-        parameters=[configured_params, model_overrides(profile)],
+        parameters=[configured_params],
         arguments=['--ros-args', '--log-level', log_level],
         remappings=[('cmd_vel', '/cmd_vel_autonomy')],
     )]
@@ -42,16 +31,10 @@ def controller_node(context, configured_params, log_level):
 def generate_launch_description():
     """Create the controller server and its lifecycle manager."""
     package_share = get_package_share_directory('limo_controller')
-    default_params_file = os.path.join(
-        package_share,
-        'config',
-        'dwb_params.yaml',
-    )
-    twist_mux_params_file = os.path.join(
-        package_share,
-        'config',
-        'twist_mux.yaml',
-    )
+    robot_model = LaunchConfiguration('robot_model')
+    default_params_file = [
+        os.path.join(package_share, 'config', 'control_'), robot_model, '.yaml']
+    profile_clock = PythonExpression(["'", robot_model, "' == 'sim'"])
 
     controller_params_file = LaunchConfiguration('controller_params_file')
     use_sim_time = LaunchConfiguration('use_sim_time')
@@ -76,10 +59,7 @@ def generate_launch_description():
         executable='cmd_vel_mux',
         name='twist_mux',
         output='screen',
-        parameters=[
-            twist_mux_params_file,
-            {'use_sim_time': ParameterValue(use_sim_time, value_type=bool)},
-        ],
+        parameters=[configured_params],
     )
 
     lifecycle_manager = Node(
@@ -115,19 +95,18 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument(
-            'controller_params_file',
-            default_value=default_params_file,
-            description='Absolute path to the LIMO controller parameters.',
+            'robot_model', default_value='real', choices=['real', 'sim'],
+            description='Select control_real.yaml or control_sim.yaml.',
         ),
         DeclareLaunchArgument(
-            'robot_model',
-            default_value='real',
-            description='sim for limo_car Gazebo geometry; real preserves the YAML geometry.',
+            'controller_params_file',
+            default_value=default_params_file,
+            description='Controller and velocity-mux YAML; default follows robot_model.',
         ),
         DeclareLaunchArgument(
             'use_sim_time',
-            default_value='true',
-            description='Use Gazebo/rosbag time instead of the robot clock.',
+            default_value=profile_clock,
+            description='Clock override; default is true for sim, false for real.',
         ),
         DeclareLaunchArgument(
             'autostart',
@@ -141,8 +120,8 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'start_gui',
-            default_value='true',
-            description='Open the local control window.',
+            default_value=profile_clock,
+            description='Local GUI override; real uses desktop_app.launch.py by default.',
         ),
         controller_server,
         cmd_vel_mux,

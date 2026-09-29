@@ -19,29 +19,26 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from nav2_common.launch import RewrittenYaml
 
 
 def generate_launch_description():
-    """Create the ROS 2 Humble global-planner launch description."""
+    """Create the global planner and goal bridge for the selected model."""
     package_share = get_package_share_directory('traj_package')
-    default_params_file = os.path.join(
-        package_share,
-        'config',
-        'smac_hybrid_params.yaml',
-    )
+    robot_model = LaunchConfiguration('robot_model')
+    default_params_file = [
+        os.path.join(package_share, 'config', 'traj_'), robot_model, '.yaml']
+    profile_clock = PythonExpression(["'", robot_model, "' == 'sim'"])
 
     planner_params_file = LaunchConfiguration('planner_params_file')
     map_topic = LaunchConfiguration('map_topic')
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
 
-    # Rewriting the placeholder in the YAML keeps one configuration usable on
-    # both the real LIMO and Gazebo without relying on launch substitutions
-    # inside the parameter file itself.
+    # Clock and map-topic overrides apply to either model profile or custom YAML.
     configured_params = RewrittenYaml(
         source_file=planner_params_file,
         root_key='',
@@ -86,35 +83,18 @@ def generate_launch_description():
         executable='rviz_goal_bridge',
         name='rviz_goal_bridge',
         output='screen',
-        parameters=[{
-            'use_sim_time': ParameterValue(use_sim_time, value_type=bool),
-            'planner_id': 'GridBased',
-            'costmap_topic': '/global_costmap/costmap',
-            'adjusted_goal_topic': '/adjusted_goal_pose',
-            'adjusted_start_topic': '/adjusted_start_pose',
-            'robot_base_frame': 'base_link',
-            'start_transform_timeout': 0.20,
-            'enable_start_adjustment': True,
-            # Search a wider spatial neighborhood while using a coarser ring
-            # step and a bounded number of SMAC requests for the Jetson Nano.
-            'enable_goal_adjustment': True,
-            'position_search_radius': 0.75,
-            'position_search_step': 0.10,
-            'angle_search_step_deg': 22.5,
-            'max_planning_attempts': 48,
-            # Match the physical, unpadded footprint used by SMAC.
-            'footprint_length': 0.322,
-            'footprint_width': 0.220,
-            # OccupancyGrid value 99 represents Nav2's inscribed cost.
-            'collision_cost_threshold': 99,
-        }],
+        parameters=[configured_params],
     )
 
     return LaunchDescription([
         DeclareLaunchArgument(
+            'robot_model', default_value='real', choices=['real', 'sim'],
+            description='Select traj_real.yaml or traj_sim.yaml.',
+        ),
+        DeclareLaunchArgument(
             'planner_params_file',
             default_value=default_params_file,
-            description='Absolute path to the SMAC and global-costmap parameters.',
+            description='Planner/bridge YAML override; default follows robot_model.',
         ),
         DeclareLaunchArgument(
             'map_topic',
@@ -125,8 +105,8 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'use_sim_time',
-            default_value='true',
-            description='Use the Gazebo/rosbag clock instead of the system clock.',
+            default_value=profile_clock,
+            description='Clock override; default is true for sim, false for real.',
         ),
         DeclareLaunchArgument(
             'autostart',

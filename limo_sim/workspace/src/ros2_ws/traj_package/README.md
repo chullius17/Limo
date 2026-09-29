@@ -36,3 +36,26 @@ planning state.
 
 `user_package/limo_app_sim.launch.py` and `limo_app_real.launch.py` compose
 mapping, planning, and control for the two runtime profiles.
+
+## Real and simulation profiles
+
+`trajectory.launch.py` selects `config/traj_real.yaml` or
+`config/traj_sim.yaml` through `robot_model`:
+
+```bash
+ros2 launch traj_package trajectory.launch.py robot_model:=real
+ros2 launch traj_package trajectory.launch.py robot_model:=sim
+```
+
+The default model is `real`. The clock defaults to wall time for real and
+simulation time for sim; `use_sim_time` can override the clock without changing
+the selected profile. The application launches pass their profile automatically.
+
+Both files configure SMAC, the global costmap and `rviz_goal_bridge`, including
+its goal-search budget and validation footprint. Planner tuning is preserved:
+both profiles initially retain the conservative 0.7 m turning radius, and their
+footprints match their controller costmaps. The files can now be tuned separately.
+
+An explicit `planner_params_file` takes precedence over the selected default.
+`map_topic` continues to rewrite both the static-map and border-follow inputs.
+The real/sim profiles are the only built-in planner parameter files.

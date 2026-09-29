@@ -163,8 +163,8 @@ colcon test --packages-select limo_dwb_critics --event-handlers console_direct+
 colcon test-result --verbose
 ```
 
-The existing `limo_controller` launch loads `config/dwb_params.yaml`, which now
-selects this plugin. For a baseline comparison, set `FollowPath.plugin` back to
+The `limo_controller` launch selects `config/control_real.yaml` or
+`config/control_sim.yaml` via `robot_model`; both select this plugin. For a baseline comparison, set `FollowPath.plugin` back to
 `dwb_core::DWBLocalPlanner`; the original generator and its parameters remain.
 
 Before physical operation, validate closed-loop simulation on a straight path,

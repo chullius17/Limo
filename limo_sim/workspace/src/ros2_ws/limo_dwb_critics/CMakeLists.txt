@@ -68,7 +68,7 @@ if(BUILD_TESTING)
   ament_add_gtest(test_mppi_costs test/test_mppi_costs.cpp)
   target_link_libraries(test_mppi_costs ${PROJECT_NAME})
   target_compile_definitions(test_mppi_costs PRIVATE
-    LIMO_MPC_PARAMS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../limo_controller/config/dwb_params.yaml")
+    LIMO_MPC_PARAMS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../limo_controller/config/control_real.yaml")
 endif()
 
 ament_export_include_directories(include)
