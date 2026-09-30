@@ -62,17 +62,53 @@ def test_strong_edge_stops_growth_without_becoming_thicker(detector):
     frame = np.full((240, 320), 40, np.uint8)
     frame[:, 160:] = 200
     labels = process_gray(detector, frame, barrier_closing_iterations=0)
-    assert np.all(labels[12:, :159] == 1)
-    assert np.all(labels[12:, 161:] == 3)
-    # Interior Sobel bands become one pixel; ROI endpoints remain anchored.
-    assert np.all(np.count_nonzero(detector._buf_barriers[1:-1], axis=1) == 1)
-    assert np.all(detector._buf_barriers[[0, -1], 159:161] == 255)
+    assert np.all(labels[12:, :160] == 1)
+    assert np.all(labels[12:, 160:] == 3)
+    # The barrier belongs to the bright pixel, including the ROI endpoints.
+    assert np.all(detector._buf_barriers[:, 160] == 255)
+    assert cv2.countNonZero(detector._buf_barriers) == detector._buf_barriers.shape[0]
     assert not np.any(detector._buf_seeds[detector._buf_barriers != 0])
     old_barriers = detector._buf_barriers.copy()
     labels = process_gray(detector, frame, barrier_closing_iterations=1)
     np.testing.assert_array_equal(detector._buf_barriers, old_barriers)
     assert not np.any(detector._buf_seeds[detector._buf_barriers != 0])
     assert np.all(labels[12:, 161:] == 3)
+
+
+@pytest.mark.parametrize('bright_on_right', [False, True])
+def test_vertical_edge_barrier_stays_on_bright_side(detector, bright_on_right):
+    frame = np.full((240, 320), 40 if bright_on_right else 200, np.uint8)
+    frame[:, 160:] = 200 if bright_on_right else 40
+    labels = process_gray(detector, frame, barrier_closing_iterations=0)
+    edge_x = 160 if bright_on_right else 159
+    assert np.all(detector._buf_barriers[:, edge_x] == 255)
+    assert cv2.countNonZero(detector._buf_barriers) == detector._buf_barriers.shape[0]
+    assert np.all(labels[12:, edge_x] == 3)
+    assert np.all(labels[12:, 159 if bright_on_right else 160] == 1)
+    assert np.all(labels[12:, 161 if bright_on_right else 158] == 3)
+
+
+@pytest.mark.parametrize('bright_below', [False, True])
+def test_horizontal_edge_barrier_stays_on_bright_side(detector, bright_below):
+    frame = np.full((240, 320), 40 if bright_below else 200, np.uint8)
+    frame[180:] = 200 if bright_below else 40
+    process_gray(detector, frame, barrier_closing_iterations=0)
+    edge_y = 60 if bright_below else 59  # Output ROI starts at source row 132.
+    assert np.all(detector._buf_barriers[edge_y] == 255)
+    assert cv2.countNonZero(detector._buf_barriers) == detector._buf_barriers.shape[1]
+
+
+@pytest.mark.parametrize('bright_above', [False, True])
+def test_diagonal_edge_barrier_uses_only_bright_pixels(detector, bright_above):
+    yy, xx = np.indices((240, 320))
+    bright = xx + yy - 120 >= 200
+    frame = np.where(bright if bright_above else ~bright, 200, 40).astype(np.uint8)
+    labels = process_gray(detector, frame, barrier_closing_iterations=0)
+    gray_band = frame[132:240]
+    barrier = detector._buf_barriers != 0
+    assert np.count_nonzero(barrier) >= 100
+    assert np.all(gray_band[barrier] == 200)
+    assert not np.any(labels[12:][gray_band == 200] == 1)
 
 
 def test_closing_fills_a_small_barrier_gap_without_thickening(detector):

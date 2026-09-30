@@ -244,8 +244,11 @@ class WaterfallLaneDetector(Node):
             self._buf_road = np.empty(band_shape, dtype=np.uint8)
             self._buf_dx = np.empty(band_shape, dtype=np.float32)
             self._buf_dy = np.empty(band_shape, dtype=np.float32)
+            self._buf_abs_dx = np.empty(band_shape, dtype=np.float32)
+            self._buf_abs_dy = np.empty(band_shape, dtype=np.float32)
             self._buf_gradient = np.empty(band_shape, dtype=np.float32)
             self._buf_barriers = np.empty(band_shape, dtype=np.uint8)
+            self._buf_barrier_candidates = np.empty(band_shape, dtype=np.uint8)
             self._buf_free = np.empty(band_shape, dtype=np.uint8)
             self._buf_seeds = np.empty(band_shape, dtype=np.uint8)
             self._buf_components = np.empty(band_shape, dtype=np.int32)
@@ -287,6 +290,29 @@ class WaterfallLaneDetector(Node):
                 self._buf_barriers, cv2.MORPH_CLOSE, self._morphology_kernel,
                 dst=self._buf_barriers, iterations=iterations)
 
+    def _keep_bright_barrier_side(self, gray):
+        """Keep the brightest candidate along the local gradient direction."""
+        candidates = self._buf_barrier_candidates
+        np.copyto(candidates, self._buf_barriers)
+        barriers = self._buf_barriers
+        horizontal = self._buf_abs_dx >= self._buf_abs_dy
+        vertical = self._buf_abs_dy >= self._buf_abs_dx
+
+        # Check the original closed mask so that thinning is order independent.
+        # A two-pixel Sobel response then lands on its bright pixel.
+        barriers[:, :-1][(horizontal[:, :-1] & (self._buf_dx[:, :-1] > 0)
+                           & (gray[:, 1:] > gray[:, :-1])
+                           & (candidates[:, 1:] != 0))] = 0
+        barriers[:, 1:][(horizontal[:, 1:] & (self._buf_dx[:, 1:] < 0)
+                          & (gray[:, :-1] > gray[:, 1:])
+                          & (candidates[:, :-1] != 0))] = 0
+        barriers[:-1, :][(vertical[:-1, :] & (self._buf_dy[:-1, :] > 0)
+                           & (gray[1:, :] > gray[:-1, :])
+                           & (candidates[1:, :] != 0))] = 0
+        barriers[1:, :][(vertical[1:, :] & (self._buf_dy[1:, :] < 0)
+                          & (gray[:-1, :] > gray[1:, :])
+                          & (candidates[:-1, :] != 0))] = 0
+
     def _segment_road(self, gray, settings):
         """Build gradient barriers, admit dark seeds, then grow through free regions."""
         telemetry = settings['enable_telemetry']
@@ -297,12 +323,13 @@ class WaterfallLaneDetector(Node):
                   ksize=3, scale=0.125, borderType=cv2.BORDER_REPLICATE)
         cv2.Sobel(gray, cv2.CV_32F, 0, 1, dst=self._buf_dy,
                   ksize=3, scale=0.125, borderType=cv2.BORDER_REPLICATE)
-        cv2.absdiff(self._buf_dx, 0.0, dst=self._buf_dx)
-        cv2.absdiff(self._buf_dy, 0.0, dst=self._buf_dy)
-        cv2.add(self._buf_dx, self._buf_dy, dst=self._buf_gradient)
+        cv2.absdiff(self._buf_dx, 0.0, dst=self._buf_abs_dx)
+        cv2.absdiff(self._buf_dy, 0.0, dst=self._buf_abs_dy)
+        cv2.add(self._buf_abs_dx, self._buf_abs_dy, dst=self._buf_gradient)
         cv2.compare(self._buf_gradient, settings['gradient_threshold'],
                     cv2.CMP_GT, dst=self._buf_barriers)
         self._close_barrier_gaps(settings['barrier_closing_iterations'])
+        self._keep_bright_barrier_side(gray)
         if telemetry:
             self.telemetry_stats['gradient'].append((time.perf_counter() - started) * 1000)
             started = time.perf_counter()
