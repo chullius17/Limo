@@ -23,6 +23,9 @@ lane_detector:
 depth_correction:
   input_topic: /depth_camera/depth/image_raw
   camera_info_topic: /depth_camera/depth/camera_info
+  # Nominal ground z from limo_car/urdf/limo_ackerman_base.xacro:
+  # -(0.15 m base height + 0.03 m depth camera offset) in camera_link.
+  plane_height_m: .nan
   enable_telemetry: false
 
 visual_ptcld:
@@ -45,8 +48,8 @@ visual_ptcld:
   pointcloud_topic: limo/cv_package/visual_ptcld/points
   input_crop_y_min: 0.5
   pointcloud_min_depth_m: 0.1
-  pointcloud_max_depth_m: 1.5
-  blue_radius_min_m: 0.08
+  pointcloud_max_depth_m: 1.3
+  blue_radius_min_m: 0.09
   blue_radius_max_m: 0.25
   enable_boardwalk: true
   boardwalk_propagation_radius_m: 0.15

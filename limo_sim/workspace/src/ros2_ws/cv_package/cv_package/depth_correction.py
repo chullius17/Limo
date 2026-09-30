@@ -54,6 +54,7 @@ class DepthCorrection(Node):
             'depth_output_topic',
             'limo/cv_package/depth_correction/depth_corrected/raw')
         self.declare_parameter('plane_frame', 'camera_link')
+        self.declare_parameter('plane_height_m', float('nan'))
         self.declare_parameter('output_width', 320)
         self.declare_parameter('output_height', 120)
         self.declare_parameter('min_depth_m', 0.1)
@@ -69,6 +70,8 @@ class DepthCorrection(Node):
             'corrected_output_topic').value
         depth_output_topic = self.get_parameter('depth_output_topic').value
         self.plane_frame = self.get_parameter('plane_frame').value
+        self.plane_height_m = float(
+            self.get_parameter('plane_height_m').value)
         self.output_width = int(self.get_parameter('output_width').value)
         self.output_height = int(self.get_parameter('output_height').value)
         self.min_depth_m = float(self.get_parameter('min_depth_m').value)
@@ -88,6 +91,8 @@ class DepthCorrection(Node):
             raise ValueError('calibration_frames must be greater than zero')
         if self.calibration_rows <= 0:
             raise ValueError('calibration_rows must be greater than zero')
+        if np.isinf(self.plane_height_m):
+            raise ValueError('plane_height_m must be finite or NaN')
         if not 1 <= self.debug_jpeg_quality <= 100:
             raise ValueError('debug_jpeg_quality must be between 1 and 100')
 
@@ -181,12 +186,17 @@ class DepthCorrection(Node):
         self.depth_subscription = self.create_subscription(
             Image, input_topic, self.depth_callback, sensor_qos)
 
+        calibration_status = (
+            f'Waiting for {self.calibration_frames} calibration frames.'
+            if np.isnan(self.plane_height_m) else
+            f'Using configured plane z={self.plane_height_m:.4f} m in '
+            f'{self.plane_frame}.')
         self.get_logger().info(
             f'Listening on {input_topic}; publishing metric depth on '
             f'{depth_output_topic} and compressed JET views on '
             f'{output_topic} and '
             f'{corrected_topic} at {self.output_width}x{self.output_height}. '
-            f'Waiting for {self.calibration_frames} calibration frames.')
+            f'{calibration_status}')
 
     def _on_set_parameters(self, params):
         """Apply runtime parameter changes without a per-frame lookup."""
@@ -304,52 +314,57 @@ class DepthCorrection(Node):
             transform.transform.translation.z)
         self.geometry_signature = signature
         self.plane_height_samples.clear()
+        lut_source = (
+            'offline calibration' if np.isnan(self.plane_height_m)
+            else 'configured plane height')
         self.get_logger().info(
             f'Geometry ready from {optical_frame} to {self.plane_frame}; '
-            'starting offline LUT calibration.')
+            f'building LUT from {lut_source}.')
         return True
 
     def update_offline_calibration(
             self, depth, msg, input_height, input_width):
-        """Estimate the plane once from valid pixels in the bottom rows."""
+        """Build the LUT from configured height or valid bottom-row pixels."""
         if self.depth_lut is not None:
             return
         if not self.prepare_geometry(msg, input_height, input_width):
             return
 
-        row_count = min(self.calibration_rows, depth.shape[0])
-        bottom_depth = depth[-row_count:, :]
-        bottom_denominator = self.ray_plane_denominator[-row_count:, :]
-        valid = (
-            np.isfinite(bottom_depth)
-            & (bottom_depth >= self.min_depth_m)
-            & (bottom_depth <= self.max_depth_m)
-            & (np.abs(bottom_denominator) > 1e-8)
-        )
-        if not np.any(valid):
-            self.get_logger().warning(
-                f'No valid depth sample in the bottom {row_count} rows for '
-                'calibration',
-                throttle_duration_sec=2.0)
-            return
+        plane_height = self.plane_height_m
+        if np.isnan(plane_height):
+            row_count = min(self.calibration_rows, depth.shape[0])
+            bottom_depth = depth[-row_count:, :]
+            bottom_denominator = self.ray_plane_denominator[-row_count:, :]
+            valid = (
+                np.isfinite(bottom_depth)
+                & (bottom_depth >= self.min_depth_m)
+                & (bottom_depth <= self.max_depth_m)
+                & (np.abs(bottom_denominator) > 1e-8)
+            )
+            if not np.any(valid):
+                self.get_logger().warning(
+                    f'No valid depth sample in the bottom {row_count} rows '
+                    'for calibration',
+                    throttle_duration_sec=2.0)
+                return
 
-        # Every point in the bottom rows votes for the plane coordinate z in
-        # camera_link. A median rejects isolated obstacles and depth outliers.
-        plane_z = (
-            self.optical_to_plane_translation_z
-            + bottom_depth[valid] * bottom_denominator[valid]
-        )
-        self.plane_height_samples.append(float(np.median(plane_z)))
-        sample_count = len(self.plane_height_samples)
-        if sample_count == 1 or sample_count % 10 == 0:
-            self.get_logger().info(
-                f'LUT calibration: {sample_count}/{self.calibration_frames} '
-                'frames accepted.')
+            # Every point in the bottom rows votes for the plane coordinate
+            # z in camera_link. A median rejects obstacles and outliers.
+            plane_z = (
+                self.optical_to_plane_translation_z
+                + bottom_depth[valid] * bottom_denominator[valid]
+            )
+            self.plane_height_samples.append(float(np.median(plane_z)))
+            sample_count = len(self.plane_height_samples)
+            if sample_count == 1 or sample_count % 10 == 0:
+                self.get_logger().info(
+                    f'LUT calibration: {sample_count}/'
+                    f'{self.calibration_frames} frames accepted.')
 
-        if len(self.plane_height_samples) < self.calibration_frames:
-            return
+            if sample_count < self.calibration_frames:
+                return
 
-        plane_height = float(np.median(self.plane_height_samples))
+            plane_height = float(np.median(self.plane_height_samples))
         numerator = plane_height - self.optical_to_plane_translation_z
         denominator = self.ray_plane_denominator
         lut = np.full(denominator.shape, np.nan, dtype=np.float32)
