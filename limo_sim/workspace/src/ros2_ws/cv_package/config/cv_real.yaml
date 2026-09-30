@@ -23,8 +23,11 @@ lane_detector:
 depth_correction:
   input_topic: /depth_camera/depth/image_raw
   camera_info_topic: /depth_camera/depth/camera_info
-  # Nominal ground z from limo_car/urdf/limo_ackerman_base.xacro:
-  # -(0.15 m base height + 0.03 m depth camera offset) in camera_link.
+  # Fit height AND tilt; register measured depth into RGB before the crop.
+  register_to_rgb: true
+  rgb_camera_info_topic: /rgb/camera_info
+  input_crop_y_min: 0.5
+  calibration_frames: 10
   plane_height_m: .nan
   enable_telemetry: false
 
@@ -40,6 +43,8 @@ visual_ptcld:
   pointcloud_voxel_size_m: 0.02
   blue_boundary_kernel_size: 7
   camera_info_topic: /rgb/camera_info
+  # Raw fallback would reintroduce the RGB/depth geometry error.
+  require_rgb_depth: true
   depth_topic: limo/cv_package/depth_correction/depth_corrected/raw
   fallback_depth_topic: /depth_camera/depth/image_raw
   corrected_depth_timeout_sec: 1.0

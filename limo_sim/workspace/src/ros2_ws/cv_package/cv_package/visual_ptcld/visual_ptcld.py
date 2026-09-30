@@ -126,6 +126,8 @@ class VisualPtcld(Node):
         self.declare_parameter(
             'fallback_depth_topic', '/depth_camera/depth/image_raw')
         self.declare_parameter('corrected_depth_timeout_sec', 1.0)
+        self.declare_parameter('require_rgb_depth', False)
+        self.require_rgb_depth = bool(self.get_parameter('require_rgb_depth').value)
         self.declare_parameter('fallback_depth_width', 320)
         self.declare_parameter('fallback_depth_height', 120)
         self.declare_parameter(
@@ -212,7 +214,7 @@ class VisualPtcld(Node):
             self.depth_callback,
             sensor_qos,
         )
-        self.fallback_depth_sub = self.create_subscription(
+        self.fallback_depth_sub = None if self.require_rgb_depth else self.create_subscription(
             Image,
             self.get_parameter('fallback_depth_topic').value,
             self.fallback_depth_callback,
@@ -252,6 +254,8 @@ class VisualPtcld(Node):
         self.depth_source = None
         self.corrected_depth_received_at = None
         self.camera_intrinsics = None
+        self.camera_info_frame = None
+        self.depth_frame = None
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
@@ -350,6 +354,7 @@ class VisualPtcld(Node):
         )
         with self.sensor_lock:
             self.camera_intrinsics = intrinsics
+            self.camera_info_frame = msg.header.frame_id
 
     def convert_depth(self, msg):
         """Convert a ROS depth image to float32 metres."""
@@ -370,6 +375,7 @@ class VisualPtcld(Node):
         with self.sensor_lock:
             previous_source = self.depth_source
             self.depth_image = depth
+            self.depth_frame = msg.header.frame_id
             self.depth_source = source
             if source == 'corrected':
                 self.corrected_depth_received_at = received_at
@@ -753,6 +759,8 @@ class VisualPtcld(Node):
         with self.sensor_lock:
             depth = self.depth_image
             intrinsics = self.camera_intrinsics
+            frames_match = (not getattr(self, 'require_rgb_depth', False) or
+                            (self.depth_frame == header.frame_id == self.camera_info_frame))
         lock_ms = (time.perf_counter() - lock_started_at) * 1000.0
 
         if depth is None or intrinsics is None:
@@ -760,6 +768,11 @@ class VisualPtcld(Node):
                 'Waiting for depth and RGB CameraInfo',
                 throttle_duration_sec=2.0,
             )
+            return skipped_result()
+        if not frames_match:
+            self.get_logger().warning(
+                'Depth must be registered in the RGB label/CameraInfo frame',
+                throttle_duration_sec=2.0)
             return skipped_result()
         if depth.shape[:2] != (height, width):
             self.get_logger().warning(

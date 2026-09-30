@@ -247,3 +247,43 @@ so the installed executable uses the new entry point:
 colcon build --packages-select cv_package --symlink-install
 source install/setup.bash
 ```
+
+
+## Real RGB/depth geometry (30 September 2026)
+
+The real profile enables `depth_correction.register_to_rgb`. It reads both
+CameraInfo topics and the calibrated optical-frame TF, back-projects valid
+full-resolution depth, then projects it into the RGB lower-half 320x120 crop.
+Each target pixel retains the nearest measured RGB optical Z (z-buffer).
+The input camera images must have zero distortion/rectified calibration;
+unsupported calibration or mismatched source frames are rejected explicitly.
+The Astra driver remains in unregistered mode: registration is performed here.
+
+At startup, measured lower-image points calibrate the full ground plane
+(normal plus distance) over ten stable frames. RANSAC rejects vertical walls,
+insufficient support and nearly collinear samples. The fit assumes ground
+within 20 degrees of horizontal and 5–60 cm below `plane_frame` (`camera_link`).
+The startup scene must contain enough measured floor over a two-dimensional
+area. Missing floor support leaves the node publishing registered measurements
+until calibration succeeds. Changes in intrinsics, optical frames or rigid
+transforms invalidate the cached rays and plane.
+
+After registration, **all missing depth pixels**, regardless of semantic
+class, are completed from ray–plane intersections. Measured values are retained;
+there is no road-only gate. Rays without a forward ground intersection within
+`min_depth_m`/`max_depth_m` remain invalid. Filled values are a ground-plane
+hypothesis, including when a depth hole occurs over an object in the RGB image.
+Changing only `plane_height_m` cannot represent camera tilt; the registered
+mode requires `.nan` and fits both height and normal.
+
+`depth_corrected/raw` now carries the RGB optical frame and the original depth
+timestamp. `/limo/cv_package/depth_correction/ground_depth/raw` separately exposes
+the fitted RGB ground LUT for inspection. Both are 320x120, 32FC1 metres.
+The raw JET view shows registered measurements; the corrected JET view also
+shows completion. Debug JPEGs are generated only when subscribed in this mode.
+
+`visual_ptcld.require_rgb_depth` checks agreement between label, RGB CameraInfo
+and depth frames and disables the unregistered raw fallback. The existing
+classification and class filtering are unchanged. Simulation retains the
+legacy path (`register_to_rgb: false`, `require_rgb_depth: false` defaults).
+Restart the CV nodes after updating the package; recalibration runs at startup.

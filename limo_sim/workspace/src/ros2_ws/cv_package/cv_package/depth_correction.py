@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Publish cropped depth images and fill missing values from a planar LUT.
+"""Register real depth to RGB and complete holes using a fitted ground plane.
+
+The real path estimates both normal and height and fills all missing pixels.
+The legacy simulation path below keeps its original crop and horizontal LUT.
 
 Optimized hot path: the crop happens before any dtype conversion (a
 zero-copy view over the raw message buffer, honoring row padding), the
@@ -22,6 +25,11 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 import time
 from collections import deque
+from copy import deepcopy
+
+from .depth_geometry import (
+    pixel_rays, register_depth, fit_ground_plane, ground_depth, complete_depth,
+)
 
 
 class DepthCorrection(Node):
@@ -55,6 +63,11 @@ class DepthCorrection(Node):
             'limo/cv_package/depth_correction/depth_corrected/raw')
         self.declare_parameter('plane_frame', 'camera_link')
         self.declare_parameter('plane_height_m', float('nan'))
+        self.declare_parameter('register_to_rgb', False)
+        self.declare_parameter('rgb_camera_info_topic', '/rgb/camera_info')
+        self.declare_parameter('ground_depth_topic',
+                               'limo/cv_package/depth_correction/ground_depth/raw')
+        self.declare_parameter('input_crop_y_min', 0.5)
         self.declare_parameter('output_width', 320)
         self.declare_parameter('output_height', 120)
         self.declare_parameter('min_depth_m', 0.1)
@@ -72,6 +85,13 @@ class DepthCorrection(Node):
         self.plane_frame = self.get_parameter('plane_frame').value
         self.plane_height_m = float(
             self.get_parameter('plane_height_m').value)
+        self.register_to_rgb = bool(self.get_parameter('register_to_rgb').value)
+        self.input_crop_y_min = float(self.get_parameter('input_crop_y_min').value)
+        if not 0 <= self.input_crop_y_min < 1:
+            raise ValueError('input_crop_y_min must be in [0, 1)')
+        if self.register_to_rgb and not np.isnan(self.plane_height_m):
+            raise ValueError('RGB registration requires plane_height_m: .nan; '
+                             'the full plane is fitted from measured depth')
         self.output_width = int(self.get_parameter('output_width').value)
         self.output_height = int(self.get_parameter('output_height').value)
         self.min_depth_m = float(self.get_parameter('min_depth_m').value)
@@ -123,6 +143,10 @@ class DepthCorrection(Node):
 
         self.bridge = CvBridge()
         self.camera_info = None
+        self.rgb_info = None
+        self.registered_signature = None
+        self.ground_samples = []
+        self.ground_plane = None
         self.ray_plane_denominator = None
         self.optical_to_plane_translation_z = None
         self.geometry_signature = None
@@ -185,6 +209,12 @@ class DepthCorrection(Node):
         )
         self.depth_subscription = self.create_subscription(
             Image, input_topic, self.depth_callback, sensor_qos)
+        if self.register_to_rgb:
+            self.rgb_info_subscription = self.create_subscription(
+                CameraInfo, self.get_parameter('rgb_camera_info_topic').value,
+                self.rgb_info_callback, sensor_qos)
+            self.ground_publisher = self.create_publisher(
+                Image, self.get_parameter('ground_depth_topic').value, sensor_qos)
 
         calibration_status = (
             f'Waiting for {self.calibration_frames} calibration frames.'
@@ -207,8 +237,128 @@ class DepthCorrection(Node):
 
     def camera_info_callback(self, msg):
         """Store the latest intrinsic calibration until the LUT is frozen."""
-        if self.depth_lut is None:
+        if self.register_to_rgb or self.depth_lut is None:
             self.camera_info = msg
+
+    def rgb_info_callback(self, msg):
+        self.rgb_info = msg
+
+    def registered_geometry(self, msg):
+        """Cache calibrated rays and rigid transforms; invalidate the plane too."""
+        source, rgb = self.camera_info, self.rgb_info
+        if source is None or rgb is None:
+            raise ValueError('Waiting for depth and RGB CameraInfo')
+        if (source.header.frame_id != msg.header.frame_id
+                or not rgb.header.frame_id or not msg.header.frame_id):
+            raise ValueError('CameraInfo and depth frames do not match')
+        if (source.width, source.height) != (msg.width, msg.height):
+            raise ValueError('Depth dimensions differ from CameraInfo')
+        if (not np.isfinite(list(source.d) + list(rgb.d)).all()
+                or np.any(np.abs(source.d) > 1e-8) or np.any(np.abs(rgb.d) > 1e-8)):
+            raise ValueError('Registration requires rectified/zero-distortion images')
+        transforms = []
+        for target, frame in ((rgb.header.frame_id, msg.header.frame_id),
+                              (self.plane_frame, msg.header.frame_id),
+                              (self.plane_frame, rgb.header.frame_id)):
+            value = self.tf_buffer.lookup_transform(
+                target, frame, Time.from_msg(msg.header.stamp)).transform
+            rotation = self.quaternion_to_rotation(value.rotation)
+            translation = np.array([value.translation.x, value.translation.y,
+                                    value.translation.z])
+            transforms.append((rotation, translation))
+        signature = (msg.header.frame_id, rgb.header.frame_id, msg.width, msg.height,
+                     tuple(source.k), rgb.width, rgb.height, tuple(rgb.k),
+                     tuple(np.concatenate([np.r_[r.ravel(), t] for r, t in transforms])))
+        previous = self.registered_signature
+        # tf2 can compose the same rigid path with different last-bit rounding.
+        # Sub-micrometre numeric noise must not restart a frozen calibration.
+        changed = (previous is None or signature[:-1] != previous[:-1]
+                   or not np.allclose(signature[-1], previous[-1], rtol=0, atol=1e-8))
+        if changed:
+            self.source_rays = pixel_rays(source.k, source.width, source.height,
+                                         msg.width, msg.height)
+            self.rgb_rays = pixel_rays(rgb.k, rgb.width, rgb.height,
+                                      self.output_width, self.output_height,
+                                      self.input_crop_y_min)
+            self.registered_transforms = transforms
+            self.registered_signature = signature
+            self.ground_samples = []
+            self.ground_plane = None
+            self.registered_ground_lut = np.full(
+                (self.output_height, self.output_width), np.nan, dtype=np.float32)
+        return rgb
+
+    def calibrate_registered_ground(self, depth):
+        """Fit height and tilt from measured lower-image points, never fills."""
+        if self.ground_plane is not None:
+            return
+        start = int(depth.shape[0] * .6)
+        left, right = int(depth.shape[1] * .08), int(depth.shape[1] * .92)
+        sample = depth[start::3, left:right:3]
+        rays = self.source_rays[start::3, left:right:3]
+        with np.errstate(invalid='ignore'):
+            valid = np.isfinite(sample) & (sample >= max(.25, self.min_depth_m)) & (sample <= 2.5)
+        rotation, translation = self.registered_transforms[1]
+        points = (rays[valid] * sample[valid, None]) @ rotation.T + translation
+        points = points[points[:, 2] < -.04]
+        try:
+            plane = fit_ground_plane(points)
+        except ValueError as error:
+            self.get_logger().warning(str(error), throttle_duration_sec=3.0)
+            return
+        self.ground_samples.append(plane)
+        if len(self.ground_samples) < self.calibration_frames:
+            return
+        samples = np.array(self.ground_samples[-self.calibration_frames:])
+        plane = np.median(samples, axis=0)
+        plane /= np.linalg.norm(plane[:3])
+        angles = np.degrees(np.arccos(np.clip(samples[:, :3] @ plane[:3], -1, 1)))
+        if np.max(angles) > 1.0 or np.ptp(samples[:, 3]) > .015:
+            self.ground_samples = self.ground_samples[-(self.calibration_frames - 1):]
+            self.get_logger().warning('Ground fit is not stable yet', throttle_duration_sec=3.0)
+            return
+        self.ground_plane = plane
+        rotation, translation = self.registered_transforms[2]
+        self.registered_ground_lut = ground_depth(
+            self.rgb_rays, rotation, translation, plane,
+            self.min_depth_m, self.max_depth_m)
+        self.get_logger().info(
+            f'RGB ground LUT ready: n={plane[:3].tolist()}, '
+            f'height={plane[3]:.4f} m, '
+            f'tilt={np.degrees(np.arccos(plane[2])):.2f} deg; '
+            'missing RGB pixels are completed from the fitted plane')
+
+    def registered_depth_callback(self, msg):
+        """Register measurements, then complete all missing RGB pixels from the plane."""
+        try:
+            rgb = self.registered_geometry(msg)
+            depth, needs_scale = self._view_source(msg)
+            depth = depth.astype(np.float32, copy=False)
+            if needs_scale:
+                depth = depth * self._MM_TO_M
+            self.calibrate_registered_ground(depth)
+            rotation, translation = self.registered_transforms[0]
+            registered = register_depth(
+                depth, self.source_rays, rotation, translation, rgb.k,
+                (rgb.width, rgb.height), (self.output_width, self.output_height),
+                self.input_crop_y_min, self.min_depth_m, self.max_depth_m)
+        except (ValueError, TransformException) as error:
+            self.get_logger().warning(str(error), throttle_duration_sec=3.0)
+            return
+        header = deepcopy(msg.header)
+        header.frame_id = rgb.header.frame_id
+        completed = complete_depth(registered, self.registered_ground_lut)
+        self.publish_depth(completed, header)
+        ground = self.bridge.cv2_to_imgmsg(self.registered_ground_lut, encoding='32FC1')
+        ground.header = header
+        self.ground_publisher.publish(ground)
+        # Both views use RGB pixels; raw shows only registered measurements.
+        if self.publisher.get_subscription_count():
+            self.publish_image(self.publisher,
+                               self._colorize_into(registered, self._buf_bgr), header)
+        if self.corrected_publisher.get_subscription_count():
+            self.publish_image(self.corrected_publisher,
+                               self._colorize_into(completed, self._buf_bgr), header)
 
     @staticmethod
     def quaternion_to_rotation(quaternion):
@@ -503,6 +653,9 @@ class DepthCorrection(Node):
 
     def depth_callback(self, msg):
         """Crop, resize, calibrate if needed, then publish both views."""
+        if self.register_to_rgb:
+            self.registered_depth_callback(msg)
+            return
         self.frames_received += 1
         t_start = time.perf_counter() if self.debug_telemetry else 0.0
         if self.debug_telemetry:

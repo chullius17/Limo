@@ -334,3 +334,21 @@ def test_real_cloud_preserves_all_four_road_and_boardwalk_classes():
         interior_blue_points=np.array([[0, 3]]))
     points = np.frombuffer(published[0].data, dtype=VisualPtcld.CLOUD_DTYPE)
     assert sorted(points['class_id'].tolist()) == [1, 4, 5, 6]
+
+
+def test_real_cloud_rejects_unregistered_depth_even_when_dimensions_match():
+    detector, published = detector_stub()
+    detector.require_rgb_depth = True
+    detector.depth_frame = 'depth_optical'
+    detector.camera_info_frame = 'rgb_optical'
+    empty = np.empty((0, 2), dtype=np.int32)
+    result = VisualPtcld.publish_pointcloud(
+        detector, np.array([[0, 0]]), empty, empty, 4, 1,
+        Header(frame_id='rgb_optical'))
+    assert result[0] is None
+    assert not published
+    detector.depth_frame = 'rgb_optical'
+    VisualPtcld.publish_pointcloud(
+        detector, np.array([[0, 0]]), empty, empty, 4, 1,
+        Header(frame_id='rgb_optical'))
+    assert len(published) == 1

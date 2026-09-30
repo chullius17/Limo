@@ -73,6 +73,7 @@ def _launch_cv(context):
     depth_node = Node(
         package='cv_package', executable='depth_correction',
         name='depth_correction', output='screen', emulate_tty=True,
+        additional_env={'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'},
         parameters=[depth_params],
     )
     cloud_node = Node(
