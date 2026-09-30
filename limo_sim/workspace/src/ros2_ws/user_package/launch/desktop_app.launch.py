@@ -51,7 +51,7 @@ def _launch_desktop(context):
             '{}: missing YAML mapping \'launch\''.format(mapping_config))
     settings = profile['launch']
     start_cv_rviz = _optional_boolean(
-        context, 'start_cv_rviz', _boolean(settings.get('start_cv', False)))
+        context, 'start_cv_rviz', False)
     start_mapping_rviz = _boolean(
         LaunchConfiguration('start_mapping_rviz').perform(context))
     start_control_gui = _boolean(
@@ -106,8 +106,8 @@ def generate_launch_description():
             'start_mapping_rviz', default_value='true',
             description='Open mapping, planning and local-costmap RViz on the PC.'),
         DeclareLaunchArgument(
-            'start_cv_rviz', default_value='',
-            description='Open CV RViz; empty follows launch.start_cv from mapping YAML.'),
+            'start_cv_rviz', default_value='false',
+            description='Open the additional CV RViz viewer on the PC.'),
         DeclareLaunchArgument(
             'start_control_gui', default_value='true',
             description='Open the remote start/pause/resume/abort control window.'),

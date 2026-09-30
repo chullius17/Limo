@@ -57,9 +57,10 @@ In the PC's ROS environment, start all graphical clients with:
 ros2 launch user_package desktop_app.launch.py
 ```
 
-This opens mapping/planning/local-costmap RViz and the control GUI. CV RViz also
-opens when `launch.start_cv` in the mapping YAML is true. Each RViz client runs
-in its own launch scope. The desktop launch starts no mapping, CV processing,
+This opens one RViz for mapping, planned paths and the local costmap, together
+with the control GUI. The additional CV RViz is disabled by default, independently
+of CV processing on the robot. Enable it explicitly with `start_cv_rviz:=true`.
+Each RViz client runs in its own launch scope. The desktop launch starts no mapping, CV processing,
 planner, controller, velocity mux, path executor or second goal bridge.
 RViz publishes goals to the robot; the GUI uses the robot's existing control
 services to start, pause, resume or abort a planned path.
@@ -86,7 +87,7 @@ remains unchanged. Validate movement under supervision before unattended use.
 Optional desktop switches:
 
 ```bash
-ros2 launch user_package desktop_app.launch.py start_cv_rviz:=false
+ros2 launch user_package desktop_app.launch.py start_cv_rviz:=true
 ros2 launch user_package desktop_app.launch.py start_mapping_rviz:=false
 ros2 launch user_package desktop_app.launch.py start_control_gui:=false
 ```

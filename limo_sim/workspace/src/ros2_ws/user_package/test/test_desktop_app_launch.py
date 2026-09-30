@@ -81,7 +81,8 @@ def test_desktop_expands_to_only_rviz_and_control_gui(monkeypatch):
     nodes = expanded_viewers(monkeypatch, desktop(monkeypatch))
     assert {(node['package'], node['executable']) for node in nodes} == {
         ('rviz2', 'rviz2'), ('limo_controller', 'control_gui')}
-    assert {node['name'] for node in nodes} == {'rviz2', 'cv_rviz', 'control_gui'}
+    assert {node['name'] for node in nodes} == {'rviz2', 'control_gui'}
+    assert sum(node['executable'] == 'rviz2' for node in nodes) == 1
     assert all(node['parameters'][0]['use_sim_time'] is False for node in nodes)
     gui = next(node for node in nodes if node['name'] == 'control_gui')
     assert gui['executable'] != 'controller_server'
@@ -89,7 +90,7 @@ def test_desktop_expands_to_only_rviz_and_control_gui(monkeypatch):
 
 @pytest.mark.parametrize('enabled', [True, False])
 @pytest.mark.parametrize('override', ['', 'true', 'false'])
-def test_cv_view_follows_yaml_or_explicit_switch(
+def test_cv_view_requires_explicit_switch_independently_of_backend(
         monkeypatch, tmp_path, enabled, override):
     config = yaml.safe_load(
         (PACKAGES / 'online_map_package/config/mapping_real.yaml').read_text())
@@ -100,7 +101,7 @@ def test_cv_view_follows_yaml_or_explicit_switch(
         monkeypatch, mapping_config=str(path), start_cv_rviz=override)
     includes = [dict(action[0].launch_arguments)
                 for action in actions if isinstance(action, list)]
-    expected = enabled if override == '' else override == 'true'
+    expected = override == 'true'
     assert len(includes) == 1 + int(expected)
     assert includes[0]['config_file'] == str(path)
     if expected:
@@ -111,7 +112,7 @@ def test_cv_view_follows_yaml_or_explicit_switch(
 def test_custom_cv_profile_and_client_switches_are_forwarded(monkeypatch):
     actions = desktop(
         monkeypatch, cv_config='/tmp/custom_cv.yaml',
-        start_mapping_rviz='false', start_control_gui='false')
+        start_mapping_rviz='false', start_control_gui='false', start_cv_rviz='true')
     assert len(actions) == 1
     arguments = dict(actions[0][0].launch_arguments)
     assert arguments['config_file'] == '/tmp/custom_cv.yaml'
@@ -124,7 +125,7 @@ def test_cv_profile_is_resolved_from_mapping_yaml(monkeypatch, tmp_path):
     path.write_text(yaml.safe_dump(config))
     actions = desktop(
         monkeypatch, mapping_config=str(path),
-        start_mapping_rviz='false', start_control_gui='false')
+        start_mapping_rviz='false', start_control_gui='false', start_cv_rviz='true')
     arguments = dict(actions[0][0].launch_arguments)
     assert arguments['config_file'] == str(
         PACKAGES / 'cv_package/config/custom_cv.yaml')
@@ -152,7 +153,8 @@ def test_desktop_requires_mapping_launch_settings(monkeypatch, tmp_path):
 
 def test_viewer_includes_have_separate_launch_scopes():
     module = load_launch('user_package', 'desktop_app.launch.py')
-    context = launch_context(module, {'start_control_gui': 'false'})
+    context = launch_context(module, {
+        'start_control_gui': 'false', 'start_cv_rviz': 'true'})
     actions = module._launch_desktop(context)
     assert len(actions) == 2
     assert all(isinstance(action, GroupAction) for action in actions)
