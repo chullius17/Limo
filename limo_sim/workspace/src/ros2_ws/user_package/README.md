@@ -81,7 +81,7 @@ path if command mode or feedback is lost. It never takes chassis ownership
 automatically; another explicit START is needed after recovery. Raw
 `motion_mode=2` is not used for this guard because this robot reports it even
 in the mechanically converted Ackermann configuration. The real controller
-profile is tuned for the Nano at 10 Hz with 96 MPC sequences; simulated control
+profile uses 10 Hz with 128 MPC sequences on the Nano; simulated control
 remains unchanged. Validate movement under supervision before unattended use.
 
 Optional desktop switches:

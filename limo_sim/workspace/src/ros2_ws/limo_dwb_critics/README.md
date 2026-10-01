@@ -115,9 +115,12 @@ costs are **not divided by the horizon length**, so increasing the prediction
 horizon does not dilute command continuity. Steering-rate history resets with
 the warm start. Both are soft costs: collision rejection can still force a
 change or braking, and no command is filtered after trajectory evaluation.
-The YAML reduces local steering sampling deviation to 0.10 rad while retaining
-full-range seeds and broad exploration. The MPPI-derived critic weights remain
-unchanged.
+The simulation YAML uses local steering sampling deviation 0.10 rad; the real
+profile uses 0.14 rad with 128 candidates (66 constant-curvature seeds, braking,
+warm start and 60 sampled sequences). Both retain full-range seeds and broad
+exploration. The real profile doubles the reference obstacle weight to favor
+local-costmap clearance relative to path tracking; other critic weights retain
+their reference values.
 
 ## Cost correspondence with Humble MPPI
 
@@ -129,7 +132,7 @@ that reference profile.
 
 | Humble MPPI term | Foxy configuration | Behavior |
 | --- | --- | --- |
-| CostCritic, weight 3 | `MppiObstacle.scale: 3` | Mean center cost / 254; critical cost 300; ordinary repulsion off within 0.5 m of the real goal |
+| CostCritic, weight 3 | Real `MppiObstacle.scale: 6`; simulation: 3 | Mean center cost / 254; critical cost 300; ordinary repulsion off within 0.10 m of the goal on the real profile, 0.50 m in simulation |
 | GoalCritic, weight 5 | `MppiPath.GoalCritic` | Mean distance in meters, enabled within 1 m of the goal |
 | GoalAngleCritic, weight 3 | `MppiPath.GoalAngleCritic` | Mean wrapped yaw error in radians, within 0.5 m |
 | PathAlignCritic, weight 10 | `MppiPath.PathAlignCritic` | Mean path-pose error, with orientations; off within 0.5 m or if local path occupancy exceeds 15% |
@@ -179,7 +182,7 @@ Before physical operation, validate closed-loop simulation on a straight path,
 tight curve, slalom, obstruction and goal approach. Measure lateral error,
 clearance, steering increments and controller execution time. At 20 Hz the
 whole control cycle must fit within 50 ms (simulation). The real Nano profile
-uses 10 Hz, 96 sequences and 25 steps of 0.10 s, retaining a 2.5 s horizon;
+uses 10 Hz, 128 sequences and 25 steps of 0.10 s, retaining a 2.5 s horizon;
 its whole cycle must fit within 100 ms. A model-only benchmark does not
 include costmap or footprint scoring. Enable `publish_evaluation` temporarily
 for DWB candidate diagnostics (`MpcEffort` is the additional cost).

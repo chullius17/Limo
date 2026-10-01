@@ -79,15 +79,15 @@ controller_server:
         model_dt: 0.10  # Must equal 1 / controller_frequency.
         time_steps: 25
         control_segments: 5
-        # 54 deterministic seeds + stop/warm start + 40 sampled sequences.
-        batch_size: 96
+        # 66 deterministic seeds + stop/warm start + 60 sampled sequences.
+        batch_size: 128
         velocity_samples: 6
-        curvature_samples: 9
+        curvature_samples: 11
         wheelbase: 0.20
         rear_axle_to_base: 0.10
         max_steering_rate: 0.5  # Bicycle steering rad/s; 0.05 rad per control cycle.
         velocity_std: 0.12
-        steering_std: 0.10
+        steering_std: 0.14
         acceleration_weight: 0.5
         steering_weight: 0.5
         # Immediate command costs are not averaged over the prediction horizon.
@@ -117,11 +117,13 @@ controller_server:
 
       # Reference: origin/humble-navigation, nav_limo_controller/config/
       # mppi_control_params.yaml. Cost powers are 1 in that profile.
-      # Obstacle cost = 3 * mean(center_cost / 254), with footprint collision
+      # Double the reference obstacle weight relative to all path/goal costs.
+      # Obstacle cost = 6 * mean(center_cost / 254), with footprint collision
       # rejection at every pose. This scale is NOT DWB's raw summed cost.
-      MppiObstacle.scale: 3.0
+      MppiObstacle.scale: 6.0
       MppiObstacle.critical_cost: 300.0
-      MppiObstacle.near_goal_distance: 0.50
+      # Retain ordinary obstacle repulsion until the 0.10 m arrival tolerance.
+      MppiObstacle.near_goal_distance: 0.10
 
       # Match Humble's weights and goal-distance gates in meters/radians.
       # Collisions/kinematic violations remain hard constraints, so there is
@@ -167,7 +169,7 @@ local_costmap:
       height: 3
       resolution: 0.05
       footprint: "[[-0.161, -0.110], [-0.161, 0.110], [0.161, 0.110], [0.161, -0.110]]"
-      footprint_padding: 0.0
+      footprint_padding: 0.02
       track_unknown_space: false
       always_send_full_costmap: false
       trinary_costmap: false

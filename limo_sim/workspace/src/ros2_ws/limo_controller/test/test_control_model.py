@@ -198,7 +198,7 @@ def test_nano_budget_preserves_horizon_and_safety_timeouts():
     assert params['controller_frequency'] == 10.0
     assert mpc['model_dt'] * params['controller_frequency'] == 1.0
     assert mpc['model_dt'] * mpc['time_steps'] == 2.5
-    assert mpc['batch_size'] == 96
+    assert mpc['batch_size'] == 128
     assert mpc['batch_size'] >= 2 + mpc['velocity_samples'] * mpc['curvature_samples']
     timeout = config['twist_mux']['ros__parameters']['topics']['autonomy']['timeout']
     assert 3 * mpc['model_dt'] < timeout == 0.5

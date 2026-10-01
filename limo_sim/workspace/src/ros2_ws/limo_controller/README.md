@@ -9,7 +9,7 @@
 | Rear axle to base | 0.10 m | 0.12 m |
 | Minimum turning radius | 0.462 m | 0.55 m |
 | Controller frequency | 10 Hz | 20 Hz |
-| MPC sequences / steps | 96 / 25 | 768 / 50 |
+| MPC sequences / steps | 128 / 25 | 768 / 50 |
 | Model timestep / horizon | 0.10 s / 2.5 s | 0.05 s / 2.5 s |
 | Require chassis command mode | Yes | No |
 | Default clock | Wall clock | Simulation clock |
@@ -19,6 +19,17 @@ Simulation geometry is now in its YAML rather than applied over a parameter file
 by the launch. Real control uses a smaller Nano CPU budget, retaining geometry,
 velocity/acceleration limits, the prediction horizon and footprint collision checks.
 The real local costmap updates at 10 Hz and publishes at 2 Hz.
+
+The real profile gives local obstacle costs twice their reference weight:
+`FollowPath.MppiObstacle.scale` is 6.0 instead of 3.0, while path and goal
+weights retain their reference values. This increases the preference for
+lower-cost routes through the local costmap relative to following the planned
+path; it does not impose an absolute priority between the soft costs.
+`FollowPath.MppiObstacle.near_goal_distance` is 0.10 m, so ordinary obstacle
+repulsion remains active until the positional arrival tolerance instead of
+switching off 0.50 m before the goal. Footprint collisions remain hard
+rejections at every predicted pose. These parameters are read when configuring
+the controller; restart the application after changing the installed YAML.
 
 ```bash
 ros2 launch limo_controller control.launch.py robot_model:=real

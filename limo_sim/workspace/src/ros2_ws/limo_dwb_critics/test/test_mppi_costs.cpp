@@ -98,14 +98,14 @@ TEST_F(MppiCostsTest, NormalizesObstacleCostIndependentlyOfHorizonAndResolution)
   setCost(0.0, 0.0, 127);
   dwb_msgs::msg::Trajectory2D trajectory;
   trajectory.poses.assign(11, pose(0, 0));
-  EXPECT_DOUBLE_EQ(critic.getScale(), 3.0);
-  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory) * critic.getScale(), 1.5);
+  EXPECT_DOUBLE_EQ(critic.getScale(), 6.0);
+  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory) * critic.getScale(), 3.0);
   trajectory.poses.assign(51, pose(0, 0));
-  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory) * critic.getScale(), 1.5);
+  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory) * critic.getScale(), 3.0);
   costmap_->getCostmap()->resizeMap(50, 50, 0.1, -2.5, -2.5);
   clearMap();
   setCost(0.0, 0.0, 127);
-  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory) * critic.getScale(), 1.5);
+  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory) * critic.getScale(), 3.0);
 }
 
 TEST_F(MppiCostsTest, NearGoalDisablesRepulsionButNeverCollisionRejection)
@@ -116,6 +116,8 @@ TEST_F(MppiCostsTest, NearGoalDisablesRepulsionButNeverCollisionRejection)
   dwb_msgs::msg::Trajectory2D trajectory;
   trajectory.poses.assign(5, pose(0, 0));
   setCost(0.0, 0.0, 200);
+  EXPECT_NEAR(critic.scoreTrajectory(trajectory), 200.0 / 254.0, 1e-12);
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(0.05, 0), straightPath()));
   EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory), 0.0);
   setCost(0.0, 0.0, nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE);
   EXPECT_NEAR(critic.scoreTrajectory(trajectory), 300.0 / 254.0, 1e-12);
