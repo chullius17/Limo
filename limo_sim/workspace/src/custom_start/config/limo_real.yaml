@@ -1,0 +1,28 @@
+# Valori predefiniti di limo_real.launch.py. Gli argomenti ros2 launch
+# specificati da riga di comando hanno precedenza sulla sezione launch.
+launch:
+  steering_left_scale: 1.0
+  steering_right_scale: 1.0
+  port_name: ttyTHS1
+  use_lidar: true
+  use_camera: true
+  camera_x: 0.10             # metri rispetto a base_link
+  camera_y: 0.0
+  camera_z: 0.065
+  camera_roll: 0.0          # radianti
+  camera_pitch: 0.0
+  camera_yaw: 0.0
+  open_rviz: false
+
+# Argomenti del driver Astra.
+camera_driver:
+  camera_name: camera
+  color_width: 640
+  color_height: 480
+  depth_width: 640
+  depth_height: 400
+  enable_point_cloud: false
+  enable_ir: false
+  color_depth_synchronization: true
+  # <=0 pubblica le TF ottiche una sola volta su /tf_static.
+  tf_publish_rate: 0.0

@@ -8,31 +8,40 @@ from launch.actions import (
     DeclareLaunchArgument,
     GroupAction,
     IncludeLaunchDescription,
+    OpaqueFunction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import (
     AnyLaunchDescriptionSource,
     PythonLaunchDescriptionSource,
 )
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import PathJoinSubstitution
 from launch_ros.actions import Node, SetRemap
 from launch_ros.substitutions import FindPackageShare
 
+from custom_start.launch_config import load_profile, scalar, setting
 
-def generate_launch_description():
+
+def _launch_real(context):
+    profile = load_profile(context, ('launch', 'camera_driver'))
+    settings = profile['launch']
+
+    def value(name):
+        return setting(context, settings, name)
+
     custom_start_share = get_package_share_directory('custom_start')
     limo_base_share = get_package_share_directory('limo_base')
 
-    port_name = LaunchConfiguration('port_name')
-    use_lidar = LaunchConfiguration('use_lidar')
-    use_camera = LaunchConfiguration('use_camera')
-    camera_x = LaunchConfiguration('camera_x')
-    camera_y = LaunchConfiguration('camera_y')
-    camera_z = LaunchConfiguration('camera_z')
-    camera_roll = LaunchConfiguration('camera_roll')
-    camera_pitch = LaunchConfiguration('camera_pitch')
-    camera_yaw = LaunchConfiguration('camera_yaw')
-    open_rviz = LaunchConfiguration('open_rviz')
+    port_name = value('port_name')
+    use_lidar = value('use_lidar')
+    use_camera = value('use_camera')
+    camera_x = value('camera_x')
+    camera_y = value('camera_y')
+    camera_z = value('camera_z')
+    camera_roll = value('camera_roll')
+    camera_pitch = value('camera_pitch')
+    camera_yaw = value('camera_yaw')
+    open_rviz = value('open_rviz')
 
     limo_base = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -49,8 +58,8 @@ def generate_launch_description():
             # This chassis reports mode 2 even after its mechanical Ackermann
             # conversion, so force the matching Twist-to-steering conversion.
             'motion_mode': '1',
-            'steering_left_scale': LaunchConfiguration('steering_left_scale'),
-            'steering_right_scale': LaunchConfiguration('steering_right_scale'),
+            'steering_left_scale': value('steering_left_scale'),
+            'steering_right_scale': value('steering_right_scale'),
         }.items(),
     )
 
@@ -116,22 +125,13 @@ def generate_launch_description():
                     ])
                 ),
                 launch_arguments={
-                    'camera_name': 'camera',
-                    'color_width': '640',
-                    'color_height': '480',
-                    'depth_width': '640',
-                    'depth_height': '400',
-                    'enable_point_cloud': 'false',
-                    'enable_ir': 'false',
-                    'color_depth_synchronization': 'true',
-                    # The driver's camera_*_optical_frame transforms are
-                    # rigid (computed once from calibration), but with the
-                    # default rate it re-broadcasts them on /tf every
-                    # 1/tf_publish_rate seconds instead of /tf_static.
-                    # <=0 makes it publish them once on /tf_static, which
-                    # tf2 treats as valid for all time and avoids
-                    # "extrapolation into the future" lookup failures.
-                    'tf_publish_rate': '0.0',
+                    name: scalar(profile['camera_driver'], name)
+                    for name in (
+                        'camera_name', 'color_width', 'color_height',
+                        'depth_width', 'depth_height', 'enable_point_cloud',
+                        'enable_ir', 'color_depth_synchronization',
+                        'tf_publish_rate',
+                    )
                 }.items(),
             ),
         ],
@@ -141,26 +141,12 @@ def generate_launch_description():
         package='robot_localization',
         executable='ekf_node',
         name='ekf_filter_node',
-        # Foxy otherwise scopes the inline parameters to /**, which loses
-        # to the node-specific ekf.yaml values regardless of file order.
+        # Keep the node-specific YAML overrides on the root namespace.
         namespace='/',
         output='screen',
         parameters=[
             os.path.join(custom_start_share, 'config', 'ekf.yaml'),
-            {
-                'use_sim_time': False,
-                # The physical chassis reports zero odometry yaw rate even
-                # during turns. Fuse yaw rate from /limo/imu only, avoiding
-                # conflicting angular-velocity measurements in the EKF.
-                # Override here because ekf.yaml is also used in simulation.
-                'odom0_config': [
-                    True, True, False,     # x, y, z
-                    False, False, True,    # roll, pitch, yaw
-                    True, True, False,     # vx, vy, vz
-                    False, False, False,   # vroll, vpitch, vyaw
-                    False, False, False,   # ax, ay, az
-                ],
-            },
+            os.path.join(custom_start_share, 'config', 'ekf_real.yaml'),
         ],
     )
 
@@ -172,55 +158,7 @@ def generate_launch_description():
         condition=IfCondition(open_rviz),
     )
 
-    return LaunchDescription([
-        # 2026-10-01 cmd_vel/IMU trial indicates direct protocol steering.
-        # Expose overrides so this chassis calibration is reversible.
-        DeclareLaunchArgument(
-            'steering_left_scale', default_value='1.0',
-            description='Left inner-wheel/protocol angle ratio (>= 1.0).'),
-        DeclareLaunchArgument(
-            'steering_right_scale', default_value='1.0',
-            description='Right inner-wheel/protocol angle ratio (>= 1.0).'),
-        DeclareLaunchArgument(
-            'port_name', default_value='ttyTHS1',
-            description='Serial device name used by the physical LIMO.',
-        ),
-        DeclareLaunchArgument(
-            'use_lidar', default_value='true',
-            description='Start the physical YDLidar driver.',
-        ),
-        DeclareLaunchArgument(
-            'use_camera', default_value='true',
-            description='Start the physical Astra depth camera.',
-        ),
-        DeclareLaunchArgument(
-            'camera_x', default_value='0.10',
-            description='Camera X offset from base_link in metres.',
-        ),
-        DeclareLaunchArgument(
-            'camera_y', default_value='0.0',
-            description='Camera Y offset from base_link in metres.',
-        ),
-        DeclareLaunchArgument(
-            'camera_z', default_value='0.065',
-            description='Camera Z offset from base_link in metres.',
-        ),
-        DeclareLaunchArgument(
-            'camera_roll', default_value='0.0',
-            description='Camera roll relative to base_link in radians.',
-        ),
-        DeclareLaunchArgument(
-            'camera_pitch', default_value='0.0',
-            description='Camera pitch relative to base_link in radians.',
-        ),
-        DeclareLaunchArgument(
-            'camera_yaw', default_value='0.0',
-            description='Camera yaw relative to base_link in radians.',
-        ),
-        DeclareLaunchArgument(
-            'open_rviz', default_value='false',
-            description='Start RViz.',
-        ),
+    return [
         limo_base,
         imu_transform,
         lidar,
@@ -228,4 +166,64 @@ def generate_launch_description():
         camera,
         ekf,
         rviz,
+    ]
+
+
+def generate_launch_description():
+    default_config = os.path.join(
+        get_package_share_directory('custom_start'),
+        'config', 'limo_real.yaml')
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'config_file', default_value=default_config,
+            description='YAML profile for the physical robot.'),
+        # 2026-10-01 cmd_vel/IMU trial indicates direct protocol steering.
+        # Expose overrides so this chassis calibration is reversible.
+        DeclareLaunchArgument(
+            'steering_left_scale', default_value='',
+            description='Left inner-wheel/protocol angle ratio (>= 1.0).'),
+        DeclareLaunchArgument(
+            'steering_right_scale', default_value='',
+            description='Right inner-wheel/protocol angle ratio (>= 1.0).'),
+        DeclareLaunchArgument(
+            'port_name', default_value='',
+            description='Serial device name used by the physical LIMO.',
+        ),
+        DeclareLaunchArgument(
+            'use_lidar', default_value='',
+            description='Start the physical YDLidar driver.',
+        ),
+        DeclareLaunchArgument(
+            'use_camera', default_value='',
+            description='Start the physical Astra depth camera.',
+        ),
+        DeclareLaunchArgument(
+            'camera_x', default_value='',
+            description='Camera X offset from base_link in metres.',
+        ),
+        DeclareLaunchArgument(
+            'camera_y', default_value='',
+            description='Camera Y offset from base_link in metres.',
+        ),
+        DeclareLaunchArgument(
+            'camera_z', default_value='',
+            description='Camera Z offset from base_link in metres.',
+        ),
+        DeclareLaunchArgument(
+            'camera_roll', default_value='',
+            description='Camera roll relative to base_link in radians.',
+        ),
+        DeclareLaunchArgument(
+            'camera_pitch', default_value='',
+            description='Camera pitch relative to base_link in radians.',
+        ),
+        DeclareLaunchArgument(
+            'camera_yaw', default_value='',
+            description='Camera yaw relative to base_link in radians.',
+        ),
+        DeclareLaunchArgument(
+            'open_rviz', default_value='',
+            description='Start RViz.',
+        ),
+        OpaqueFunction(function=_launch_real),
     ])

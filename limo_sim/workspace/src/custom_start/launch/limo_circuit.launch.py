@@ -8,33 +8,41 @@ from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
     IncludeLaunchDescription,
+    OpaqueFunction,
     SetEnvironmentVariable,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import EnvironmentVariable, LaunchConfiguration
+from launch.substitutions import EnvironmentVariable
 from launch_ros.actions import Node
 
+from custom_start.launch_config import boolean, load_profile, scalar, setting
 
-def generate_launch_description():
+
+def _launch_circuit(context):
+    profile = load_profile(context, ('launch', 'spawn'))
+    settings = profile['launch']
+
+    def value(name):
+        return setting(context, settings, name)
+
     custom_start_share = get_package_share_directory('custom_start')
     limo_car_share = get_package_share_directory('limo_car')
 
-    default_world = os.path.join(
-        custom_start_share, 'worlds', 'limo_circuit_world.world'
-    )
     ekf_config = os.path.join(custom_start_share, 'config', 'ekf.yaml')
     model_path = os.path.join(custom_start_share, 'models')
 
-    world = LaunchConfiguration('world')
-    gui = LaunchConfiguration('gui')
-    use_sim_time = LaunchConfiguration('use_sim_time')
-    camera_x = LaunchConfiguration('camera_x')
-    camera_y = LaunchConfiguration('camera_y')
-    camera_z = LaunchConfiguration('camera_z')
-    camera_roll = LaunchConfiguration('camera_roll')
-    camera_pitch = LaunchConfiguration('camera_pitch')
-    camera_yaw = LaunchConfiguration('camera_yaw')
+    world = value('world')
+    if not os.path.isabs(world):
+        world = os.path.join(custom_start_share, world)
+    gui = value('gui')
+    use_sim_time = value('use_sim_time')
+    camera_x = value('camera_x')
+    camera_y = value('camera_y')
+    camera_z = value('camera_z')
+    camera_roll = value('camera_roll')
+    camera_pitch = value('camera_pitch')
+    camera_yaw = value('camera_yaw')
 
     robot_state_publisher = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -76,7 +84,7 @@ def generate_launch_description():
         output='screen',
         parameters=[
             ekf_config,
-            {'use_sim_time': use_sim_time},
+            {'use_sim_time': boolean(use_sim_time, 'use_sim_time')},
         ],
     )
 
@@ -100,51 +108,19 @@ def generate_launch_description():
         arguments=[
             '-topic', 'robot_description',
             '-entity', 'limo',
-            '-x', '0.0', '-y', '0.0', '-z', '0.30', '-Y', '0.0',
+            '-x', scalar(profile['spawn'], 'x'),
+            '-y', scalar(profile['spawn'], 'y'),
+            '-z', scalar(profile['spawn'], 'z'),
+            '-Y', scalar(profile['spawn'], 'yaw'),
         ],
         output='screen',
     )
 
-    return LaunchDescription([
-        DeclareLaunchArgument(
-            'world', default_value=default_world,
-            description='Absolute path of the Gazebo world containing the circuit.',
-        ),
-        DeclareLaunchArgument(
-            'gui', default_value='true',
-            description='Start the Gazebo graphical client.',
-        ),
-        DeclareLaunchArgument(
-            'use_sim_time', default_value='true',
-            description='Use the clock published by Gazebo.',
-        ),
-        DeclareLaunchArgument(
-            'camera_x', default_value='0.10',
-            description='Camera X offset from base_link in metres.',
-        ),
-        DeclareLaunchArgument(
-            'camera_y', default_value='0.0',
-            description='Camera Y offset from base_link in metres.',
-        ),
-        DeclareLaunchArgument(
-            'camera_z', default_value='0.065',
-            description='Camera Z offset from base_link in metres.',
-        ),
-        DeclareLaunchArgument(
-            'camera_roll', default_value='0.0',
-            description='Camera roll relative to base_link in radians.',
-        ),
-        DeclareLaunchArgument(
-            'camera_pitch', default_value='0.0',
-            description='Camera pitch relative to base_link in radians.',
-        ),
-        DeclareLaunchArgument(
-            'camera_yaw', default_value='0.0',
-            description='Camera yaw relative to base_link in radians.',
-        ),
+    return [
         SetEnvironmentVariable(
             'GAZEBO_MODEL_PATH',
-            [model_path, ':', EnvironmentVariable('GAZEBO_MODEL_PATH', default_value='')],
+            [model_path, ':', EnvironmentVariable(
+                'GAZEBO_MODEL_PATH', default_value='')],
         ),
         robot_state_publisher,
         camera_mount_transform,
@@ -153,4 +129,53 @@ def generate_launch_description():
         gazebo_client,
         spawn_robot,
         ekf_node,
+    ]
+
+
+def generate_launch_description():
+    default_config = os.path.join(
+        get_package_share_directory('custom_start'),
+        'config', 'limo_circuit.yaml')
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'config_file', default_value=default_config,
+            description='YAML profile for the Gazebo circuit.'),
+        DeclareLaunchArgument(
+            'world', default_value='',
+            description=(
+                'Gazebo world path; relative paths use custom_start share.'),
+        ),
+        DeclareLaunchArgument(
+            'gui', default_value='',
+            description='Start the Gazebo graphical client.',
+        ),
+        DeclareLaunchArgument(
+            'use_sim_time', default_value='',
+            description='Use the clock published by Gazebo.',
+        ),
+        DeclareLaunchArgument(
+            'camera_x', default_value='',
+            description='Camera X offset from base_link in metres.',
+        ),
+        DeclareLaunchArgument(
+            'camera_y', default_value='',
+            description='Camera Y offset from base_link in metres.',
+        ),
+        DeclareLaunchArgument(
+            'camera_z', default_value='',
+            description='Camera Z offset from base_link in metres.',
+        ),
+        DeclareLaunchArgument(
+            'camera_roll', default_value='',
+            description='Camera roll relative to base_link in radians.',
+        ),
+        DeclareLaunchArgument(
+            'camera_pitch', default_value='',
+            description='Camera pitch relative to base_link in radians.',
+        ),
+        DeclareLaunchArgument(
+            'camera_yaw', default_value='',
+            description='Camera yaw relative to base_link in radians.',
+        ),
+        OpaqueFunction(function=_launch_circuit),
     ])

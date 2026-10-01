@@ -1,0 +1,11 @@
+# Override dell'EKF per il LIMO fisico. La simulazione usa solo ekf.yaml.
+ekf_filter_node:
+  ros__parameters:
+    use_sim_time: false
+    # Il telaio reale riporta vyaw=0 anche in curva: lo yaw rate viene
+    # fuso soltanto da /limo/imu.
+    odom0_config: [true, true, false,
+                   false, false, true,
+                   true, true, false,
+                   false, false, false,
+                   false, false, false]

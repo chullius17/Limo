@@ -16,17 +16,18 @@ entrambi gli ingressi, in conflitto tra loro. Le covarianze delle velocità di
 
 ## Modifica
 
-Nel solo [launch reale](launch/limo_real.launch.py), il parametro
+Nel solo [profilo EKF reale](config/ekf_real.yaml), il parametro
 `odom0_config` viene sovrascritto impostando a `False` il dodicesimo elemento
 (`vyaw`, indice 11). La velocità angolare continua a essere fornita da
 `/limo/imu`; lo yaw della posa di `/odom` e gli altri ingressi restano abilitati
 come prima. Il [file EKF condiviso](config/ekf.yaml) e il launch della
 simulazione non sono stati modificati.
 
-Al nodo EKF è stato aggiunto anche `namespace='/'`. Su Foxy, senza namespace
-esplicito, il dizionario dei parametri del launch viene applicato a `/**` e
-può essere scavalcato dalla configurazione YAML specifica del nodo. Questo
-impediva alla prima modifica di diventare effettiva.
+Al nodo EKF nel [launch reale](launch/limo_real.launch.py) è stato aggiunto
+anche `namespace='/'`. Nella prima versione della correzione, su Foxy, senza
+namespace esplicito il dizionario dei parametri del launch veniva applicato
+a `/**` e poteva essere scavalcato dalla configurazione YAML specifica del
+nodo. Ora l'override è nel profilo EKF reale, caricato dopo quello condiviso.
 [Riferimento al comportamento di Foxy](https://github.com/ros2/launch_ros/blob/foxy/launch_ros/launch_ros/actions/node.py#L119-L126).
 
 ## Verifica sperimentale

@@ -12,6 +12,7 @@
   <exec_depend>gazebo_ros</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <exec_depend>limo_base</exec_depend>
   <exec_depend>limo_bringup</exec_depend>
   <exec_depend>limo_car</exec_depend>
