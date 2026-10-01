@@ -126,12 +126,7 @@ def _launch_real(context):
                 ),
                 launch_arguments={
                     name: scalar(profile['camera_driver'], name)
-                    for name in (
-                        'camera_name', 'color_width', 'color_height',
-                        'depth_width', 'depth_height', 'enable_point_cloud',
-                        'enable_ir', 'color_depth_synchronization',
-                        'tf_publish_rate',
-                    )
+                    for name in profile['camera_driver']
                 }.items(),
             ),
         ],

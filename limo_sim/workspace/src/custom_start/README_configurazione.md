@@ -4,7 +4,8 @@ I valori predefiniti si modificano in questi file:
 
 - [config/limo_real.yaml](config/limo_real.yaml): porta seriale, lidar,
   camera, posizione della camera, scale di sterzo e RViz; la sezione
-  `camera_driver` contiene le opzioni del driver Astra.
+  `camera_driver` contiene gli argomenti del driver Astra e può includerne
+  altri dichiarati in `dabai_u3.launch.xml`.
 - [config/limo_circuit.yaml](config/limo_circuit.yaml): mondo Gazebo,
   interfaccia grafica, clock simulato, posizione della camera e posa iniziale.
 - [config/ekf.yaml](config/ekf.yaml): parametri EKF condivisi.
