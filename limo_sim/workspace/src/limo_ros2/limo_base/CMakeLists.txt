@@ -17,6 +17,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rcl_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -44,7 +45,7 @@ add_executable(limo_base
     src/limo_base_node.cpp
     src/limo_driver.cpp
     src/serial_port.cpp)
-ament_target_dependencies(limo_base rclcpp std_msgs tf2 tf2_ros nav_msgs sensor_msgs limo_msgs)
+ament_target_dependencies(limo_base rclcpp rcl_interfaces std_msgs tf2 tf2_ros nav_msgs sensor_msgs limo_msgs)
 
 install(
   DIRECTORY include/

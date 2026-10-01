@@ -29,6 +29,13 @@ def generate_launch_description():
         'motion_mode', default_value='-1',
         description='Override chassis motion mode: -1 auto, 0 differential, 1 Ackermann, 2 Mecanum')
 
+    steering_args = [
+        DeclareLaunchArgument(
+            name, default_value='2.47',
+            description='Inner-wheel/protocol angle ratio; finite and >= 1.0.')
+        for name in ('steering_left_scale', 'steering_right_scale')
+    ]
+
     # is_scout_mini_arg = DeclareLaunchArgument('is_scout_mini', default_value='false',
     #                                       description='Scout mini model')
     # is_omni_wheel_arg = DeclareLaunchArgument('is_omni_wheel', default_value='false',
@@ -59,6 +66,8 @@ def generate_launch_description():
                 'pub_odom_tf': launch.substitutions.LaunchConfiguration('pub_odom_tf'),
                 'motion_mode': launch.substitutions.LaunchConfiguration('motion_mode'),
                 'control_rate': launch.substitutions.LaunchConfiguration('control_rate'),
+                'steering_left_scale': LaunchConfiguration('steering_left_scale'),
+                'steering_right_scale': LaunchConfiguration('steering_right_scale'),
         }])
 
     return LaunchDescription([
@@ -70,6 +79,7 @@ def generate_launch_description():
         imu_topic_arg,
         odom_tf_arg,
         motion_mode_arg,
+        *steering_args,
         # is_scout_mini_arg,
         # is_omni_wheel_arg,
         # simulated_robot_arg,

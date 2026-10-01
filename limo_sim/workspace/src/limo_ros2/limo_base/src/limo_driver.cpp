@@ -30,6 +30,8 @@
 
 #include "limo_base/limo_driver.h"
 #include <cmath>
+#include <stdexcept>
+#include "rcl_interfaces/msg/parameter_descriptor.hpp"
 
 namespace AgileX {
 
@@ -43,6 +45,24 @@ LimoDriver::LimoDriver(std::string node_name):rclcpp::Node(node_name),keep_runni
     this->declare_parameter("use_mcnamu");
     this->declare_parameter("motion_mode");
     this->declare_parameter("control_rate");  
+
+    // Physical inner-wheel angle / protocol angle, for each signed turn.
+    // Keep startup-only: changing calibration during motion is discontinuous.
+    rcl_interfaces::msg::ParameterDescriptor steering_descriptor;
+    steering_descriptor.read_only = true;
+    steering_descriptor.description =
+        "Inner-wheel angle divided by protocol angle; finite and at least 1.0";
+    left_angle_scale_ = this->declare_parameter<double>(
+        "steering_left_scale", 2.47, steering_descriptor);
+    right_angle_scale_ = this->declare_parameter<double>(
+        "steering_right_scale", 2.47, steering_descriptor);
+    if (!std::isfinite(left_angle_scale_) || left_angle_scale_ < 1.0 ||
+        !std::isfinite(right_angle_scale_) || right_angle_scale_ < 1.0) {
+        throw std::invalid_argument("Steering scales must be finite and >= 1.0");
+    }
+    RCLCPP_INFO(this->get_logger(),
+                "Steering scales: left=%.3f, right=%.3f; inner-wheel limit=28 deg",
+                left_angle_scale_, right_angle_scale_);
 
     this->get_parameter_or<std::string>("port_name", port_name, "ttyTHS1");//获取参数
     this->get_parameter_or<std::string>("odom_frame", odom_frame_, "odom");
@@ -477,11 +497,12 @@ void LimoDriver::twistCmdCallback(const geometry_msgs::msg::Twist::SharedPtr msg
             }
 
             double steering_angle;
+            // Positive steering is left, matching the feedback conversion.
             if (inner_angle > 0) {
-                steering_angle = inner_angle / right_angle_scale_;
+                steering_angle = inner_angle / left_angle_scale_;
             }
             else {
-                steering_angle = inner_angle / left_angle_scale_;
+                steering_angle = inner_angle / right_angle_scale_;
             }
 
             setMotionCommand(msg->linear.x, 0, 0, steering_angle);

@@ -132,8 +132,8 @@ private:
     static constexpr double max_inner_angle_ = 0.48869;  // 28 degree
     static constexpr double track_ = 0.172;           // m (left right wheel distance)
     static constexpr double wheelbase_ = 0.2;         // m (front rear wheel distance)
-    static constexpr double left_angle_scale_ = 2.47;
-    static constexpr double right_angle_scale_ = 2.47;
+    double left_angle_scale_ = 2.47;
+    double right_angle_scale_ = 2.47;
 };
 
 }

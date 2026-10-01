@@ -159,3 +159,57 @@ i log in `/tmp/limo_minimal_bringup.log` e `/tmp/limo_minimal_mapping.log`.
 
 Il confronto successivo fra `odom` e `map` e le riproduzioni isolate della
 SLAM sono descritti nel [report mapping](README_mapping_reale.md).
+
+## Calibrazione dello sterzo ROS — 1 ottobre 2026
+
+Con teleop, le ruote sterzavano meno che con l'app AgileX. La registrazione
+`~/steering_diagnostics/steering_20261001_110042.jsonl` sul robot contiene
+comandi `/cmd_vel`, odometria, giroscopio e stato del telaio. Nelle due curve
+in avanti, richiesti 0,5 m/s e ±1 rad/s, la velocità misurata era circa
+0,497 m/s e la rotazione 0,421 / -0,460 rad/s. Il raggio stimato da velocità
+odometrica e giroscopio era 1,18 / 1,08 m contro 0,50 m richiesti. Sono tratti
+brevi: la stima non costituisce una calibrazione meccanica completa.
+
+Il driver divideva l'angolo interno per il fattore fisso 2,47. La risposta
+misurata suggerisce invece una scala vicina a 1,0 per questo telaio. Il driver
+espone ora `steering_left_scale` e `steering_right_scale`: rapporto fra angolo
+fisico della ruota interna e angolo del protocollo. Il comando viene diviso
+per la scala; il feedback dello sterzo viene moltiplicato per la stessa scala.
+Il segno positivo usa la scala sinistra in entrambe le conversioni.
+
+`custom_start limo_real.launch.py` imposta entrambe le scale a **1,0**;
+il driver e il launch generico `limo_base.launch.py` mantengono **2,47**.
+Le scale devono essere finite e almeno 1,0 e si impostano solo all'avvio.
+Il limite dell'angolo interno rimane 28° e il raggio geometrico minimo rimane
+circa 0,462 m. Planner e controller non sono stati ritarati. Questa modifica
+non cambia il trattamento di `motion_mode` né la fusione EKF descritta sopra.
+
+Dopo la compilazione di `limo_base` e `custom_start`, riavviare il bringup
+con teleop fermo. Il log deve riportare `Steering scales: left=1.000,
+right=1.000`. Verificare con:
+
+```bash
+ros2 param get /limo_base steering_left_scale
+ros2 param get /limo_base steering_right_scale
+```
+
+Per tornare alla calibrazione precedente al successivo avvio:
+
+```bash
+ros2 launch custom_start limo_real.launch.py \
+  steering_left_scale:=2.47 steering_right_scale:=2.47
+```
+
+La risposta fisica con scala 1,0 richiede una seconda prova di curva a bassa
+velocità, confrontando nuovamente `/cmd_vel`, `/odom` e `/limo/imu`.
+Build su Jetson riuscita. Il test seriale ha superato 27 casi di comando,
+6 casi di feedback, 3 controlli dei parametri immutabili e 8 rifiuti di
+calibrazioni non valide, con scala originale, nuova e asimmetrica.
+
+Il test `limo_base/test/test_steering_serial.py` verifica il driver costruito
+tramite pseudo-terminale in un dominio ROS isolato, senza porta del telaio:
+
+```bash
+python3 src/limo_ros2/limo_base/test/test_steering_serial.py \
+  install/limo_base/lib/limo_base/limo_base
+```

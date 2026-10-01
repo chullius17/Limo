@@ -49,6 +49,8 @@ def generate_launch_description():
             # This chassis reports mode 2 even after its mechanical Ackermann
             # conversion, so force the matching Twist-to-steering conversion.
             'motion_mode': '1',
+            'steering_left_scale': LaunchConfiguration('steering_left_scale'),
+            'steering_right_scale': LaunchConfiguration('steering_right_scale'),
         }.items(),
     )
 
@@ -171,6 +173,14 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        # 2026-10-01 cmd_vel/IMU trial indicates direct protocol steering.
+        # Expose overrides so this chassis calibration is reversible.
+        DeclareLaunchArgument(
+            'steering_left_scale', default_value='1.0',
+            description='Left inner-wheel/protocol angle ratio (>= 1.0).'),
+        DeclareLaunchArgument(
+            'steering_right_scale', default_value='1.0',
+            description='Right inner-wheel/protocol angle ratio (>= 1.0).'),
         DeclareLaunchArgument(
             'port_name', default_value='ttyTHS1',
             description='Serial device name used by the physical LIMO.',
