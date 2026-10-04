@@ -18,6 +18,11 @@ double approach(double value, double target, double amount)
 {
   return value + std::clamp(target - value, -amount, amount);
 }
+
+int motionDirection(double velocity)
+{
+  return velocity > 0.001 ? 1 : velocity < -0.001 ? -1 : 0;
+}
 }  // namespace
 
 void MpcConfig::validate() const
@@ -36,6 +41,8 @@ void MpcConfig::validate() const
     !std::isfinite(steering_weight) || steering_weight < 0.0 ||
     !std::isfinite(steering_command_weight) || steering_command_weight < 0.0 ||
     !std::isfinite(steering_rate_change_weight) || steering_rate_change_weight < 0.0 ||
+    !std::isfinite(reverse_distance_weight) || reverse_distance_weight < 0.0 ||
+    !std::isfinite(direction_change_weight) || direction_change_weight < 0.0 ||
     time_steps < 2 || time_steps > 1000 || control_segments < 1 ||
     control_segments > time_steps || velocity_samples < 2 || velocity_samples > 100 ||
     curvature_samples < 3 || curvature_samples > 100 || batch_size > 10000 ||
@@ -55,6 +62,7 @@ void SamplingMpc::reset()
 {
   previous_targets_.clear();
   previous_steering_rate_ = 0.0;
+  previous_direction_ = 0;
 }
 
 double SamplingMpc::yawRate(const MpcControl & control) const
@@ -128,12 +136,13 @@ MpcControl SamplingMpc::advance(
 
 MpcRollout SamplingMpc::rollout(
   const MpcState & initial, const std::vector<MpcControl> & targets,
-  double previous_steering_rate) const
+  double previous_steering_rate, int previous_direction) const
 {
   if (targets.size() != static_cast<std::size_t>(config_.time_steps) ||
     !std::isfinite(initial.x) || !std::isfinite(initial.y) ||
     !std::isfinite(initial.yaw) || !finiteControl(initial.control) ||
     !std::isfinite(previous_steering_rate) ||
+    previous_direction < -1 || previous_direction > 1 ||
     std::abs(initial.control.steering) >
     std::atan(config_.wheelbase / config_.min_turning_radius) + 1e-9)
   {
@@ -144,8 +153,20 @@ MpcRollout SamplingMpc::rollout(
   result.states.reserve(targets.size() + 1);
   result.states.push_back(initial);
   auto state = initial;
+  int direction = motionDirection(initial.control.velocity);
+  if (!direction) {
+    direction = previous_direction;
+  }
+  double reverse_distance = 0.0;
+  int direction_changes = 0;
   for (const auto & target : targets) {
     const auto control = advance(state.control, target);
+    reverse_distance += std::max(0.0, -control.velocity) * config_.dt;
+    const int next_direction = motionDirection(control.velocity);
+    if (next_direction) {
+      direction_changes += direction && next_direction != direction;
+      direction = next_direction;
+    }
     const double normalized_acceleration = (control.velocity - state.control.velocity) /
       (config_.dt * std::max(config_.acceleration, config_.deceleration));
     const double normalized_steering = (control.steering - state.control.steering) /
@@ -172,6 +193,10 @@ MpcRollout SamplingMpc::rollout(
     result.states.push_back(state);
   }
   result.effort_cost /= targets.size();
+  // These are physical reverse distance and discrete direction changes, not
+  // mean per-step effort: horizon length must not dilute either penalty.
+  result.effort_cost += config_.reverse_distance_weight * reverse_distance +
+    config_.direction_change_weight * direction_changes;
   // The command actually issued must not have its regularization diluted by
   // the horizon length. Penalize both its increment and changes in steering
   // rate across control cycles, before collision/environment scoring.
@@ -198,10 +223,12 @@ MpcSolution SamplingMpc::solve(
   // Warm state is committed only after a successful search, including when
   // a caller's evaluator throws. Failed searches cannot retain an old plan.
   const double previous_rate = previous_steering_rate_;
+  const int previous_direction = previous_direction_ ? previous_direction_ :
+    motionDirection(initial.control.velocity);
   reset();
   MpcSolution best;
   const auto consider = [&](const std::vector<MpcControl> & targets) {
-      auto prediction = rollout(initial, targets, previous_rate);
+      auto prediction = rollout(initial, targets, previous_rate, previous_direction);
       const double remaining = best.cost - prediction.effort_cost;
       if (remaining < 0.0) {
         return;
@@ -258,6 +285,8 @@ MpcSolution SamplingMpc::solve(
     previous_targets_ = best.rollout.targets;
     previous_steering_rate_ =
       (best.rollout.states[1].control.steering - initial.control.steering) / config_.dt;
+    const int issued_direction = motionDirection(best.rollout.states[1].control.velocity);
+    previous_direction_ = issued_direction ? issued_direction : previous_direction;
   }
   return best;
 }

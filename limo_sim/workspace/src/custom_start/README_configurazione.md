@@ -8,6 +8,8 @@ I valori predefiniti si modificano in questi file:
   altri dichiarati in `dabai_u3.launch.xml`.
 - [config/limo_circuit.yaml](config/limo_circuit.yaml): mondo Gazebo,
   interfaccia grafica, clock simulato, posizione della camera e posa iniziale.
+- [config/limo_obstacles.yaml](config/limo_obstacles.yaml): stessi parametri
+  della simulazione del circuito, con il mondo degli ostacoli predefinito.
 - [config/ekf.yaml](config/ekf.yaml): parametri EKF condivisi.
 - [config/ekf_real.yaml](config/ekf_real.yaml): override EKF del solo robot
   fisico, applicati dopo quelli condivisi.
@@ -17,6 +19,7 @@ I valori di `launch` possono ancora essere modificati per un singolo avvio:
 ```bash
 ros2 launch custom_start limo_real.launch.py use_camera:=false
 ros2 launch custom_start limo_circuit.launch.py gui:=false
+ros2 launch custom_start limo_obstacles.launch.py
 ```
 
 Un argomento CLI ha precedenza sul valore nel profilo YAML. Per usare un

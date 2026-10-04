@@ -14,11 +14,28 @@
 | Require chassis command mode | Yes | No |
 | Default clock | Wall clock | Simulation clock |
 | Default local GUI | Off | On |
+| Local obstacle guidance | Off | On |
+| Local costmap size | 3 x 3 m | 5 x 5 m |
 
 Simulation geometry is now in its YAML rather than applied over a parameter file
 by the launch. Real control uses a smaller Nano CPU budget, retaining geometry,
 velocity/acceleration limits, the prediction horizon and footprint collision checks.
 The real local costmap updates at 10 Hz and publishes at 2 Hz.
+
+Simulation enables `FollowPath.MppiPath.ObstacleGuidance`: when a newly observed
+obstacle blocks the reference, MPC scores progress through free space toward
+a clear rejoin point instead of straight-line progress into the obstacle.
+It temporarily relaxes reference alignment, rewards steering toward the free
+passage, and retains collision checks. The DWB `Oscillation` critic is omitted
+in this profile so its sign locks cannot prevent exiting the detour. See the
+[MPC documentation](../limo_dwb_critics/README.md#online-obstacle-detours-in-simulation)
+for parameters and local-map/kinematic limitations. Rebuild both
+`limo_dwb_critics` and `limo_controller`, then restart the control application.
+
+Detours are triggered by the oriented footprint, so an already collision-free
+planned path beside an obstacle keeps normal tracking. Simulation uses a 4 s
+prediction horizon and soft costs for reverse distance and direction changes;
+it retains detour scoring until the robot has returned near the reference.
 
 The real profile gives local obstacle costs twice their reference weight:
 `FollowPath.MppiObstacle.scale` is 6.0 instead of 3.0, while path and goal

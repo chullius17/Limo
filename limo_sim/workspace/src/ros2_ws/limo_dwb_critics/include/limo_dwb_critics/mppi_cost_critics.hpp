@@ -6,6 +6,7 @@
 
 #include "dwb_core/trajectory_critic.hpp"
 #include "dwb_critics/obstacle_footprint.hpp"
+#include "limo_dwb_critics/obstacle_guidance.hpp"
 
 namespace limo_dwb_critics
 {
@@ -37,6 +38,7 @@ class MppiPathCritic : public dwb_core::TrajectoryCritic
 {
 public:
   void onInit() override;
+  void reset() override {guidance_active_ = false;}
   bool prepare(
     const geometry_msgs::msg::Pose2D & pose, const nav_2d_msgs::msg::Twist2D & velocity,
     const geometry_msgs::msg::Pose2D & goal, const nav_2d_msgs::msg::Path2D & path) override;
@@ -56,6 +58,13 @@ protected:
   double max_path_occupancy_ratio_{0.15};
   double lookahead_distance_{1.25};
   double max_angle_to_furthest_{1.0};
+  double guidance_clearance_margin_{0.0};
+  double guidance_cost_weight_{2.0};
+  double guidance_heading_weight_{2.0};
+  double guidance_rejoin_distance_{0.50};
+  bool guidance_enabled_{false};
+  bool guidance_active_{false};
+  ObstacleGuidance guidance_;
   bool use_path_orientations_{true};
   bool forward_preference_{false};
   geometry_msgs::msg::Pose2D goal_;

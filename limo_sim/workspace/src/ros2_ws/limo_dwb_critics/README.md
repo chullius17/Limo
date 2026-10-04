@@ -22,7 +22,9 @@ Each cycle:
    from the measured pose at the next control cycle.
 
 The model default budget is 768 sequences, 50 steps of 0.05 s, and five control
-segments. This is a finite search, not a guarantee of a globally optimal or
+segments. The simulation profile uses 80 steps (4 s) to include the steering
+reversal and straightening needed to pass an obstacle. This is a finite search,
+not a guarantee of a globally optimal or
 recursively feasible solution. If every candidate is invalid, the controller
 raises DWB's normal no-legal-trajectories exception; it never reuses a stale
 command as a fallback. A new path, deactivation, failed search, or a control gap
@@ -122,6 +124,14 @@ exploration. The real profile doubles the reference obstacle weight to favor
 local-costmap clearance relative to path tracking; other critic weights retain
 their reference values.
 
+Simulation additionally uses `MPC.reverse_distance_weight: 2.0` per metre of
+predicted reverse motion and `MPC.direction_change_weight: 0.5` per transition
+between forward and reverse. Direction history survives an intermediate stop
+and records only the command actually issued. It resets with the warm start.
+These soft costs discourage short alternating commands while allowing reverse
+when it provides enough progress or clearance. Both weights default to zero;
+the real profile retains its existing behavior.
+
 ## Cost correspondence with Humble MPPI
 
 The reference is `origin/humble-navigation` at
@@ -137,7 +147,7 @@ that reference profile.
 | GoalAngleCritic, weight 3 | `MppiPath.GoalAngleCritic` | Mean wrapped yaw error in radians, within 0.5 m |
 | PathAlignCritic, weight 10 | `MppiPath.PathAlignCritic` | Mean path-pose error, with orientations; off within 0.5 m or if local path occupancy exceeds 15% |
 | PathFollowCritic, weight 5 | `MppiPath.PathFollowCritic` | Terminal distance to a metric lookahead target; off within 1 m of the goal |
-| PathAngleCritic, weight 2 | `MppiPath.PathAngleCritic` | Terminal heading toward the lookahead target, enabled for initial errors above 1 rad and outside 0.5 m; forward/reverse symmetric |
+| PathAngleCritic, weight 2 | `MppiPath.PathAngleCritic` | Terminal heading toward the lookahead target, enabled for initial errors above 1 rad and outside 0.5 m; forward preference in simulation, forward/reverse symmetric on the real profile |
 | ConstraintCritic / collision_cost | Model constraints and exceptions | Infeasible/colliding candidates are rejected, not assigned a finite penalty |
 
 This is an adaptation, not a port of MPPI critics. DWB has no batch-wide
@@ -153,6 +163,57 @@ branch's physical footprint and semantic lethal threshold 86. The finite set
 of predictions uses discrete collision checks, not continuous swept-volume
 checking or a terminal invariant-set constraint. Equivalent weights do not
 guarantee identical behavior; simulation and hardware tuning remain necessary.
+
+## Online obstacle detours in simulation
+
+The simulation profile enables `MppiPath.ObstacleGuidance.enabled`. A detour
+starts when the oriented robot footprint collides along the local reference,
+including between path samples. A collision-free planned passage remains under
+ordinary path tracking. The path critic builds an eight-connected Dijkstra
+cost-to-go field through the current controller costmap. Occupied and unknown
+cells are excluded and diagonal corner cutting is forbidden. Lethal cells are
+expanded by the inscribed footprint radius plus `clearance_margin` (0.0 m in
+simulation) and a half-cell diagonal. This center reference leaves the full
+oriented-footprint collision check responsible for the rectangular robot's
+actual clearance. Inflated costs add a travel penalty controlled by
+`cost_weight` (2.0).
+
+If the normal lookahead point is blocked, the target advances to a free point
+on the reference path beyond it, then advances up to `rejoin_distance: 0.50` m
+to leave room to straighten. MPC minimizes distance through free space and
+terminal motion heading toward the field route (`heading_weight: 2.0`). The
+heading follows a short route section to smooth individual grid-cell angles;
+reverse motion uses its travel direction instead of the opposite chassis
+orientation. Direct path alignment and goal attraction are suspended
+during the detour. Every predicted center must remain in the clearance grid;
+the existing footprint collision and Ackermann constraints still check every
+prediction. Ordinary path/goal scoring resumes when the reference becomes clear
+and the robot is within 0.15 m of it, avoiding abrupt scoring-mode changes while
+the robot is still returning from the detour. A critic reset clears this history.
+The global plan and FollowPath action are not replaced or restarted.
+
+Simulation uses a 5 x 5 m rolling costmap and a 2.50 m DWB prune distance to
+include the sides and exit of metre-wide cubes. It omits DWB's `Oscillation`
+critic: its direction locks can prevent the steering reversal needed to exit
+a detour. MPC actuation constraints and command regularization remain active.
+The real profile keeps its existing settings; this guidance is disabled by
+default unless explicitly enabled in a custom profile.
+
+This field is a local scoring aid, not a kinematic global planner. It requires
+a reachable free rejoin point inside the local map and enough room/time for
+the sampled bicycle trajectories. A blocked passage, a blocked goal, an obstacle
+detected too late, or no feasible sample can still require stopping and global
+replanning. Sensor observations must actually reach the controller costmap;
+unobserved space is treated according to that costmap's configured policy.
+
+Regression tests cover a previously clear straight path with a cube inserted
+after motion starts, model execution around it, return toward the original
+path, and independent rectangle collision checks. This is a software model
+test, not validation of Gazebo sensor timing or physical actuator tracking.
+Additional regressions cover valid planned clearances, scoring-mode continuity,
+reverse-motion heading, direction penalties through a stop, and progress on a
+frozen costmap/path captured from Gazebo. The frozen replay does not reproduce
+live costmap changes or prove that every Gazebo interruption is resolved.
 
 ## Build and test
 

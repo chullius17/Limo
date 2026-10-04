@@ -18,6 +18,7 @@ find_package(dwb_core REQUIRED)
 find_package(dwb_critics REQUIRED)
 find_package(dwb_msgs REQUIRED)
 find_package(nav2_core REQUIRED)
+find_package(nav2_costmap_2d REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 
@@ -26,6 +27,7 @@ add_library(${PROJECT_NAME} SHARED
   src/sampling_mpc.cpp
   src/ackermann_mpc_controller.cpp
   src/mppi_cost_critics.cpp
+  src/obstacle_guidance.cpp
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -37,6 +39,7 @@ ament_target_dependencies(${PROJECT_NAME}
   dwb_critics
   dwb_msgs
   nav2_core
+  nav2_costmap_2d
   pluginlib
   rclcpp
 )
@@ -76,10 +79,15 @@ if(BUILD_TESTING)
   ament_add_gtest(test_mppi_costs test/test_mppi_costs.cpp)
   target_link_libraries(test_mppi_costs ${PROJECT_NAME})
   target_compile_definitions(test_mppi_costs PRIVATE
-    LIMO_MPC_PARAMS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../limo_controller/config/control_real.yaml")
+    LIMO_MPC_PARAMS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../limo_controller/config/control_real.yaml"
+    LIMO_MPC_SIM_PARAMS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../limo_controller/config/control_sim.yaml"
+    LIMO_MPC_SNAPSHOT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/online_obstacle_costmap.txt")
+
+  ament_add_gtest(test_obstacle_guidance test/test_obstacle_guidance.cpp)
+  target_link_libraries(test_obstacle_guidance ${PROJECT_NAME})
 endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
-ament_export_dependencies(dwb_core dwb_critics dwb_msgs nav2_core pluginlib rclcpp)
+ament_export_dependencies(dwb_core dwb_critics dwb_msgs nav2_core nav2_costmap_2d pluginlib rclcpp)
 ament_package()

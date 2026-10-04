@@ -74,6 +74,10 @@ void AckermannMPCController::configure(
     "MPC.steering_command_weight", config.steering_command_weight);
   config.steering_rate_change_weight = read_double(
     "MPC.steering_rate_change_weight", config.steering_rate_change_weight);
+  config.reverse_distance_weight = read_double(
+    "MPC.reverse_distance_weight", config.reverse_distance_weight);
+  config.direction_change_weight = read_double(
+    "MPC.direction_change_weight", config.direction_change_weight);
   steering_feedback_min_velocity_ = read_double(
     "MPC.steering_feedback_min_velocity", steering_feedback_min_velocity_);
   if (!std::isfinite(steering_feedback_min_velocity_) || steering_feedback_min_velocity_ <= 0.0) {
@@ -256,6 +260,11 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
     if (!std::isfinite(solution.cost)) {
       if (debug_trajectory_details_) {
         RCLCPP_ERROR(node_->get_logger(), "%s", tracker.getMessage().c_str());
+        for (const auto & rejection : tracker.getPercentages()) {
+          RCLCPP_ERROR(
+            node_->get_logger(), "Rejected %.2f: %s/%s", rejection.second,
+            rejection.first.first.c_str(), rejection.first.second.c_str());
+        }
       }
       throw dwb_core::NoLegalTrajectoriesException(tracker);
     }

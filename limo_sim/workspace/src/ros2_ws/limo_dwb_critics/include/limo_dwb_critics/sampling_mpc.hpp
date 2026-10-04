@@ -33,6 +33,8 @@ struct MpcConfig
   double steering_weight{0.5};
   double steering_command_weight{0.2};
   double steering_rate_change_weight{0.1};
+  double reverse_distance_weight{0.0};
+  double direction_change_weight{0.0};
 
   void validate() const;
 };
@@ -79,7 +81,7 @@ public:
   MpcControl advance(const MpcControl & current, const MpcControl & target) const;
   MpcRollout rollout(
     const MpcState & initial, const std::vector<MpcControl> & targets,
-    double previous_steering_rate = 0.0) const;
+    double previous_steering_rate = 0.0, int previous_direction = 0) const;
   MpcSolution solve(
     const MpcState & initial,
     const std::function<double(const MpcRollout &, double)> & environment_cost,
@@ -90,6 +92,7 @@ private:
   MpcConfig config_;
   std::vector<MpcControl> previous_targets_;
   double previous_steering_rate_{0.0};
+  int previous_direction_{0};
 };
 
 }  // namespace limo_dwb_critics

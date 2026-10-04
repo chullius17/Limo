@@ -58,6 +58,70 @@ TEST(SamplingMpc, ImmediateSteeringCostDoesNotShrinkWithHorizon)
   }
 }
 
+TEST(SamplingMpc, PenalizesReverseDistanceAndDirectionChangesAcrossZeroVelocity)
+{
+  MpcConfig config;
+  config.acceleration_weight = 0.0;
+  config.steering_weight = 0.0;
+  config.steering_command_weight = 0.0;
+  config.steering_rate_change_weight = 0.0;
+  config.reverse_distance_weight = 5.0;
+  config.direction_change_weight = 1.0;
+  SamplingMpc model(config);
+  MpcState initial;
+  initial.control.velocity = 0.1;
+  const auto prediction = model.rollout(
+    initial, std::vector<MpcControl>(config.time_steps, {-0.1, 0.0}));
+  double backwards = 0.0;
+  for (std::size_t t = 1; t < prediction.states.size(); ++t) {
+    backwards += std::max(0.0, -prediction.states[t].control.velocity) * config.dt;
+  }
+  EXPECT_GT(backwards, 0.0);
+  EXPECT_NEAR(prediction.effort_cost, 5.0 * backwards + 1.0, 1e-12);
+  const auto stopped = model.rollout(
+    initial, std::vector<MpcControl>(config.time_steps));
+  EXPECT_DOUBLE_EQ(stopped.effort_cost, 0.0);
+  config.reverse_distance_weight = -1.0;
+  EXPECT_THROW(SamplingMpc invalid(config), std::invalid_argument);
+  config.reverse_distance_weight = 0.0;
+  config.direction_change_weight = std::numeric_limits<double>::infinity();
+  EXPECT_THROW(SamplingMpc invalid(config), std::invalid_argument);
+}
+
+TEST(SamplingMpc, RemembersForwardDirectionWhileStoppedAndAllowsResetOrNecessaryReverse)
+{
+  MpcConfig config;
+  config.acceleration_weight = 0.0;
+  config.steering_weight = 0.0;
+  config.steering_command_weight = 0.0;
+  config.steering_rate_change_weight = 0.0;
+  config.direction_change_weight = 2.0;
+  SamplingMpc model(config);
+  MpcState initial;
+  initial.control.velocity = 0.01;
+  const auto stop = model.solve(initial, [](const MpcRollout & rollout, double) {
+      return std::abs(rollout.states[1].control.velocity) < 1e-9 ?
+             0.0 : std::numeric_limits<double>::infinity();
+    });
+  ASSERT_TRUE(std::isfinite(stop.cost));
+  const auto slight_reverse_preference = [](const MpcRollout & rollout, double) {
+      return 2.0 + 5.0 * rollout.states.back().x;
+    };
+  auto stopped = stop.rollout.states[1];
+  const auto stable = model.solve(stopped, slight_reverse_preference);
+  EXPECT_GE(stable.rollout.states[1].control.velocity, 0.0);
+  // Reverse is a soft penalty: a blocked forward passage can still require it.
+  const auto necessary = model.solve(stopped, [](const MpcRollout & rollout, double) {
+      return rollout.states.back().x < -0.05 ?
+             1.0 : std::numeric_limits<double>::infinity();
+    });
+  ASSERT_TRUE(std::isfinite(necessary.cost));
+  EXPECT_LT(necessary.rollout.states[1].control.velocity, 0.0);
+  model.reset();
+  const auto reset = model.solve(stopped, slight_reverse_preference);
+  EXPECT_LT(reset.rollout.states[1].control.velocity, 0.0);
+}
+
 TEST(SamplingMpc, ResetReproducesSearchWithoutStaleSteeringHistory)
 {
   SamplingMpc model;

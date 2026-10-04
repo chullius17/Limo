@@ -8,6 +8,7 @@
 
 #include "dwb_core/exceptions.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
+#include "nav2_costmap_2d/footprint_collision_checker.hpp"
 #include "pluginlib/class_list_macros.hpp"
 
 namespace limo_dwb_critics
@@ -102,6 +103,10 @@ void MppiPathCritic::onInit()
   read("PathAngleCritic.cost_weight", angle_weight_);
   read("PathAngleCritic.threshold_to_consider", angle_distance_);
   read("PathAngleCritic.max_angle_to_furthest", max_angle_to_furthest_);
+  read("ObstacleGuidance.clearance_margin", guidance_clearance_margin_);
+  read("ObstacleGuidance.cost_weight", guidance_cost_weight_);
+  read("ObstacleGuidance.heading_weight", guidance_heading_weight_);
+  read("ObstacleGuidance.rejoin_distance", guidance_rejoin_distance_);
   const auto read_bool = [&](const std::string & key, bool & value) {
       if (!nh_->has_parameter(prefix + key)) {
         nh_->declare_parameter(prefix + key, rclcpp::ParameterValue(value));
@@ -110,6 +115,7 @@ void MppiPathCritic::onInit()
     };
   read_bool("PathAlignCritic.use_path_orientations", use_path_orientations_);
   read_bool("PathAngleCritic.forward_preference", forward_preference_);
+  read_bool("ObstacleGuidance.enabled", guidance_enabled_);
   if (max_path_occupancy_ratio_ > 1.0 || lookahead_distance_ <= 0.0) {
     throw std::invalid_argument("Invalid MPPI path occupancy ratio or lookahead");
   }
@@ -122,6 +128,8 @@ bool MppiPathCritic::prepare(
   goal_ = goal;
   distance_to_goal_ = distance(pose, goal);
   path_ = path.poses;
+  const bool was_detouring = guidance_active_;
+  guidance_active_ = false;
   if (path_.empty()) {
     return false;
   }
@@ -156,6 +164,85 @@ bool MppiPathCritic::prepare(
   }
   path_blocked_ = static_cast<double>(occupied) / (target_index_ - start_index_ + 1) >
     max_path_occupancy_ratio_;
+  if (guidance_enabled_) {
+    const auto footprint = costmap_ros_->getRobotFootprint();
+    nav2_costmap_2d::FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *> checker(costmap);
+    // The grid supplies a center reference, not an orientation-independent
+    // collision envelope. The full oriented footprint is checked separately.
+    const double radius = costmap_ros_->getLayeredCostmap()->getInscribedRadius();
+    guidance_.update(
+      costmap->getSizeInCellsX(), costmap->getSizeInCellsY(), costmap->getResolution(),
+      costmap->getCharMap(), radius + guidance_clearance_margin_, guidance_cost_weight_);
+    const auto free_point = [&](const geometry_msgs::msg::Pose2D & point) {
+        unsigned int x, y;
+        return costmap->worldToMap(point.x, point.y, x, y) && guidance_.traversable(x, y);
+      };
+    const auto collision_free = [&](const geometry_msgs::msg::Pose2D & point) {
+        unsigned int x, y;
+        if (!costmap->worldToMap(point.x, point.y, x, y) ||
+          costmap->getCost(x, y) >= nav2_costmap_2d::LETHAL_OBSTACLE)
+        {
+          return false;
+        }
+        const double cost = checker.footprintCostAtPose(point.x, point.y, point.theta, footprint);
+        return cost >= 0.0 && cost < nav2_costmap_2d::LETHAL_OBSTACLE;
+      };
+    bool blocked = false;
+    // Check between path samples too; a sparse path must not miss a cube.
+    auto previous = pose;
+    for (std::size_t i = start_index_; i <= target_index_ && !blocked; ++i) {
+      const double length = distance(previous, path_[i]);
+      const int steps = std::max(1, static_cast<int>(std::ceil(length / costmap->getResolution())));
+      for (int step = 0; step <= steps; ++step) {
+        auto point = previous;
+        const double ratio = static_cast<double>(step) / steps;
+        point.x += ratio * (path_[i].x - previous.x);
+        point.y += ratio * (path_[i].y - previous.y);
+        const double angle = path_[i].theta - previous.theta;
+        point.theta += ratio * std::atan2(std::sin(angle), std::cos(angle));
+        // A valid planned footprint must not trigger a detour merely because
+        // its center lies inside the larger circular guidance margin.
+        if (!collision_free(point)) {
+          blocked = true;
+          break;
+        }
+      }
+      previous = path_[i];
+    }
+    // Finish an ongoing detour before restoring the strong path alignment;
+    // cell-level observation changes must not flip the scoring mode each cycle.
+    if (blocked || (was_detouring && nearest > 0.15)) {
+      path_blocked_ = true;
+      // The nominal lookahead may lie inside the new obstacle. Advance to a
+      // free path point after it, rather than attracting MPC into that cell.
+      std::size_t rejoin = target_index_;
+      while (rejoin < path_.size() && !free_point(path_[rejoin])) {
+        ++rejoin;
+      }
+      // Leave room to straighten after the obstacle. The first free cell on
+      // its exit is too early a rejoin target for an Ackermann S maneuver.
+      if (rejoin < path_.size()) {
+        const auto first_free = rejoin;
+        while (rejoin + 1 < path_.size() && free_point(path_[rejoin + 1]) &&
+          path_lengths_[rejoin + 1] - path_lengths_[first_free] <= guidance_rejoin_distance_)
+        {
+          ++rejoin;
+        }
+      }
+      unsigned int x, y;
+      if (rejoin < path_.size() &&
+        costmap->worldToMap(path_[rejoin].x, path_[rejoin].y, x, y) &&
+        guidance_.setTarget(x, y))
+      {
+        const double px = (pose.x - costmap->getOriginX()) / costmap->getResolution() - 0.5;
+        const double py = (pose.y - costmap->getOriginY()) / costmap->getResolution() - 0.5;
+        guidance_active_ = std::isfinite(guidance_.distance(px, py));
+        if (guidance_active_) {
+          target_index_ = rejoin;
+        }
+      }
+    }
+  }
   const auto & target = path_[target_index_];
   double angle = angleError(pose.theta, std::atan2(target.y - pose.y, target.x - pose.x));
   if (!forward_preference_) {
@@ -177,10 +264,17 @@ double MppiPathCritic::scoreTrajectory(const dwb_msgs::msg::Trajectory2D & traje
   double traveled = 0.0;
   for (std::size_t t = 1; t < trajectory.poses.size(); ++t) {
     const auto & pose = trajectory.poses[t];
-    if (distance_to_goal_ < goal_distance_) {
+    if (guidance_active_) {
+      auto * map = costmap_ros_->getCostmap();
+      unsigned int x, y;
+      if (!map->worldToMap(pose.x, pose.y, x, y) || !guidance_.traversable(x, y)) {
+        throw dwb_core::IllegalTrajectoryException(name_, "Prediction leaves detour clearance");
+      }
+    }
+    if (!guidance_active_ && distance_to_goal_ < goal_distance_) {
       goal_cost += distance(pose, goal_);
     }
-    if (distance_to_goal_ < goal_angle_distance_) {
+    if (!guidance_active_ && distance_to_goal_ < goal_angle_distance_) {
       goal_angle_cost += angleError(pose.theta, goal_.theta);
     }
     if (!path_blocked_ && distance_to_goal_ > align_distance_) {
@@ -207,10 +301,37 @@ double MppiPathCritic::scoreTrajectory(const dwb_msgs::msg::Trajectory2D & traje
     align_weight_ * align_cost) / count;
   const auto & last = trajectory.poses.back();
   const auto & target = path_[target_index_];
-  if (distance_to_goal_ >= follow_distance_) {
+  if (guidance_active_) {
+    auto * map = costmap_ros_->getCostmap();
+    const double x = (last.x - map->getOriginX()) / map->getResolution() - 0.5;
+    const double y = (last.y - map->getOriginY()) / map->getResolution() - 0.5;
+    const double remaining = guidance_.distance(x, y);
+    if (!std::isfinite(remaining)) {
+      throw dwb_core::IllegalTrajectoryException(name_, "No obstacle-free route from prediction");
+    }
+    result += follow_weight_ * remaining;
+    // Ackermann cannot move sideways: reward turning toward a free passage
+    // before the robot reaches the face of the obstacle.
+    if (remaining > angle_distance_) {
+      double motion_heading = last.theta;
+      for (std::size_t t = trajectory.poses.size() - 1; t > 0; --t) {
+        const auto & before = trajectory.poses[t - 1];
+        const auto & after = trajectory.poses[t];
+        if (distance(before, after) > 1e-6) {
+          motion_heading = std::atan2(after.y - before.y, after.x - before.x);
+          break;
+        }
+      }
+      // For a reverse segment, motion heading is opposite to chassis heading.
+      // Reward progress along the passage, not rotating the chassis while
+      // actually travelling away from it.
+      result += guidance_heading_weight_ * angleError(
+        motion_heading, guidance_.heading(x, y, motion_heading));
+    }
+  } else if (distance_to_goal_ >= follow_distance_) {
     result += follow_weight_ * distance(last, target);
   }
-  if (distance_to_goal_ > angle_distance_ && apply_path_angle_) {
+  if (!guidance_active_ && distance_to_goal_ > angle_distance_ && apply_path_angle_) {
     double angle = angleError(last.theta, std::atan2(target.y - last.y, target.x - last.x));
     if (!forward_preference_) {
       angle = std::min(angle, std::acos(-1.0) - angle);
