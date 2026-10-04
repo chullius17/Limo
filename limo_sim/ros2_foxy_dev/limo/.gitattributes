@@ -1,0 +1,5 @@
+*.sh text eol=lf
+*.py text eol=lf
+*.txt text eol=lf
+*.rules text eol=lf
+*.pref text eol=lf

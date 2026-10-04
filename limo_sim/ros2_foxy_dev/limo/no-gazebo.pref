@@ -1,0 +1,4 @@
+# Applied only while install-deps.sh is running.
+Package: gazebo* libgazebo* ros-foxy-*gazebo*
+Pin: version *
+Pin-Priority: -1

@@ -1,0 +1,20 @@
+# This build uses the repository root as its context.
+**
+!ros2_foxy_dev/
+!ros2_foxy_dev/lab_wsl/
+!ros2_foxy_dev/lab_wsl/Dockerfile
+!ros2_foxy_dev/lab_wsl/requirements.txt
+!ros2_foxy_dev/lab_wsl/ros-entrypoint.sh
+!ros2_foxy_dev/lab_wsl/workspace-deps.sh
+!ros2_foxy_dev/lab_wsl/collect-manifests.py
+!workspace/
+!workspace/src/
+!workspace/src/**/
+!workspace/src/**/package.xml
+!workspace/src/YDLidar-SDK/**
+**/.git
+**/__pycache__
+**/build
+**/install
+**/log
+**/COLCON_IGNORE
