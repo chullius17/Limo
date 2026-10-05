@@ -31,12 +31,6 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/MpcDebug.msg"
   "msg/StartConnector.msg"
   "srv/ComputePathWithStart.srv"
-  "srv/GetSequencePlan.srv"
-  "srv/GenerateControlPlot.srv"
-  "srv/MissionCommand.srv"
-
-  "action/FollowSequencePlan.action"
-  "action/Mission.action"
 
   DEPENDENCIES geometry_msgs nav_msgs nav2_msgs std_msgs
 )

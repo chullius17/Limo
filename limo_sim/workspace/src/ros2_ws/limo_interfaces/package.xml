@@ -6,7 +6,7 @@
   <name>limo_interfaces</name>
   <version>0.0.0</version>
 
-  <description>ROS 2 interface package for LIMO actions, messages, and services.</description>
+  <description>ROS 2 messages and services for LIMO MPC telemetry and explicit-start planning.</description>
 
   <maintainer email="giulio.cataldo@studio.unibo.it">Giulio Cataldo</maintainer>
   <license>Apache-2.0</license>
