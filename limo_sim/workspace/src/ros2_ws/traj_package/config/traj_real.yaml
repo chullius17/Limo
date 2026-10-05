@@ -153,7 +153,7 @@ rviz_goal_bridge:
     adjusted_start_topic: /adjusted_start_pose
     robot_base_frame: base_link
     start_transform_timeout: 0.20
-    enable_start_adjustment: true
+    enable_start_adjustment: false
     enable_goal_adjustment: true
     position_search_radius: 0.75
     position_search_step: 0.10

@@ -176,7 +176,9 @@ At 10 Hz, all points used to build the grid are also published as
 'sensor_msgs/PointCloud2' on
 '/limo/map_package/online/local_ctrl_map/points': all recent-live points and
 classes, plus memory for classes 1/2/4 in the real profile or 2/4 in simulation,
-reprojected into the current frame and capped at 300 entries. The cloud is in
+reprojected into the current frame. Memory is capped at 1000 entries in the real
+profile and 300 in simulation; recent-live points are not subject to this cap.
+The cloud is in
 'base_link' and has 'x', 'y', 'z', and 'class_id' fields. It is available for debugging; PointCloud2 displays exist in
 the online RViz configuration but are disabled by default.
 
@@ -210,8 +212,9 @@ expire while stationary. 'cmd_vel_timeout_sec: 0.0' keeps the last command with
 no timeout. Confidence describes memory, not classifier certainty.
 
 A separate 3 cm class-wise voxel filter avoids duplicates. The
-'maximum_points: 300' limit is shared by all persistent classes: lowest
-confidence points are removed first; ties are distributed spatially. Configure
+'maximum_points' limit (1000 in the real profile, 300 in simulation) is shared
+by all persistent classes: lowest-confidence points are removed first; ties
+are distributed spatially. Configure
 parameters in the 'local_ctrl_map' profile section; override the cap with
 'local_map_maximum_points:=300' and restart to apply it. RViz displays the
 source grid in **Local Semantic Costmap**, before laser fusion and Nav2

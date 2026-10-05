@@ -42,7 +42,7 @@ controller_server:
       publish_cost_grid_pc: false
 
       # Match the real LIMO limits used by the Humble MPPI profile.
-      min_vel_x: -0.10
+      min_vel_x: 0.0  # Forward motion and stopping only.
       max_vel_x: 0.50
       min_vel_y: 0.0
       max_vel_y: 0.0
