@@ -23,6 +23,8 @@
   <!-- Message dependencies -->
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
+  <depend>nav2_msgs</depend>
+  <depend>std_msgs</depend>
 
   <!-- Required for interface packages -->
   <member_of_group>rosidl_interface_packages</member_of_group>

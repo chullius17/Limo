@@ -38,6 +38,51 @@ TEST(SamplingMpc, RejectsInvalidConfigurationAndState)
   EXPECT_THROW(model.rollout(MpcState(), {}), std::invalid_argument);
 }
 
+TEST(SamplingMpc, DiagnosticObserverLabelsAllFamiliesWithoutChangingTheWinner)
+{
+  MpcConfig config;
+  config.dt = 0.1;
+  config.time_steps = 25;
+  config.batch_size = 128;
+  config.velocity_samples = 6;
+  config.curvature_samples = 11;
+  SamplingMpc baseline(config), observed(config);
+  const auto objective = [](const MpcRollout & rollout, double) {
+      return 1000.0 + 100.0 * std::pow(rollout.states.back().x - 0.8, 2);
+    };
+  const auto expected = baseline.solve(MpcState(), objective);
+  std::vector<double> costs;
+  std::vector<limo_dwb_critics::MpcFamily> families;
+  const auto result = observed.solve(MpcState(), objective, 1,
+    [&](const MpcRollout &, limo_dwb_critics::MpcFamily family, std::size_t id, double cost) {
+      EXPECT_EQ(id, costs.size());
+      costs.push_back(cost);
+      families.push_back(family);
+    });
+  ASSERT_EQ(costs.size(), 128U);
+  EXPECT_EQ(families[0], limo_dwb_critics::MpcFamily::Braking);
+  EXPECT_EQ(families[1], limo_dwb_critics::MpcFamily::Nominal);
+  std::vector<int> counts(5);
+  for (auto family : families) {++counts[static_cast<std::size_t>(family)];}
+  EXPECT_EQ(counts, std::vector<int>({1, 1, 66, 45, 15}));
+  EXPECT_DOUBLE_EQ(result.cost, expected.cost);
+  ASSERT_LT(result.candidate_id, costs.size());
+  EXPECT_DOUBLE_EQ(costs[result.candidate_id], result.cost);
+  EXPECT_EQ(families[result.candidate_id], result.family);
+  ASSERT_EQ(result.rollout.states.size(), expected.rollout.states.size());
+  for (std::size_t t = 0; t < result.rollout.states.size(); ++t) {
+    EXPECT_DOUBLE_EQ(result.rollout.states[t].x, expected.rollout.states[t].x);
+    EXPECT_DOUBLE_EQ(result.rollout.states[t].control.steering,
+      expected.rollout.states[t].control.steering);
+  }
+  observed.reset();
+  const auto throwing = observed.solve(MpcState(), objective, 1,
+    [](const MpcRollout &, limo_dwb_critics::MpcFamily, std::size_t, double) {
+      throw std::runtime_error("optional diagnostic consumer failed");
+    });
+  EXPECT_DOUBLE_EQ(throwing.cost, expected.cost);
+}
+
 TEST(SamplingMpc, ImmediateSteeringCostDoesNotShrinkWithHorizon)
 {
   for (int steps : {20, 50, 100}) {

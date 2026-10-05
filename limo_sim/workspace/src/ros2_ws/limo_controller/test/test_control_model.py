@@ -46,6 +46,10 @@ def controller(monkeypatch, **overrides):
     node = action.execute(context)[0]
     assert len(node['parameters']) == 1
     config = yaml.safe_load(Path(node['parameters'][0].perform(context)).read_text())
+    for extra in tuple(description.entities):
+        if isinstance(extra, OpaqueFunction) and extra is not action:
+            for resolved in extra.execute(context):
+                description.add_action(resolved)
     return context, config, description
 
 
@@ -203,3 +207,60 @@ def test_nano_budget_preserves_horizon_and_safety_timeouts():
     timeout = config['twist_mux']['ros__parameters']['topics']['autonomy']['timeout']
     assert 3 * mpc['model_dt'] < timeout == 0.5
     assert params['progress_checker']['movement_time_allowance'] == 10.0
+
+
+@pytest.mark.parametrize('profile,clock,requested,enabled', [
+    ('sim', 'true', 'true', True),
+    ('sim', 'false', 'true', True),
+    ('sim', 'true', 'false', False),
+    ('real', 'false', 'true', False),
+    ('real', 'true', 'true', False),
+])
+def test_mpc_preview_uses_yaml_flag_and_optional_launch_disable(
+        monkeypatch, profile, clock, requested, enabled):
+    context, _, description = controller(
+        monkeypatch, robot_model=profile, use_sim_time=clock, start_mpc_preview=requested)
+    preview = next(action for action in description.entities
+                   if isinstance(action, dict) and action.get('name') == 'mpc_preview')
+    assert preview['condition'].evaluate(context) is enabled
+    config = yaml.safe_load(Path(preview['parameters'][0].perform(context)).read_text())
+    assert config['mpc_preview']['ros__parameters']['use_sim_time'] is (clock == 'true')
+
+
+@pytest.mark.parametrize('profile,enabled', [('sim', False), ('real', True)])
+def test_custom_yaml_controls_mpc_preview_activation(monkeypatch, tmp_path, profile, enabled):
+    config = yaml.safe_load((PACKAGE / 'config' / ('control_' + profile + '.yaml')).read_text())
+    debug = config['controller_server']['ros__parameters']['FollowPath']['MPC']['Debug']
+    debug['enabled'] = enabled
+    path = tmp_path / 'control.yaml'
+    path.write_text(yaml.safe_dump(config))
+    context, _, description = controller(
+        monkeypatch, robot_model=profile, controller_params_file=str(path))
+    preview = next(action for action in description.entities
+                   if isinstance(action, dict) and action.get('name') == 'mpc_preview')
+    assert preview['condition'].evaluate(context) is enabled
+
+
+def test_yaml_disabled_preview_cannot_be_enabled_by_launch(monkeypatch, tmp_path):
+    config = yaml.safe_load((PACKAGE / 'config/control_sim.yaml').read_text())
+    config['controller_server']['ros__parameters']['FollowPath']['MPC']['Debug']['enabled'] = False
+    path = tmp_path / 'control.yaml'
+    path.write_text(yaml.safe_dump(config))
+    context, _, description = controller(
+        monkeypatch, robot_model='sim', controller_params_file=str(path), start_mpc_preview='true')
+    preview = next(action for action in description.entities
+                   if isinstance(action, dict) and action.get('name') == 'mpc_preview')
+    assert not preview['condition'].evaluate(context)
+
+
+def test_custom_mpc_preview_file_is_used(monkeypatch, tmp_path):
+    path = tmp_path / 'preview.yaml'
+    path.write_text(yaml.safe_dump({'mpc_preview': {'ros__parameters': {
+        'use_sim_time': True, 'image_width': 720, 'pixels_per_meter': 100.0,
+    }}}))
+    context, _, description = controller(
+        monkeypatch, robot_model='sim', mpc_preview_params_file=str(path))
+    preview = next(action for action in description.entities
+                   if isinstance(action, dict) and action.get('name') == 'mpc_preview')
+    config = yaml.safe_load(Path(preview['parameters'][0].perform(context)).read_text())
+    assert config['mpc_preview']['ros__parameters']['image_width'] == 720

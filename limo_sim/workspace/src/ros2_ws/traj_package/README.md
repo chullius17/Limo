@@ -59,3 +59,16 @@ footprints match their controller costmaps. The files can now be tuned separatel
 An explicit `planner_params_file` takes precedence over the selected default.
 `map_topic` continues to rewrite both the static-map and border-follow inputs.
 The real/sim profiles are the only built-in planner parameter files.
+
+The built-in YAML files target Foxy's `smac_planner/SmacPlanner` 0.4.7.
+They omit unsupported newer options: `analytic_expansion_max_length`,
+`max_on_approach_iterations`, `max_planning_time`, `lookup_table_size`,
+`cache_obstacle_heuristic`, and the newer `smoother` configuration block.
+Search is bounded by `max_iterations`; the removed `max_planning_time: 7.5`
+never imposed a 7.5-second search limit in this version. `smooth_path: false`
+continues to disable smoothing. See the
+[SMAC 0.4.7 configuration implementation](https://github.com/ros-navigation/navigation2/blob/0.4.7/smac_planner/src/smac_planner.cpp).
+
+Automatic planner configuration and activation is controlled by
+`lifecycle_manager_global_planner.ros__parameters.autostart` in the selected
+YAML (true in both built-in profiles).

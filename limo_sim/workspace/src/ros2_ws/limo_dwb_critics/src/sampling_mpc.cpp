@@ -211,7 +211,7 @@ MpcRollout SamplingMpc::rollout(
 MpcSolution SamplingMpc::solve(
   const MpcState & initial,
   const std::function<double(const MpcRollout &, double)> & environment_cost,
-  std::size_t shift_steps)
+  std::size_t shift_steps, const MpcObserver & observer)
 {
   const std::size_t count = static_cast<std::size_t>(config_.time_steps);
   std::vector<MpcControl> nominal(count, boundedTarget(initial.control));
@@ -227,21 +227,34 @@ MpcSolution SamplingMpc::solve(
     motionDirection(initial.control.velocity);
   reset();
   MpcSolution best;
-  const auto consider = [&](const std::vector<MpcControl> & targets) {
+  std::size_t candidate_id = 0;
+  const auto consider = [&](const std::vector<MpcControl> & targets, MpcFamily family) {
+      const auto id = candidate_id++;
       auto prediction = rollout(initial, targets, previous_rate, previous_direction);
       const double remaining = best.cost - prediction.effort_cost;
+      const auto observe = [&](double total) {
+          if (observer) {
+            // Diagnostics must never invalidate an otherwise usable command.
+            try {observer(prediction, family, id, total);} catch (...) {}
+          }
+        };
       if (remaining < 0.0) {
+        observe(std::numeric_limits<double>::quiet_NaN());
         return;
       }
       const double cost = environment_cost(prediction, remaining);
+      observe(std::isfinite(cost) && cost >= 0.0 ? cost + prediction.effort_cost :
+        std::numeric_limits<double>::infinity());
       if (std::isfinite(cost) && cost >= 0.0 && cost + prediction.effort_cost < best.cost) {
         best.cost = cost + prediction.effort_cost;
+        best.family = family;
+        best.candidate_id = id;
         best.rollout = std::move(prediction);
       }
     };
 
-  consider(std::vector<MpcControl>(count));  // Full-horizon braking candidate.
-  consider(nominal);
+  consider(std::vector<MpcControl>(count), MpcFamily::Braking);
+  consider(nominal, MpcFamily::Nominal);
   // Deterministic constant-curvature seeds cover the whole operating range.
   // The remaining samples vary their targets across control_segments blocks.
   for (int v = 0; v < config_.velocity_samples; ++v) {
@@ -251,7 +264,7 @@ MpcSolution SamplingMpc::solve(
       const double curvature = (-1.0 + 2.0 * k / (config_.curvature_samples - 1)) /
         config_.min_turning_radius;
       consider(std::vector<MpcControl>(count, boundedTarget(
-            {velocity, std::atan(config_.wheelbase * curvature)})));
+            {velocity, std::atan(config_.wheelbase * curvature)})), MpcFamily::ConstantCurvature);
     }
   }
   // Reuse the same perturbations each cycle; only their nominal sequence
@@ -279,7 +292,7 @@ MpcSolution SamplingMpc::solve(
             nominal[t].velocity + velocity_noise, nominal[t].steering + steering_noise});
       }
     }
-    consider(targets);
+    consider(targets, sample % 4 == 0 ? MpcFamily::BroadExploration : MpcFamily::PerturbedNominal);
   }
   if (std::isfinite(best.cost)) {
     previous_targets_ = best.rollout.targets;

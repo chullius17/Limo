@@ -2,6 +2,7 @@
 #define LIMO_DWB_CRITICS__SAMPLING_MPC_HPP_
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <vector>
@@ -62,10 +63,23 @@ struct MpcRollout
   double effort_cost{0.0};
 };
 
+enum class MpcFamily : std::uint8_t
+{
+  Braking = 0, Nominal = 1, ConstantCurvature = 2,
+  PerturbedNominal = 3, BroadExploration = 4
+};
+
+// NaN cost means effort-pruned; infinity means rejected. An observer never
+// participates in selection. Finite scores may have been DWB-short-circuited.
+using MpcObserver = std::function<void(
+    const MpcRollout &, MpcFamily, std::size_t, double)>;
+
 struct MpcSolution
 {
   MpcRollout rollout;
   double cost{std::numeric_limits<double>::infinity()};
+  MpcFamily family{MpcFamily::Braking};
+  std::size_t candidate_id{0};
 };
 
 // Finite-sample nonlinear shooting MPC. The caller supplies the environment
@@ -85,7 +99,7 @@ public:
   MpcSolution solve(
     const MpcState & initial,
     const std::function<double(const MpcRollout &, double)> & environment_cost,
-    std::size_t shift_steps = 1);
+    std::size_t shift_steps = 1, const MpcObserver & observer = {});
 
 private:
   MpcControl boundedTarget(const MpcControl & target) const;

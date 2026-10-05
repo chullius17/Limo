@@ -79,7 +79,6 @@ def test_sim_launches_map_trajectory_and_controller(monkeypatch):
         'planner_params_file': str(PACKAGES / 'traj_package/config/traj_sim.yaml'),
         'map_topic': '/map',
         'use_sim_time': 'true',
-        'autostart': 'true',
     }
     assert actions[2]['arguments']['start_gui'] == 'true'
     assert actions[2]['arguments']['robot_model'] == 'sim'
@@ -100,6 +99,16 @@ def test_application_overrides_are_forwarded(monkeypatch):
         start_control_gui='true')
     assert actions[1]['arguments']['map_topic'] == '/custom_map'
     assert actions[2]['arguments']['start_gui'] == 'true'
+
+
+def test_mpc_preview_options_are_forwarded(monkeypatch):
+    actions = compose(monkeypatch, 'sim', start_mpc_preview='false',
+                      mpc_preview_params_file='/tmp/custom_preview.yaml')
+    assert actions[2]['arguments']['start_mpc_preview'] == 'false'
+    assert actions[2]['arguments']['mpc_preview_params_file'] == '/tmp/custom_preview.yaml'
+    assert compose(monkeypatch, 'sim')[2]['arguments']['start_mpc_preview'] == 'true'
+    # Both profiles delegate activation to FollowPath.MPC.Debug.enabled in YAML.
+    assert compose(monkeypatch, 'real')[2]['arguments']['start_mpc_preview'] == 'true'
 
 
 def test_invalid_control_gui_setting_fails(monkeypatch):

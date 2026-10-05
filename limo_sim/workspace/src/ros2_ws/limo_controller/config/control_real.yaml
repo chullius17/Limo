@@ -75,6 +75,8 @@ controller_server:
         # Like the Humble smoother: continue the command ramp across cycles
         # even when noisy/lagging odometry still reports near-zero motion.
         feedback: "OPEN_LOOP"
+        Debug:
+          enabled: false  # Disable MPC telemetry and the image preview on the real robot.
         steering_feedback_min_velocity: 0.05
         model_dt: 0.10  # Must equal 1 / controller_frequency.
         time_steps: 25
@@ -95,7 +97,8 @@ controller_server:
         steering_rate_change_weight: 0.1
 
       transform_tolerance: 0.20
-      prune_distance: 1.50
+      # Keep a free rejoin point beyond newly observed local obstacles.
+      prune_distance: 2.50
       xy_goal_tolerance: 0.10
       trans_stopped_velocity: 0.05
       short_circuit_trajectory_evaluation: true
@@ -107,7 +110,8 @@ controller_server:
       critics:
         - "AckermannKinematics"
         - "MppiObstacle"
-        - "Oscillation"
+        # DWB sign locks can forbid the steering reversal needed to leave a
+        # detour. MPC already constrains and penalizes command changes.
         - "MppiPath"
 
       AckermannKinematics.scale: 1.0
@@ -122,14 +126,20 @@ controller_server:
       # rejection at every pose. This scale is NOT DWB's raw summed cost.
       MppiObstacle.scale: 6.0
       MppiObstacle.critical_cost: 300.0
-      # Retain ordinary obstacle repulsion until the 0.10 m arrival tolerance.
-      MppiObstacle.near_goal_distance: 0.10
+      # Disable ordinary obstacle repulsion below 15 cm; keep critical/collision checks.
+      MppiObstacle.near_goal_distance: 0.15
 
       # Match Humble's weights and goal-distance gates in meters/radians.
       # Collisions/kinematic violations remain hard constraints, so there is
       # no finite collision_cost or soft ConstraintCritic weight to tune.
       MppiPath:
         scale: 1.0
+        ObstacleGuidance:
+          enabled: true
+          clearance_margin: 0.0  # Footprint critic checks the full oriented robot.
+          cost_weight: 2.0
+          heading_weight: 2.0
+          rejoin_distance: 0.50
         GoalCritic:
           cost_weight: 5.0
           threshold_to_consider: 1.0
@@ -151,7 +161,6 @@ controller_server:
           threshold_to_consider: 0.50
           max_angle_to_furthest: 1.0
           forward_preference: false
-      Oscillation.scale: 1.0
 
 # The controller costmap merges the live LaserScan and the raw semantic grid,
 # marks semantic values above 85 as lethal, and then performs the only inflation.
@@ -165,8 +174,9 @@ local_costmap:
       robot_base_frame: base_link
       transform_tolerance: 0.20
       rolling_window: true
-      width: 3
-      height: 3
+      # Include the sides of the obstacle and a free rejoin point for guidance.
+      width: 5
+      height: 5
       resolution: 0.05
       footprint: "[[-0.161, -0.110], [-0.161, 0.110], [0.161, 0.110], [0.161, -0.110]]"
       footprint_padding: 0.02

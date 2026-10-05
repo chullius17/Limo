@@ -7,6 +7,7 @@
 
 #include "dwb_core/dwb_local_planner.hpp"
 #include "limo_dwb_critics/sampling_mpc.hpp"
+#include "limo_dwb_critics/mpc_debug.hpp"
 
 namespace limo_dwb_critics
 {
@@ -19,6 +20,7 @@ public:
     std::string name, const std::shared_ptr<tf2_ros::Buffer> & tf,
     const std::shared_ptr<nav2_costmap_2d::Costmap2DROS> & costmap_ros) override;
   void setPlan(const nav_msgs::msg::Path & path) override;
+  void activate() override;
   void deactivate() override;
   void cleanup() override;
 
@@ -41,6 +43,7 @@ private:
   bool have_time_{false};
   bool have_command_{false};
   MpcControl previous_command_;
+  std::unique_ptr<MpcDebugPublisher> debug_publisher_;
 };
 
 }  // namespace limo_dwb_critics

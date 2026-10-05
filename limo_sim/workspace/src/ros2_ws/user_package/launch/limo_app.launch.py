@@ -77,14 +77,18 @@ def _launch_app(context):
         'robot_model': profile,
         'map_topic': map_topic,
         'use_sim_time': use_sim_time,
-        'autostart': 'true',
     }
     controller_arguments = {
         'robot_model': profile,
         'use_sim_time': use_sim_time,
         'autostart': 'true',
         'start_gui': str(start_gui).lower(),
+        'start_mpc_preview': str(_optional_boolean(
+            context, 'start_mpc_preview', True)).lower(),
     }
+    preview_file = LaunchConfiguration('mpc_preview_params_file').perform(context)
+    if preview_file:
+        controller_arguments['mpc_preview_params_file'] = os.path.expanduser(preview_file)
     for name, arguments, package, prefix in (
             ('planner_params_file', trajectory_arguments, 'traj_package', 'traj'),
             ('controller_params_file', controller_arguments, 'limo_controller', 'control')):
@@ -119,6 +123,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'controller_params_file', default_value='',
             description='Controller YAML override; empty follows the app profile.'),
+        DeclareLaunchArgument(
+            'start_mpc_preview', default_value='',
+            description='Allow the MPC preview; its enabled flag comes from the controller YAML.'),
+        DeclareLaunchArgument(
+            'mpc_preview_params_file', default_value='',
+            description='Optional MPC preview rendering YAML override.'),
         DeclareLaunchArgument(
             'map_topic', default_value='/map',
             description='Global OccupancyGrid consumed by traj_package.'),

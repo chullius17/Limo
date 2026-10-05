@@ -100,6 +100,7 @@ void AckermannMPCController::configure(
     throw std::invalid_argument("MPC.model_dt must equal 1 / controller_frequency");
   }
   mpc_ = std::make_unique<SamplingMpc>(config);
+  debug_publisher_ = std::make_unique<MpcDebugPublisher>(node, name, costmap_ros, config);
   resetPrediction();
 }
 
@@ -127,15 +128,23 @@ void AckermannMPCController::setPlan(const nav_msgs::msg::Path & path)
 
 void AckermannMPCController::deactivate()
 {
+  if (debug_publisher_) {debug_publisher_->deactivate();}
   resetPrediction();
   DWBLocalPlanner::deactivate();
 }
 
 void AckermannMPCController::cleanup()
 {
+  debug_publisher_.reset();
   resetPrediction();
   mpc_.reset();
   DWBLocalPlanner::cleanup();
+}
+
+void AckermannMPCController::activate()
+{
+  DWBLocalPlanner::activate();
+  if (debug_publisher_) {debug_publisher_->activate();}
 }
 
 dwb_msgs::msg::Trajectory2D AckermannMPCController::toTrajectory(
@@ -212,6 +221,7 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
     // still measured, so progress and obstacle costs use the actual position.
     initial.control = previous_command_;
   }
+  const auto observer = debug_publisher_ ? debug_publisher_->begin(initial) : MpcObserver();
 
   dwb_core::IllegalTrajectoryTracker tracker;
   double best_debug = std::numeric_limits<double>::infinity();
@@ -256,8 +266,9 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
       }
     };
   try {
-    const auto solution = mpc_->solve(initial, evaluate, shift);
+    const auto solution = mpc_->solve(initial, evaluate, shift, observer);
     if (!std::isfinite(solution.cost)) {
+      if (debug_publisher_) {debug_publisher_->finish(solution);}
       if (debug_trajectory_details_) {
         RCLCPP_ERROR(node_->get_logger(), "%s", tracker.getMessage().c_str());
         for (const auto & rejection : tracker.getPercentages()) {
@@ -279,6 +290,7 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
     best.total += solution.rollout.effort_cost;
     previous_command_ = solution.rollout.states.at(1).control;
     have_command_ = true;
+    if (debug_publisher_) {debug_publisher_->finish(solution);}
     return best;
   } catch (...) {
     resetPrediction();

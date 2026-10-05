@@ -21,6 +21,8 @@ find_package(nav2_core REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(limo_interfaces REQUIRED)
+find_package(nav2_msgs REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
   src/ackermann_kinematics_critic.cpp
@@ -28,6 +30,7 @@ add_library(${PROJECT_NAME} SHARED
   src/ackermann_mpc_controller.cpp
   src/mppi_cost_critics.cpp
   src/obstacle_guidance.cpp
+  src/mpc_debug.cpp
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -42,6 +45,8 @@ ament_target_dependencies(${PROJECT_NAME}
   nav2_costmap_2d
   pluginlib
   rclcpp
+  limo_interfaces
+  nav2_msgs
 )
 
 pluginlib_export_plugin_description_file(
@@ -89,5 +94,5 @@ endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
-ament_export_dependencies(dwb_core dwb_critics dwb_msgs nav2_core nav2_costmap_2d pluginlib rclcpp)
+ament_export_dependencies(dwb_core dwb_critics dwb_msgs nav2_core nav2_costmap_2d pluginlib rclcpp limo_interfaces nav2_msgs)
 ament_package()

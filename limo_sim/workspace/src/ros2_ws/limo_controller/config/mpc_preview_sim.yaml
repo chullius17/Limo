@@ -1,0 +1,40 @@
+mpc_preview:
+  ros__parameters:
+    use_sim_time: true
+    debug_topic: /limo/control/mpc_debug
+    image_topic: /limo/control/mpc_preview/image/compressed
+    publish_rate: 4.0
+    stale_timeout: 1.0
+    image_format: png  # png or jpeg
+    png_compression: 3
+    jpeg_quality: 85
+    image_width: 960
+    image_height: 960
+    pixels_per_meter: 140.0
+    grid_spacing: 0.5
+    font_size: 17
+    model_inset_enabled: true
+    model_inset_pixels_per_meter: 600.0
+    line_width: 2
+    selected_line_width: 5
+    trajectory_alpha: 0.65
+    show_rejected: true  # Dashed: collision/critic rejection.
+    show_cost_pruned: false  # Dashed: effort cost already exceeds incumbent.
+    # Display sizes only; wheelbase, axle offset and footprint come from MPC.
+    wheel_length: 0.13
+    wheel_width: 0.05
+    steering_arrow_length: 0.45
+    axis_length: 0.45
+    colors:
+      braking: [220, 75, 65]
+      nominal: [35, 105, 220]
+      constant_curvature: [145, 75, 190]
+      perturbed_nominal: [25, 165, 170]
+      broad_exploration: [220, 140, 35]
+    selected_color: [0, 180, 65]
+    free_color: [238, 241, 245]
+    inflated_color: [245, 185, 105]
+    critical_color: [245, 100, 45]
+    lethal_color: [100, 25, 30]
+    unknown_color: [110, 115, 125]
+    background_color: [250, 250, 250]

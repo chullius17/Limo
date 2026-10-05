@@ -75,6 +75,12 @@ controller_server:
         # Like the Humble smoother: continue the command ramp across cycles
         # even when noisy/lagging odometry still reports near-zero motion.
         feedback: "OPEN_LOOP"
+        Debug:
+          enabled: true  # Enable MPC telemetry and launch the image preview.
+          topic: /limo/control/mpc_debug
+          publish_rate: 4.0
+          samples_per_family: 6  # Evenly spread across each family's candidates.
+          pose_stride: 2  # Keep first/last poses, downsample intermediate poses.
         steering_feedback_min_velocity: 0.05
         model_dt: 0.05  # Must equal 1 / controller_frequency.
         time_steps: 80
@@ -126,7 +132,8 @@ controller_server:
       # rejection at every pose. This scale is NOT DWB's raw summed cost.
       MppiObstacle.scale: 3.0
       MppiObstacle.critical_cost: 300.0
-      MppiObstacle.near_goal_distance: 0.50
+      # Disable ordinary obstacle repulsion below 15 cm; keep critical/collision checks.
+      MppiObstacle.near_goal_distance: 0.15
 
       # Match Humble's weights and goal-distance gates in meters/radians.
       # Collisions/kinematic violations remain hard constraints, so there is

@@ -34,6 +34,7 @@ setup(
             'control_gui = limo_controller.control_gui:main',
             'cmd_vel_mux = limo_controller.cmd_vel_mux:main',
             'path_executor = limo_controller.path_executor:main',
+            'mpc_preview = limo_controller.mpc_preview:main',
         ],
     },
 )

@@ -23,8 +23,12 @@ find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(nav2_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/MpcCandidate.msg"
+  "msg/MpcDebug.msg"
   "srv/GetSequencePlan.srv"
   "srv/GenerateControlPlot.srv"
   "srv/MissionCommand.srv"
@@ -32,8 +36,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/FollowSequencePlan.action"
   "action/Mission.action"
 
-  DEPENDENCIES geometry_msgs nav_msgs
+  DEPENDENCIES geometry_msgs nav_msgs nav2_msgs std_msgs
 )
+ament_export_dependencies(rosidl_default_runtime)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

@@ -9,43 +9,51 @@
 | Rear axle to base | 0.10 m | 0.12 m |
 | Minimum turning radius | 0.462 m | 0.55 m |
 | Controller frequency | 10 Hz | 20 Hz |
-| MPC sequences / steps | 128 / 25 | 768 / 50 |
-| Model timestep / horizon | 0.10 s / 2.5 s | 0.05 s / 2.5 s |
+| MPC sequences / steps | 128 / 25 | 768 / 80 |
+| Model timestep / horizon | 0.10 s / 2.5 s | 0.05 s / 4.0 s |
 | Require chassis command mode | Yes | No |
 | Default clock | Wall clock | Simulation clock |
 | Default local GUI | Off | On |
-| Local obstacle guidance | Off | On |
-| Local costmap size | 3 x 3 m | 5 x 5 m |
+| Local obstacle guidance | On | On |
+| Local costmap size | 5 x 5 m | 5 x 5 m |
 
 Simulation geometry is now in its YAML rather than applied over a parameter file
 by the launch. Real control uses a smaller Nano CPU budget, retaining geometry,
 velocity/acceleration limits, the prediction horizon and footprint collision checks.
 The real local costmap updates at 10 Hz and publishes at 2 Hz.
 
-Simulation enables `FollowPath.MppiPath.ObstacleGuidance`: when a newly observed
+Both profiles enable `FollowPath.MppiPath.ObstacleGuidance`: when a newly observed
 obstacle blocks the reference, MPC scores progress through free space toward
 a clear rejoin point instead of straight-line progress into the obstacle.
 It temporarily relaxes reference alignment, rewards steering toward the free
 passage, and retains collision checks. The DWB `Oscillation` critic is omitted
-in this profile so its sign locks cannot prevent exiting the detour. See the
-[MPC documentation](../limo_dwb_critics/README.md#online-obstacle-detours-in-simulation)
+in both profiles so its sign locks cannot prevent exiting the detour. See the
+[MPC documentation](../limo_dwb_critics/README.md#online-obstacle-detours)
 for parameters and local-map/kinematic limitations. Rebuild both
 `limo_dwb_critics` and `limo_controller`, then restart the control application.
 
 Detours are triggered by the oriented footprint, so an already collision-free
 planned path beside an obstacle keeps normal tracking. Simulation uses a 4 s
 prediction horizon and soft costs for reverse distance and direction changes;
-it retains detour scoring until the robot has returned near the reference.
+both profiles retain detour scoring until the robot has returned near the reference.
+Real control retains its 2.5 s horizon and 128 candidates at 10 Hz. Both profiles
+use a 5 x 5 m local costmap and a 2.50 m prune distance to include a free rejoin
+point beyond the obstacle. The real footprint padding, chassis guard and
+command timeouts remain active. The larger map and guidance field add work to
+the real control cycle; verify the complete cycle still fits within 100 ms on
+the Nano. The shorter real horizon and smaller sample budget can limit detours
+that succeed with the simulation profile.
 
 The real profile gives local obstacle costs twice their reference weight:
 `FollowPath.MppiObstacle.scale` is 6.0 instead of 3.0, while path and goal
 weights retain their reference values. This increases the preference for
 lower-cost routes through the local costmap relative to following the planned
 path; it does not impose an absolute priority between the soft costs.
-`FollowPath.MppiObstacle.near_goal_distance` is 0.10 m, so ordinary obstacle
-repulsion remains active until the positional arrival tolerance instead of
-switching off 0.50 m before the goal. Footprint collisions remain hard
-rejections at every predicted pose. These parameters are read when configuring
+Both profiles set `FollowPath.MppiObstacle.near_goal_distance` to 0.15 m, so
+ordinary obstacle repulsion switches off when the current robot position is
+less than 15 cm from the goal. The costmap inflation remains present; critical
+costs remain active and footprint collisions remain hard rejections at every
+predicted pose. These parameters are read when configuring
 the controller; restart the application after changing the installed YAML.
 
 ```bash
@@ -93,3 +101,88 @@ including costmap and footprint scoring; validate timing with the full CV and
 desktop workload before supervised physical execution.
 
 These real/sim profiles are the only built-in controller parameter files.
+
+## Simulation MPC image preview
+
+`control.launch.py` reads `FollowPath.MPC.Debug.enabled` from the selected
+controller YAML to start `mpc_preview`, including when launched through
+`user_package/limo_app_sim.launch.py`. This flag is explicitly `true` in
+`control_sim.yaml` and `false` in `control_real.yaml`; it enables both telemetry
+and the preview node. Clock overrides do not change it. A custom controller YAML
+uses its own flag (missing means disabled). Setting `start_mpc_preview:=false`
+can suppress the renderer; setting it to `true` cannot override a false YAML flag.
+
+The node publishes `sensor_msgs/CompressedImage` on
+`/limo/control/mpc_preview/image/compressed` (PNG by default). View this topic
+with `rqt_image_view`, selecting the compressed transport. No local window is
+opened by the node.
+
+The top-down image is centered on the snapshot's `base_link`, with +x upward
+and +y leftward. It contains the controller's local costmap, its effective
+footprint, equivalent bicycle front/rear wheels, initial steering (orange),
+first winning steering command (purple), and representative predicted
+base_link trajectories. A magnified model inset makes the wheel positions and
+footprint readable without changing the main map scale. These are model states
+and virtual wheels, not measured steering joints or the four-wheel chassis.
+
+| Trajectory family | Default color |
+| --- | --- |
+| Braking | Red |
+| Nominal/warm start | Blue |
+| Constant curvature | Purple |
+| Perturbed nominal | Teal |
+| Broad exploration | Orange |
+| Selected trajectory | Green with a white outline |
+
+Rejected or effort-pruned candidates can be shown as dashed lines. A finite
+candidate score may have been short-circuited by DWB and does not certify that
+all its critics were checked. The selected candidate is fully scored by the
+controller. The preview is diagnostic and has no effect on selection.
+
+Settings are split between two YAML files:
+
+- `config/control_sim.yaml` / `config/control_real.yaml`, under `FollowPath.MPC.Debug`:
+  enable telemetry and the preview node with `enabled` (sim: true, real: false),
+  its topic, publication rate, samples per family and pose downsampling stride.
+  Representatives are evenly distributed over each family's generated order;
+  the winner is always included even if it was not among those representatives.
+- `config/mpc_preview_sim.yaml`, under `mpc_preview.ros__parameters`: input/output
+  topics, rendering rate, image dimensions, pixels per meter, grid spacing,
+  colors, line widths, model inset, wheel glyph dimensions, PNG/JPEG format and
+  compression settings. Input topic changes must match the telemetry topic.
+
+Footprint, wheelbase and axle offset come directly from the controller snapshot,
+so editing MPC geometry does not require duplicating it in the renderer YAML.
+The default export is 4 Hz with six representatives per family (one each for
+braking/nominal), plus the winner if necessary. No snapshot is constructed
+without a telemetry subscriber. Rendering and image compression happen in the
+separate Python node, using Pillow (`python3-pil`).
+
+The `limo_interfaces/MpcDebug` snapshot carries raw Nav2 costmap bytes from the
+same locked control cycle as the trajectories. The renderer transforms both
+into that cycle's robot frame, without subscribing to an independently timed
+costmap or requiring additional TF lookups. Output stamps retain the snapshot
+time. The rendering timer uses a steady clock; after `stale_timeout` without a
+new snapshot, the image displays a waiting/stale status and removes old paths.
+
+After changing YAML settings, restart the application. A custom renderer file
+can be selected with `mpc_preview_params_file:=/path/to/preview.yaml` in either
+the standalone controller launch or the application launch.
+
+Build the new interfaces before loading the updated plugin:
+
+```bash
+source /opt/ros/foxy/setup.bash
+colcon build --symlink-install --packages-select limo_interfaces limo_dwb_critics limo_controller
+source install/setup.bash
+ros2 launch user_package limo_app_sim.launch.py
+```
+
+If the updated application launch is not installed by symlink, rebuild
+`user_package` too. The renderer's geometry, colors and PNG encoding can also be
+tested outside ROS:
+
+```bash
+PYTHONPATH=src/ros2_ws/limo_controller python3 -m unittest discover \
+  -s src/ros2_ws/limo_controller/test -p test_mpc_preview_render.py
+```

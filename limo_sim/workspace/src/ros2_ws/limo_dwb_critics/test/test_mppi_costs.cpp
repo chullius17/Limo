@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "dwb_core/exceptions.hpp"
@@ -129,7 +130,81 @@ public:
   bool detouring() const {return guidance_active_;}
 };
 
-TEST_F(MppiOnlineCostsTest, PreservesCollisionFreePlannedPathBesideCube)
+TEST_F(MppiOnlineCostsTest, PublishesBoundedCoherentSnapshotWithTheSelectedTrajectory)
+{
+  setCost(1.5, 1.5, 200);
+  auto receiver = std::make_shared<rclcpp::Node>("mpc_preview_receiver");
+  limo_interfaces::msg::MpcDebug::SharedPtr snapshot;
+  auto subscription = receiver->create_subscription<limo_interfaces::msg::MpcDebug>(
+    "/limo/control/mpc_debug", rclcpp::QoS(1).best_effort(),
+    [&](limo_interfaces::msg::MpcDebug::SharedPtr msg) {snapshot = msg;});
+  limo_dwb_critics::AckermannMPCController controller;
+  auto tf = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
+  controller.configure(node_, "FollowPath", tf, costmap_);
+  controller.activate();
+  nav_msgs::msg::Path path;
+  path.header.frame_id = "odom";
+  for (const auto & point : pathBehindCube().poses) {
+    geometry_msgs::msg::PoseStamped stamped;
+    stamped.header = path.header;
+    stamped.pose.position.x = point.x;
+    stamped.pose.orientation.w = 1.0;
+    path.poses.push_back(stamped);
+  }
+  controller.setPlan(path);
+  geometry_msgs::msg::PoseStamped current;
+  current.header.frame_id = "odom";
+  current.pose.orientation.w = 1.0;
+  for (int attempt = 0; attempt < 100 && !snapshot; ++attempt) {
+    controller.computeVelocityCommands(current, geometry_msgs::msg::Twist());
+    rclcpp::spin_some(receiver);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  ASSERT_NE(snapshot, nullptr);
+  EXPECT_EQ(snapshot->header.frame_id, "odom");
+  EXPECT_EQ(snapshot->base_frame, "base_link");
+  EXPECT_DOUBLE_EQ(snapshot->wheelbase, 0.24);
+  EXPECT_DOUBLE_EQ(snapshot->rear_axle_to_base, 0.12);
+  EXPECT_EQ(snapshot->costmap.data.size(), 10000U);
+  const auto * map = costmap_->getCostmap();
+  EXPECT_TRUE(std::equal(snapshot->costmap.data.begin(), snapshot->costmap.data.end(),
+    map->getCharMap()));
+  EXPECT_EQ(snapshot->generated_count, 768U);
+  EXPECT_EQ(snapshot->time_steps, 80U);
+  EXPECT_LE(snapshot->candidates.size(), 21U);
+  ASSERT_GE(snapshot->selected_id, 0);
+  bool found_winner = false;
+  std::vector<int> families(5);
+  for (const auto & candidate : snapshot->candidates) {
+    ASSERT_LT(candidate.family, families.size());
+    ++families[candidate.family];
+    ASSERT_EQ(candidate.poses.size(), 41U);
+    EXPECT_DOUBLE_EQ(candidate.poses.front().x, snapshot->robot_pose.x);
+    EXPECT_DOUBLE_EQ(candidate.poses.front().y, snapshot->robot_pose.y);
+    if (candidate.candidate_id == static_cast<std::uint32_t>(snapshot->selected_id)) {
+      found_winner = true;
+      EXPECT_EQ(candidate.score_status, candidate.SCORED);
+      EXPECT_TRUE(std::isfinite(candidate.total_cost));
+    }
+  }
+  EXPECT_TRUE(found_winner);
+  for (int count : families) {EXPECT_LE(count, 7);}
+  controller.deactivate();
+  controller.cleanup();
+}
+
+class MppiGuidanceProfilesTest : public MppiOnlineCostsTest,
+  public ::testing::WithParamInterface<const char *>
+{
+protected:
+  const char * parameterFile() const override {return GetParam();}
+};
+
+INSTANTIATE_TEST_CASE_P(
+  RealAndSimulation, MppiGuidanceProfilesTest,
+  ::testing::Values(LIMO_MPC_PARAMS_PATH, LIMO_MPC_SIM_PARAMS_PATH));
+
+TEST_P(MppiGuidanceProfilesTest, PreservesCollisionFreePlannedPathBesideCube)
 {
   addCube();
   auto path = pathBehindCube();
@@ -150,7 +225,7 @@ TEST_F(MppiOnlineCostsTest, PreservesCollisionFreePlannedPathBesideCube)
   EXPECT_LT(critic.scoreTrajectory(forward), critic.scoreTrajectory(stopped));
 }
 
-TEST_F(MppiOnlineCostsTest, FinishesDetourBeforeRestoringReferenceAlignment)
+TEST_P(MppiGuidanceProfilesTest, FinishesDetourBeforeRestoringReferenceAlignment)
 {
   addCube();
   auto path = pathBehindCube();
@@ -177,7 +252,7 @@ TEST_F(MppiOnlineCostsTest, FinishesDetourBeforeRestoringReferenceAlignment)
   EXPECT_FALSE(critic.detouring());
 }
 
-TEST_F(MppiOnlineCostsTest, DetourHeadingFollowsMotionInForwardAndReverse)
+TEST_P(MppiGuidanceProfilesTest, DetourHeadingFollowsMotionInForwardAndReverse)
 {
   addCube();
   InspectableMppiPathCritic critic;
@@ -198,7 +273,7 @@ TEST_F(MppiOnlineCostsTest, DetourHeadingFollowsMotionInForwardAndReverse)
   EXPECT_DOUBLE_EQ(critic.scoreTrajectory(forward), critic.scoreTrajectory(reverse));
 }
 
-TEST_F(MppiOnlineCostsTest, OnlineCubeRewardsDetourAndThenRestoresOriginalPathTracking)
+TEST_P(MppiGuidanceProfilesTest, OnlineCubeRewardsDetourAndThenRestoresOriginalPathTracking)
 {
   limo_dwb_critics::MppiPathCritic critic;
   initialize(critic, "MppiPath");
@@ -435,16 +510,17 @@ TEST_F(MppiCostsTest, NormalizesObstacleCostIndependentlyOfHorizonAndResolution)
   EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory) * critic.getScale(), 3.0);
 }
 
-TEST_F(MppiCostsTest, NearGoalDisablesRepulsionButNeverCollisionRejection)
+TEST_P(MppiGuidanceProfilesTest, NearGoalDisablesRepulsionButNeverCollisionRejection)
 {
   limo_dwb_critics::MppiObstacleCritic critic;
   initialize(critic, "MppiObstacle");
-  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(0.3, 0), straightPath()));
+  // The strict distance gate keeps repulsion active at exactly 15 cm.
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(0.15, 0), straightPath()));
   dwb_msgs::msg::Trajectory2D trajectory;
   trajectory.poses.assign(5, pose(0, 0));
   setCost(0.0, 0.0, 200);
   EXPECT_NEAR(critic.scoreTrajectory(trajectory), 200.0 / 254.0, 1e-12);
-  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(0.05, 0), straightPath()));
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(0.14, 0), straightPath()));
   EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory), 0.0);
   setCost(0.0, 0.0, nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE);
   EXPECT_NEAR(critic.scoreTrajectory(trajectory), 300.0 / 254.0, 1e-12);
@@ -469,8 +545,11 @@ TEST_F(MppiCostsTest, UsesHumbleGoalWeightsAndWrappedYawError)
   EXPECT_NEAR(critic.scoreTrajectory(trajectory), 5.0 * 0.15 + 3.0 * wrapped_angle, 1e-12);
 }
 
-TEST_F(MppiCostsTest, RewardsProgressAndRelaxesAlignmentWhenPathBlocked)
+TEST_F(MppiCostsTest, RewardsProgressAndRelaxesAlignmentWithoutObstacleGuidance)
 {
+  // Custom profiles may disable guidance and retain occupancy-based scoring.
+  node_->declare_parameter("FollowPath.MppiPath.ObstacleGuidance.enabled", true);
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.enabled", false));
   limo_dwb_critics::MppiPathCritic critic;
   initialize(critic, "MppiPath");
   auto path = straightPath();

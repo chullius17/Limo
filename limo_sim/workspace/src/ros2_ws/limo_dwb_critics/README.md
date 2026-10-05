@@ -35,6 +35,15 @@ controller loop. Repeated Gazebo `/clock` stamps (for example 10 Hz clock
 publication with 20 Hz control) do not erase the command ramp. Backward ROS
 clock jumps still reset the prediction.
 
+Simulation optionally exports `limo_interfaces/MpcDebug` snapshots for the
+compressed-image preview in `limo_controller`. The sampler assigns an explicit
+family and candidate ID at generation time. A bounded observer records
+representative rollouts and the winner without changing the search objective,
+candidate order or random perturbations. Costmap bytes, model geometry and
+initial actuator state are captured in the same controller cycle. Disabled
+telemetry, or a publisher without subscribers, constructs no snapshot. See the
+[preview settings](../limo_controller/README.md#simulation-mpc-image-preview).
+
 ## Model and parameters
 
 `FollowPath.MPC.model_dt` must equal `1 / controller_frequency`. The prediction
@@ -142,7 +151,7 @@ that reference profile.
 
 | Humble MPPI term | Foxy configuration | Behavior |
 | --- | --- | --- |
-| CostCritic, weight 3 | Real `MppiObstacle.scale: 6`; simulation: 3 | Mean center cost / 254; critical cost 300; ordinary repulsion off within 0.10 m of the goal on the real profile, 0.50 m in simulation |
+| CostCritic, weight 3 | Real `MppiObstacle.scale: 6`; simulation: 3 | Mean center cost / 254; critical cost 300; ordinary repulsion off below 0.15 m from the goal in both profiles; critical and collision checks remain active |
 | GoalCritic, weight 5 | `MppiPath.GoalCritic` | Mean distance in meters, enabled within 1 m of the goal |
 | GoalAngleCritic, weight 3 | `MppiPath.GoalAngleCritic` | Mean wrapped yaw error in radians, within 0.5 m |
 | PathAlignCritic, weight 10 | `MppiPath.PathAlignCritic` | Mean path-pose error, with orientations; off within 0.5 m or if local path occupancy exceeds 15% |
@@ -164,16 +173,16 @@ of predictions uses discrete collision checks, not continuous swept-volume
 checking or a terminal invariant-set constraint. Equivalent weights do not
 guarantee identical behavior; simulation and hardware tuning remain necessary.
 
-## Online obstacle detours in simulation
+## Online obstacle detours
 
-The simulation profile enables `MppiPath.ObstacleGuidance.enabled`. A detour
-starts when the oriented robot footprint collides along the local reference,
+Both real and simulation profiles enable `MppiPath.ObstacleGuidance.enabled`.
+A detour starts when the oriented robot footprint collides along the local reference,
 including between path samples. A collision-free planned passage remains under
 ordinary path tracking. The path critic builds an eight-connected Dijkstra
 cost-to-go field through the current controller costmap. Occupied and unknown
 cells are excluded and diagonal corner cutting is forbidden. Lethal cells are
 expanded by the inscribed footprint radius plus `clearance_margin` (0.0 m in
-simulation) and a half-cell diagonal. This center reference leaves the full
+both profiles) and a half-cell diagonal. This center reference leaves the full
 oriented-footprint collision check responsible for the rectangular robot's
 actual clearance. Inflated costs add a travel penalty controlled by
 `cost_weight` (2.0).
@@ -192,12 +201,19 @@ and the robot is within 0.15 m of it, avoiding abrupt scoring-mode changes while
 the robot is still returning from the detour. A critic reset clears this history.
 The global plan and FollowPath action are not replaced or restarted.
 
-Simulation uses a 5 x 5 m rolling costmap and a 2.50 m DWB prune distance to
-include the sides and exit of metre-wide cubes. It omits DWB's `Oscillation`
+Both profiles use a 5 x 5 m rolling costmap and a 2.50 m DWB prune distance to
+include the sides and exit of local obstacles. They omit DWB's `Oscillation`
 critic: its direction locks can prevent the steering reversal needed to exit
 a detour. MPC actuation constraints and command regularization remain active.
-The real profile keeps its existing settings; this guidance is disabled by
-default unless explicitly enabled in a custom profile.
+Real control retains its physical geometry, padded footprint, 10 Hz frequency,
+128 sequences and 2.5 s horizon. Simulation uses 768 sequences and a 4 s horizon.
+The real obstacle weight remains 6.0. Both profiles disable ordinary obstacle
+repulsion below 0.15 m from the goal, retaining inflation in the costmap and
+critical/collision checks. Simulation's reverse/direction penalties are not
+applied to the real profile.
+The larger local map and guidance field add computation; verify the full real
+cycle fits within 100 ms on the Nano. The smaller real search budget can limit
+feasible detours even when guidance finds a route through free space.
 
 This field is a local scoring aid, not a kinematic global planner. It requires
 a reachable free rejoin point inside the local map and enough room/time for
@@ -210,9 +226,10 @@ Regression tests cover a previously clear straight path with a cube inserted
 after motion starts, model execution around it, return toward the original
 path, and independent rectangle collision checks. This is a software model
 test, not validation of Gazebo sensor timing or physical actuator tracking.
-Additional regressions cover valid planned clearances, scoring-mode continuity,
-reverse-motion heading, direction penalties through a stop, and progress on a
-frozen costmap/path captured from Gazebo. The frozen replay does not reproduce
+Both profile YAMLs are exercised for valid planned clearances, scoring-mode
+continuity, reverse-motion heading and preference for a free-space detour.
+Additional simulation regressions cover direction penalties through a stop and
+progress on a frozen costmap/path captured from Gazebo. The frozen replay does not reproduce
 live costmap changes or prove that every Gazebo interruption is resolved.
 
 ## Build and test
@@ -227,7 +244,7 @@ rebuilding an existing GCC 8 installation:
 
 ```bash
 source /opt/ros/foxy/setup.bash
-colcon build --symlink-install --packages-select limo_dwb_critics limo_controller \
+colcon build --symlink-install --packages-select limo_interfaces limo_dwb_critics limo_controller \
   --cmake-clean-cache --cmake-args \
   -DCMAKE_CXX_COMPILER=/usr/bin/g++-9 -DCMAKE_C_COMPILER=/usr/bin/gcc-9
 source install/setup.bash

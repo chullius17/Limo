@@ -18,6 +18,8 @@
   <depend>nav2_costmap_2d</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>
+  <depend>limo_interfaces</depend>
+  <depend>nav2_msgs</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
 

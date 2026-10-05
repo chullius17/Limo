@@ -21,7 +21,6 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
 from nav2_common.launch import RewrittenYaml
 
 
@@ -36,7 +35,6 @@ def generate_launch_description():
     planner_params_file = LaunchConfiguration('planner_params_file')
     map_topic = LaunchConfiguration('map_topic')
     use_sim_time = LaunchConfiguration('use_sim_time')
-    autostart = LaunchConfiguration('autostart')
 
     # Clock and map-topic overrides apply to either model profile or custom YAML.
     configured_params = RewrittenYaml(
@@ -69,11 +67,7 @@ def generate_launch_description():
         executable='lifecycle_manager',
         name='lifecycle_manager_global_planner',
         output='screen',
-        parameters=[{
-            'use_sim_time': ParameterValue(use_sim_time, value_type=bool),
-            'autostart': ParameterValue(autostart, value_type=bool),
-            'node_names': ['planner_server'],
-        }],
+        parameters=[configured_params],
     )
 
     # RViz publishes selected poses on /goal_pose, while planner_server exposes
@@ -107,11 +101,6 @@ def generate_launch_description():
             'use_sim_time',
             default_value=profile_clock,
             description='Clock override; default is true for sim, false for real.',
-        ),
-        DeclareLaunchArgument(
-            'autostart',
-            default_value='true',
-            description='Configure and activate the Nav2 planner automatically.',
         ),
         planner_server,
         lifecycle_manager,

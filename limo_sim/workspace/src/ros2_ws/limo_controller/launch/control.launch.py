@@ -16,6 +16,8 @@
 
 import os
 
+import yaml
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
@@ -42,6 +44,23 @@ def controller_node(context, configured_params, log_level):
     )]
 
 
+def mpc_preview_node(context, configured_params, preview_params):
+    """Use the selected controller YAML to enable MPC telemetry and its preview."""
+    with open(configured_params.perform(context), encoding='utf-8') as stream:
+        config = yaml.safe_load(stream)
+    params = config['controller_server']['ros__parameters']
+    enabled = params.get('FollowPath', {}).get('MPC', {}).get('Debug', {}).get('enabled', False)
+    if not isinstance(enabled, bool):
+        raise ValueError('FollowPath.MPC.Debug.enabled must be a YAML boolean')
+    return [Node(
+        package='limo_controller', executable='mpc_preview', name='mpc_preview',
+        output='screen', parameters=[preview_params],
+        condition=IfCondition(PythonExpression([
+            str(enabled), " and '", LaunchConfiguration('start_mpc_preview'),
+            "'.lower() == 'true'"])),
+    )]
+
+
 def generate_launch_description():
     """Create the controller server and its lifecycle manager."""
     package_share = get_package_share_directory('limo_controller')
@@ -56,6 +75,9 @@ def generate_launch_description():
     log_level = LaunchConfiguration('log_level')
     start_gui = LaunchConfiguration('start_gui')
     require_chassis_status = LaunchConfiguration('require_chassis_status')
+    preview_params = RewrittenYaml(
+        source_file=LaunchConfiguration('mpc_preview_params_file'),
+        root_key='', param_rewrites={'use_sim_time': use_sim_time}, convert_types=True)
 
     configured_params = RewrittenYaml(
         source_file=controller_params_file,
@@ -110,6 +132,9 @@ def generate_launch_description():
         output='screen',
         condition=IfCondition(start_gui),
     )
+    mpc_preview = OpaqueFunction(
+        function=mpc_preview_node, args=[configured_params, preview_params],
+    )
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -146,6 +171,15 @@ def generate_launch_description():
             default_value=PythonExpression(["'", robot_model, "' == 'real'"]),
             description='Require healthy command-mode feedback before START.',
         ),
+        DeclareLaunchArgument(
+            'start_mpc_preview', default_value='true',
+            description='Allow the MPC preview when FollowPath.MPC.Debug.enabled is true in YAML.',
+        ),
+        DeclareLaunchArgument(
+            'mpc_preview_params_file',
+            default_value=os.path.join(package_share, 'config', 'mpc_preview_sim.yaml'),
+            description='MPC preview rendering and compression settings.',
+        ),
         controller_server,
         cmd_vel_mux,
         # Foxy lifecycle_manager performs startup only once.  When the whole
@@ -155,4 +189,5 @@ def generate_launch_description():
         TimerAction(period=3.0, actions=[lifecycle_manager]),
         path_executor,
         control_gui,
+        mpc_preview,
     ])

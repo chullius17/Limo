@@ -1,5 +1,5 @@
 # real trajectory profile; selected by robot_model.
-# SMAC Hybrid-A* profile for ROS 2 Foxy.
+# SMAC Hybrid-A* profile for ROS 2 Foxy (smac_planner 0.4.7).
 #
 # Profile assumptions:
 # - LIMO operating in Ackermann mode;
@@ -8,6 +8,12 @@
 # - execution alongside the CV pipeline on a Jetson Nano.
 #
 # The profile clock can be overridden by the launch without changing tuning.
+
+lifecycle_manager_global_planner:
+  ros__parameters:
+    use_sim_time: false
+    autostart: true  # Automatically configure and activate the planner.
+    node_names: ["planner_server"]
 
 planner_server:
   ros__parameters:
@@ -29,21 +35,16 @@ planner_server:
       downsample_costmap: false
       downsampling_factor: 1
 
-      # The controller considers the goal reached within 0.15 m. Using the same
-      # tolerance avoids spending search effort on accuracy that the path
-      # follower would not require.
+      # Allow up to 15 cm positional goal tolerance for the planner.
       tolerance: 0.15
 
       # The combined map explicitly distinguishes known and unknown cells. For
       # safety, the planner must not traverse areas that were never mapped.
       allow_unknown: false
 
-      # Longer routes need a larger Hybrid-A* search budget. Planning is an
-      # occasional workload, so 7.5 seconds and 750k iterations are accepted
-      # while retaining finite limits for pathological searches on the Nano.
+      # Bound the Hybrid-A* search to 750k iterations. This Foxy plugin does
+      # not support the newer search wall-time or on-approach iteration limits.
       max_iterations: 750000
-      max_on_approach_iterations: 1000
-      max_planning_time: 7.5
 
       # Dubins paths preserve the Ackermann turning-radius constraint and only
       # permit forward motion, so the planned path contains no reversals.
@@ -53,11 +54,9 @@ planner_server:
       # a 5 cm grid, with fewer states than the default 72-bin configuration.
       angle_quantization_bins: 64
 
-      # Analytic expansion accelerates the final approach. The longer limit
-      # allows direct Dubins connections from farther away while retaining the
-      # normal Hybrid-A* collision checks.
+      # Control how often search attempts collision-checked Dubins connections
+      # to the goal. Foxy does not expose an analytic-expansion length limit.
       analytic_expansion_ratio: 3.5
-      analytic_expansion_max_length: 7.5
 
       # The theoretical centre-line limit is 0.462 m. Use a conservative
       # operational radius so every planned primitive remains comfortably
@@ -72,22 +71,9 @@ planner_server:
       # the only feasible route. Values >= 86 are made lethal by StaticLayer.
       cost_penalty: 4.0
 
-      # A 15 m lookup window gives the non-holonomic heuristic useful coverage
-      # on longer routes without returning to the generic 20 m memory cost.
-      lookup_table_size: 15.0
-
-      # The CV and lidar layers make the map dynamic. Do not cache the obstacle
-      # heuristic across replanning requests, because its costs could become stale.
-      cache_obstacle_heuristic: false
-
       # Preserve the curvature of the kinematically feasible Hybrid-A* path.
       # Geometric smoothing is disabled so it cannot tighten bends afterward.
       smooth_path: false
-      smoother:
-        max_iterations: 500
-        w_smooth: 0.3
-        w_data: 0.2
-        tolerance: 1.0e-4
 
 # SMAC plans against this Costmap2D instance. The online node already merges
 # the static map, CV observations, and lidar endpoints, so another obstacle
@@ -103,7 +89,7 @@ global_costmap:
       transform_tolerance: 0.3
 
       # Keep the source-map geometry and resolution. The map topic itself is
-      # remapped by trajectory.launch.py for Foxy/Humble portability.
+      # overridden by trajectory.launch.py.
       rolling_window: false
       resolution: 0.05
       track_unknown_space: true
@@ -112,7 +98,7 @@ global_costmap:
       # Publish complete grids to bypass that bug (about 38 kB at 1 Hz here).
       always_send_full_costmap: true
 
-      # These are costmap-wide StaticLayer inputs in Foxy/Humble. Keeping
+      # These are costmap-wide StaticLayer inputs in Foxy. Keeping
       # trinary mode disabled preserves intermediate OccupancyGrid costs.
       trinary_costmap: false
       # Source-map values strictly greater than 85 are hard obstacles for
