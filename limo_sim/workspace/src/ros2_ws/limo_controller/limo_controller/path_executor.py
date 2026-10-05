@@ -252,7 +252,8 @@ class PathExecutor(Node):
         """Copy the stored path using the latest available transforms."""
         execution_path = copy.deepcopy(path)
         latest = Time().to_msg()
-        execution_path.header.stamp = latest
+        # Keep the plan identity used by StartConnector metadata. TF lookup
+        # timestamps belong to the individual poses and still request latest TF.
         for pose in execution_path.poses:
             pose.header.stamp = latest
         return execution_path

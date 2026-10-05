@@ -72,6 +72,13 @@ controller_server:
       # 25 * 0.10 = 2.5 s horizon. Only the first reachable command is sent;
       # the remaining sequence is shifted and reoptimized at the next cycle.
       MPC:
+        StartConnector:
+          # Ignore repulsion, critical costs, footprint collisions and detours
+          # ONLY while following the planner-declared initial Dubins prefix.
+          ignore_obstacles: true
+          topic: /limo/planning/start_connector
+          position_tolerance: 0.05
+          yaw_tolerance: 0.10
         # Like the Humble smoother: continue the command ramp across cycles
         # even when noisy/lagging odometry still reports near-zero motion.
         feedback: "OPEN_LOOP"

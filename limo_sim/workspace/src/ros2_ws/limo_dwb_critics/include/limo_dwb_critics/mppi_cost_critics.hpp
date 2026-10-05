@@ -17,6 +17,7 @@ namespace limo_dwb_critics
 class MppiObstacleCritic : public dwb_critics::ObstacleFootprintCritic
 {
 public:
+  void setStartConnector(bool enabled) {ignore_obstacles_ = enabled;}
   void onInit() override;
   bool prepare(
     const geometry_msgs::msg::Pose2D & pose, const nav_2d_msgs::msg::Twist2D & velocity,
@@ -25,6 +26,7 @@ public:
   double getScale() const override {return scale_;}
 
 protected:
+  bool ignore_obstacles_{false};
   double critical_cost_{300.0};
   double near_goal_distance_{0.5};
   bool near_goal_{false};
@@ -37,6 +39,7 @@ protected:
 class MppiPathCritic : public dwb_core::TrajectoryCritic
 {
 public:
+  void setStartConnector(bool enabled) {ignore_obstacles_ = enabled;}
   void onInit() override;
   void reset() override {guidance_active_ = false;}
   bool prepare(
@@ -45,6 +48,7 @@ public:
   double scoreTrajectory(const dwb_msgs::msg::Trajectory2D & trajectory) override;
 
 protected:
+  bool ignore_obstacles_{false};
   double goal_weight_{5.0};
   double goal_angle_weight_{3.0};
   double align_weight_{10.0};

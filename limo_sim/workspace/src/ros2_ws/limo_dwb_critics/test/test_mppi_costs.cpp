@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "dwb_core/exceptions.hpp"
+#include "dwb_core/illegal_trajectory_tracker.hpp"
 #include "limo_dwb_critics/ackermann_mpc_controller.hpp"
 #include "limo_dwb_critics/mppi_cost_critics.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
@@ -129,6 +130,80 @@ class InspectableMppiPathCritic : public limo_dwb_critics::MppiPathCritic
 public:
   bool detouring() const {return guidance_active_;}
 };
+
+TEST_F(MppiOnlineCostsTest, InitialConnectorBypassesCollisionsAndDetoursOnlyUntilDisabled)
+{
+  addCube();
+  limo_dwb_critics::MppiObstacleCritic obstacle;
+  InspectableMppiPathCritic path;
+  initialize(obstacle, "MppiObstacle");
+  initialize(path, "MppiPath");
+  obstacle.setStartConnector(true);
+  path.setStartConnector(true);
+  const auto reference = pathBehindCube();
+  ASSERT_TRUE(obstacle.prepare(pose(0.0, 0.0), nav_2d_msgs::msg::Twist2D(),
+    reference.poses.back(), reference));
+  ASSERT_TRUE(path.prepare(pose(0.0, 0.0), nav_2d_msgs::msg::Twist2D(),
+    reference.poses.back(), reference));
+  EXPECT_FALSE(path.detouring());
+  dwb_msgs::msg::Trajectory2D trajectory;
+  trajectory.velocity.x = 0.1;
+  trajectory.poses = {pose(1.0, 0.0), pose(1.1, 0.0)};
+  EXPECT_DOUBLE_EQ(obstacle.scoreTrajectory(trajectory), 0.0);
+  EXPECT_TRUE(std::isfinite(path.scoreTrajectory(trajectory)));
+  trajectory.velocity.x = -0.1;
+  EXPECT_THROW(path.scoreTrajectory(trajectory), dwb_core::IllegalTrajectoryException);
+  obstacle.setStartConnector(false);
+  path.setStartConnector(false);
+  EXPECT_THROW(obstacle.scoreTrajectory(trajectory), dwb_core::IllegalTrajectoryException);
+  ASSERT_TRUE(path.prepare(pose(0.0, 0.0), nav_2d_msgs::msg::Twist2D(),
+    reference.poses.back(), reference));
+  EXPECT_TRUE(path.detouring());
+}
+
+TEST_F(MppiOnlineCostsTest, ControllerRestoresFootprintChecksAtTheVirtualStart)
+{
+  limo_dwb_critics::AckermannMPCController controller;
+  auto tf = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
+  controller.configure(node_, "FollowPath", tf, costmap_);
+  nav_msgs::msg::Path plan;
+  plan.header.frame_id = "odom";
+  plan.header.stamp.sec = 123;
+  for (int i = 0; i <= 75; ++i) {
+    geometry_msgs::msg::PoseStamped point;
+    point.header = plan.header;
+    point.pose.position.x = i * 0.02;
+    point.pose.orientation.w = 1.0;
+    plan.poses.push_back(point);
+  }
+  limo_interfaces::msg::StartConnector metadata;
+  metadata.path = plan;
+  metadata.end_index = 20;
+  auto sender = std::make_shared<rclcpp::Node>("start_connector_test_sender");
+  auto publisher = sender->create_publisher<limo_interfaces::msg::StartConnector>(
+    "/limo/planning/start_connector", rclcpp::QoS(1).reliable().transient_local());
+  publisher->publish(metadata);
+  for (int i = 0; i < 30; ++i) {
+    rclcpp::spin_some(node_->get_node_base_interface());
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  // Executor changes pose timestamps for TF, preserving the plan identity.
+  for (auto & point : plan.poses) {point.header.stamp.sec = 0;}
+  controller.setPlan(plan);
+  controller.activate();
+  setCost(0.0, 0.0, nav2_costmap_2d::LETHAL_OBSTACLE);
+  EXPECT_GT(controller.computeVelocityCommands(
+    plan.poses.front(), geometry_msgs::msg::Twist()).twist.linear.x, 0.0);
+  clearMap();
+  for (std::size_t i = 1; i < 20; ++i) {
+    EXPECT_NO_THROW(controller.computeVelocityCommands(plan.poses[i], geometry_msgs::msg::Twist()));
+  }
+  setCost(0.4, 0.0, nav2_costmap_2d::LETHAL_OBSTACLE);
+  EXPECT_THROW(controller.computeVelocityCommands(plan.poses[20], geometry_msgs::msg::Twist()),
+    dwb_core::NoLegalTrajectoriesException);
+  controller.deactivate();
+  controller.cleanup();
+}
 
 TEST_F(MppiOnlineCostsTest, PublishesBoundedCoherentSnapshotWithTheSelectedTrajectory)
 {

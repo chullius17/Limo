@@ -1,0 +1,9 @@
+# Explicit-start planning for Foxy. Only the initial Dubins connector ignores obstacles.
+geometry_msgs/PoseStamped real_start
+geometry_msgs/PoseStamped start
+geometry_msgs/PoseStamped goal
+---
+bool success
+string error
+nav_msgs/Path path
+uint32 connector_end_index

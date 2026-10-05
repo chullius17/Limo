@@ -3,11 +3,13 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include "dwb_core/dwb_local_planner.hpp"
 #include "limo_dwb_critics/sampling_mpc.hpp"
 #include "limo_dwb_critics/mpc_debug.hpp"
+#include "limo_dwb_critics/start_connector.hpp"
 
 namespace limo_dwb_critics
 {
@@ -15,6 +17,10 @@ namespace limo_dwb_critics
 class AckermannMPCController : public dwb_core::DWBLocalPlanner
 {
 public:
+  using dwb_core::DWBLocalPlanner::computeVelocityCommands;
+  geometry_msgs::msg::TwistStamped computeVelocityCommands(
+    const geometry_msgs::msg::PoseStamped & pose,
+    const geometry_msgs::msg::Twist & velocity) override;
   void configure(
     const rclcpp_lifecycle::LifecycleNode::SharedPtr & node,
     std::string name, const std::shared_ptr<tf2_ros::Buffer> & tf,
@@ -36,6 +42,14 @@ protected:
   double steering_feedback_min_velocity_{0.05};
 
 private:
+  std::mutex connector_mutex_;
+  StartConnectorGate connector_gate_;
+  nav_msgs::msg::Path complete_plan_;
+  bool connector_enabled_{false};
+  bool connector_active_{false};
+  double connector_position_tolerance_{0.05};
+  double connector_yaw_tolerance_{0.10};
+  rclcpp::Subscription<limo_interfaces::msg::StartConnector>::SharedPtr connector_subscription_;
   void resetPrediction();
   dwb_msgs::msg::Trajectory2D toTrajectory(const MpcRollout & rollout) const;
   std::int64_t last_time_ns_{0};

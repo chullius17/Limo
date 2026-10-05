@@ -84,3 +84,41 @@ def test_late_planning_result_cannot_restore_an_invalidated_path(bridge):
     bridge.search_generation = 1
     bridge._result_callback(Mock(), None, 0, None, None)
     bridge.path_publisher.publish.assert_not_called()
+
+
+def test_foxy_service_sends_real_and_virtual_starts(bridge):
+    bridge.use_explicit_start_service = True
+    bridge.supports_explicit_start = False
+    bridge.explicit_start_client.call_async = Mock()
+    real = PoseStamped()
+    real.header.frame_id = 'map'
+    virtual = PoseStamped()
+    virtual.header.frame_id = 'map'
+    virtual.pose.position.x = 0.5
+    bridge.real_start = real
+    bridge.start_candidates = [GoalCandidate(virtual, 0.5, 0.0, 0.5)]
+    bridge.candidates = [GoalCandidate(PoseStamped(), 0.0, 0.0, 0.0)]
+    bridge.planning_pairs = [(0, 0)]
+    bridge._send_next_candidate(bridge.search_generation)
+    request = bridge.explicit_start_client.call_async.call_args[0][0]
+    assert request.real_start.pose.position.x == 0.0
+    assert request.start.pose.position.x == 0.5
+
+
+def test_service_success_publishes_bound_metadata_and_ignores_stale_results(bridge):
+    bridge.connector_publisher = Mock()
+    path = Path()
+    path.poses = [PoseStamped(), PoseStamped()]
+    candidate = GoalCandidate(PoseStamped(), 0.0, 0.0, 0.0)
+    future = Mock()
+    future.result.return_value = SimpleNamespace(
+        success=True, path=path, connector_end_index=1)
+    bridge._explicit_start_result(future, 0, candidate, candidate)
+    metadata = bridge.connector_publisher.publish.call_args[0][0]
+    assert metadata.path == path
+    assert metadata.end_index == 1
+    bridge.path_publisher.publish.assert_called_once_with(path)
+    bridge.search_generation = 1
+    stale = Mock()
+    bridge._explicit_start_result(stale, 0, candidate, candidate)
+    stale.result.assert_not_called()

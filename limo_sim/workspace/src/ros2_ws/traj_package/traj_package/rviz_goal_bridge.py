@@ -20,6 +20,8 @@ import math
 
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
+from limo_interfaces.msg import StartConnector
+from limo_interfaces.srv import ComputePathWithStart
 from nav2_msgs.action import ComputePathToPose
 from nav_msgs.msg import OccupancyGrid, Path
 import rclpy
@@ -55,6 +57,9 @@ class RvizGoalBridge(Node):
             '/compute_path_to_pose',
         )
         self.declare_parameter('planner_id', 'GridBased')
+        self.declare_parameter('use_explicit_start_service', False)
+        self.declare_parameter('explicit_start_service', '/compute_path_with_start')
+        self.declare_parameter('start_connector_topic', '/limo/planning/start_connector')
         self.declare_parameter(
             'costmap_topic',
             '/global_costmap/costmap',
@@ -101,6 +106,8 @@ class RvizGoalBridge(Node):
             self.get_parameter('enable_start_adjustment').value
         )
         self.planner_id = str(self.get_parameter('planner_id').value)
+        self.use_explicit_start_service = bool(
+            self.get_parameter('use_explicit_start_service').value)
         self.enable_goal_adjustment = bool(
             self.get_parameter('enable_goal_adjustment').value
         )
@@ -173,6 +180,8 @@ class RvizGoalBridge(Node):
             ComputePathToPose,
             action_name,
         )
+        self.explicit_start_client = self.create_client(
+            ComputePathWithStart, self.get_parameter('explicit_start_service').value)
         action_probe = ComputePathToPose.Goal()
         self.supports_explicit_start = (
             hasattr(action_probe, 'start')
@@ -194,10 +203,16 @@ class RvizGoalBridge(Node):
         )
         self.path_publisher = self.create_publisher(
             Path, '/limo/planning/path', planning_qos)
+        # The explicit-start service bypasses planner_server's /plan publisher;
+        # keep the existing RViz displays supplied with the complete path.
+        self.visualization_path_publisher = self.create_publisher(Path, '/plan', planning_qos)
+        self.connector_publisher = self.create_publisher(
+            StartConnector, self.get_parameter('start_connector_topic').value, planning_qos)
         self.planning_status_publisher = self.create_publisher(
             String, '/limo/planning/status', planning_qos)
 
         self.costmap = None
+        self.real_start = None
         self.active_planning_goal_handle = None
         self.start_candidate = None
         self.start_candidates = []
@@ -213,7 +228,7 @@ class RvizGoalBridge(Node):
             'RViz goal bridge started to simplify graphical goal selection: '
             f'{goal_topic} -> {action_name} '
             f'(planner={self.planner_id}, '
-            f'explicit_start={self.supports_explicit_start}, '
+            f'explicit_start={self.supports_explicit_start or self.use_explicit_start_service}, '
             f'goal_field={self.compute_path_goal_field}, '
             f'adjustment={self.enable_goal_adjustment}, '
             f'radius={self.position_search_radius:.2f} m, '
@@ -223,6 +238,7 @@ class RvizGoalBridge(Node):
     def destroy_node(self):
         """Release the planner action client before its node handle on Foxy."""
         self.compute_path_client.destroy()
+        self.destroy_client(self.explicit_start_client)
         return super().destroy_node()
 
     def _validate_parameters(self) -> None:
@@ -269,13 +285,21 @@ class RvizGoalBridge(Node):
         # An empty path invalidates the previous plan, including for late
         # subscribers. Only a successful search publishes a nonempty path.
         self.path_publisher.publish(Path())
+        empty_visualization = Path()
+        empty_visualization.header = copy.deepcopy(pose.header)
+        self.visualization_path_publisher.publish(empty_visualization)
+        self.connector_publisher.publish(StartConnector())
         self.search_generation += 1
         generation = self.search_generation
         if self.active_planning_goal_handle is not None:
             self.active_planning_goal_handle.cancel_goal_async()
             self.active_planning_goal_handle = None
 
-        if not self.compute_path_client.wait_for_server(timeout_sec=1.0):
+        available = (
+            self.explicit_start_client.wait_for_service(timeout_sec=1.0)
+            if self.use_explicit_start_service
+            else self.compute_path_client.wait_for_server(timeout_sec=1.0))
+        if not available:
             if pose.header.frame_id == 'map' and not self.tf_buffer.can_transform(
                     'map', self.robot_base_frame, Time()):
                 message = (
@@ -284,9 +308,9 @@ class RvizGoalBridge(Node):
                 self.get_logger().error(message)
                 self._publish_planning_state(message)
                 return
-            self.get_logger().error(
-                'The ComputePathToPose action server is not available.'
-            )
+            interface = ('Explicit-start planning service' if self.use_explicit_start_service
+                         else 'ComputePathToPose action server')
+            self.get_logger().error(f'{interface} is not available.')
             self._publish_planning_state('ERROR: planner server unavailable')
             return
         self.start_candidate = None
@@ -309,7 +333,8 @@ class RvizGoalBridge(Node):
             )
             return
 
-        if self.supports_explicit_start:
+        self.real_start = copy.deepcopy(robot_pose)
+        if self.supports_explicit_start or self.use_explicit_start_service:
             self.start_candidates = self._find_valid_start_candidates(
                 robot_pose
             )
@@ -606,6 +631,17 @@ class RvizGoalBridge(Node):
         candidate = self.candidates[goal_index]
         candidate.pose.header.stamp = self.get_clock().now().to_msg()
 
+        if self.use_explicit_start_service:
+            request = ComputePathWithStart.Request()
+            request.real_start = copy.deepcopy(self.real_start)
+            request.start = copy.deepcopy(start_candidate.pose)
+            request.goal = copy.deepcopy(candidate.pose)
+            future = self.explicit_start_client.call_async(request)
+            future.add_done_callback(
+                lambda result: self._explicit_start_result(
+                    result, generation, start_candidate, candidate))
+            return
+
         request = ComputePathToPose.Goal()
         if self.supports_explicit_start:
             request.start = copy.deepcopy(start_candidate.pose)
@@ -690,34 +726,53 @@ class RvizGoalBridge(Node):
             return
 
         if response.status == GoalStatus.STATUS_SUCCEEDED:
-            self.start_candidate = start_candidate
-            selected_start = copy.deepcopy(start_candidate.pose)
-            selected_start.header.stamp = self.get_clock().now().to_msg()
-            self.adjusted_start_publisher.publish(selected_start)
-            candidate.pose.header.stamp = self.get_clock().now().to_msg()
-            self.adjusted_goal_publisher.publish(candidate.pose)
-            pose_count = len(response.result.path.poses)
-            self.get_logger().info(
-                'RViz goal planned successfully: '
-                f'{pose_count} path poses, '
-                f'position adjustment={candidate.position_delta:.3f} m, '
-                f'angle adjustment={math.degrees(candidate.angle_delta):.1f} '
-                f'deg, start position adjustment='
-                f'{start_candidate.position_delta:.3f} m, '
-                f'start angle adjustment='
-                f'{math.degrees(start_candidate.angle_delta):.1f} deg, '
-                f'attempts={self.planning_attempts}.'
-            )
             if not response.result.path.poses:
                 self._send_next_candidate(generation)
                 return
-            self.path_publisher.publish(response.result.path)
-            self._publish_planning_state(
-                f'READY: path contains {pose_count} poses'
-            )
+            self._publish_success(start_candidate, candidate, response.result.path, 0)
             return
 
         self._send_next_candidate(generation)
+
+    def _explicit_start_result(self, future, generation, start_candidate, candidate):
+        """Discard stale service replies and publish a coherent connector and path."""
+        if generation != self.search_generation:
+            return
+        try:
+            response = future.result()
+            if response.success and response.path.poses:
+                self._publish_success(
+                    start_candidate, candidate, response.path, response.connector_end_index)
+                return
+            self.get_logger().debug(f'Explicit-start attempt failed: {response.error}')
+        except Exception as exc:  # noqa: B902
+            self.get_logger().warning(f'Explicit-start request failed: {exc}')
+        self._send_next_candidate(generation)
+
+    def _publish_success(self, start_candidate, candidate, path, connector_end_index):
+        """Publish metadata before making the complete path available for START."""
+        self.start_candidate = start_candidate
+        selected_start = copy.deepcopy(
+            path.poses[connector_end_index] if connector_end_index else start_candidate.pose)
+        selected_start.header.stamp = self.get_clock().now().to_msg()
+        self.adjusted_start_publisher.publish(selected_start)
+        candidate.pose.header.stamp = self.get_clock().now().to_msg()
+        self.adjusted_goal_publisher.publish(candidate.pose)
+        connector = StartConnector()
+        connector.path = path
+        connector.end_index = connector_end_index
+        self.connector_publisher.publish(connector)
+        self.path_publisher.publish(path)
+        self.visualization_path_publisher.publish(path)
+        self.get_logger().info(
+            f'Planned {len(path.poses)} poses; '
+            f'start shift={start_candidate.position_delta:.3f} m, '
+            f'start rotation={math.degrees(start_candidate.angle_delta):.1f} deg; '
+            f'goal shift={candidate.position_delta:.3f} m, '
+            f'goal rotation={math.degrees(candidate.angle_delta):.1f} deg; '
+            f'Dubins connector end index={connector_end_index}; '
+            f'attempts={self.planning_attempts}.')
+        self._publish_planning_state(f'READY: path contains {len(path.poses)} poses')
 
     @staticmethod
     def _world_to_grid_continuous(

@@ -9,6 +9,7 @@
 #include "dwb_core/exceptions.hpp"
 #include "dwb_core/illegal_trajectory_tracker.hpp"
 #include "pluginlib/class_list_macros.hpp"
+#include "limo_dwb_critics/mppi_cost_critics.hpp"
 
 namespace limo_dwb_critics
 {
@@ -101,6 +102,28 @@ void AckermannMPCController::configure(
   }
   mpc_ = std::make_unique<SamplingMpc>(config);
   debug_publisher_ = std::make_unique<MpcDebugPublisher>(node, name, costmap_ros, config);
+  const auto connector_parameter = name + ".MPC.StartConnector.";
+  if (!node->has_parameter(connector_parameter + "ignore_obstacles")) {
+    node->declare_parameter(connector_parameter + "ignore_obstacles", false);
+  }
+  if (!node->has_parameter(connector_parameter + "topic")) {
+    node->declare_parameter(connector_parameter + "topic", "/limo/planning/start_connector");
+  }
+  connector_enabled_ = node->get_parameter(connector_parameter + "ignore_obstacles").as_bool();
+  connector_position_tolerance_ = read_double("MPC.StartConnector.position_tolerance", 0.05);
+  connector_yaw_tolerance_ = read_double("MPC.StartConnector.yaw_tolerance", 0.10);
+  if (!std::isfinite(connector_position_tolerance_) || connector_position_tolerance_ <= 0.0 ||
+    !std::isfinite(connector_yaw_tolerance_) || connector_yaw_tolerance_ <= 0.0)
+  {
+    throw std::invalid_argument("StartConnector tolerances must be positive and finite");
+  }
+  connector_subscription_ = node->create_subscription<limo_interfaces::msg::StartConnector>(
+    node->get_parameter(connector_parameter + "topic").as_string(),
+    rclcpp::QoS(1).reliable().transient_local(),
+    [this](const limo_interfaces::msg::StartConnector::SharedPtr metadata) {
+      std::lock_guard<std::mutex> lock(connector_mutex_);
+      connector_gate_.setMetadata(*metadata);
+    });
   resetPrediction();
 }
 
@@ -122,8 +145,45 @@ std::int64_t AckermannMPCController::controlTimeNs() const
 
 void AckermannMPCController::setPlan(const nav_msgs::msg::Path & path)
 {
+  std::lock_guard<std::mutex> lock(connector_mutex_);
+  complete_plan_ = path;
+  connector_gate_.setPlan(path);
+  connector_active_ = false;
   resetPrediction();
-  DWBLocalPlanner::setPlan(path);
+  DWBLocalPlanner::setPlan(connector_gate_.normalPlan());
+}
+
+geometry_msgs::msg::TwistStamped AckermannMPCController::computeVelocityCommands(
+  const geometry_msgs::msg::PoseStamped & pose, const geometry_msgs::msg::Twist & velocity)
+{
+  std::lock_guard<std::mutex> lock(connector_mutex_);
+  bool active = false;
+  if (connector_enabled_ && !complete_plan_.poses.empty()) {
+    auto global_pose = pose;
+    if (pose.header.frame_id != complete_plan_.header.frame_id) {
+      const auto transform = tf_->lookupTransform(
+        complete_plan_.header.frame_id, pose.header.frame_id, tf2::TimePointZero);
+      tf2::doTransform(pose, global_pose, transform);
+    }
+    active = connector_gate_.update(
+      global_pose.pose, connector_position_tolerance_, connector_yaw_tolerance_);
+  }
+  if (active != connector_active_) {
+    DWBLocalPlanner::setPlan(active ? connector_gate_.prefix() : connector_gate_.normalPlan());
+    connector_active_ = active;
+    RCLCPP_INFO(node_->get_logger(), "%s", active ?
+      "Initial Dubins connector: obstacle collision checks DISABLED" :
+      "Initial connector finished: normal obstacle collision checks restored");
+  }
+  for (const auto & critic : critics_) {
+    if (auto obstacle = std::dynamic_pointer_cast<MppiObstacleCritic>(critic)) {
+      obstacle->setStartConnector(active);
+    }
+    if (auto path = std::dynamic_pointer_cast<MppiPathCritic>(critic)) {
+      path->setStartConnector(active);
+    }
+  }
+  return DWBLocalPlanner::computeVelocityCommands(pose, velocity);
 }
 
 void AckermannMPCController::deactivate()
@@ -135,6 +195,10 @@ void AckermannMPCController::deactivate()
 
 void AckermannMPCController::cleanup()
 {
+  connector_subscription_.reset();
+  complete_plan_ = nav_msgs::msg::Path();
+  connector_gate_ = StartConnectorGate();
+  connector_active_ = false;
   debug_publisher_.reset();
   resetPrediction();
   mpc_.reset();

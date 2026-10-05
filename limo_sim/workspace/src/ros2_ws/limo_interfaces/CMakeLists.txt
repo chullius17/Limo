@@ -29,6 +29,8 @@ find_package(std_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/MpcCandidate.msg"
   "msg/MpcDebug.msg"
+  "msg/StartConnector.msg"
+  "srv/ComputePathWithStart.srv"
   "srv/GetSequencePlan.srv"
   "srv/GenerateControlPlot.srv"
   "srv/MissionCommand.srv"

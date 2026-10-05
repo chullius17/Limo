@@ -28,7 +28,7 @@ planner_server:
 
     GridBased:
       # Foxy's SE2 SMAC plugin implements Hybrid A* with Dubins primitives.
-      plugin: "smac_planner/SmacPlanner"
+      plugin: "limo_smac_planner/ExplicitStartPlanner"
 
       # Keep the map at 5 cm: at 10 cm, the small LIMO footprint and narrow
       # passages would be represented by too few cells.
@@ -62,6 +62,10 @@ planner_server:
       # operational radius so every planned primitive remains comfortably
       # inside the steering capability of the physical robot.
       minimum_turning_radius: 0.7
+      # Only the real-to-virtual start prefix is a collision-unchecked Dubins curve.
+      explicit_start_service: /compute_path_with_start
+      start_connector_sample_step: 0.02
+      start_connector_max_length: 2.0
 
       change_penalty: 0.0
       non_straight_penalty: 1.15
@@ -141,6 +145,9 @@ rviz_goal_bridge:
   ros__parameters:
     use_sim_time: false
     planner_id: GridBased
+    use_explicit_start_service: true
+    explicit_start_service: /compute_path_with_start
+    start_connector_topic: /limo/planning/start_connector
     costmap_topic: /global_costmap/costmap
     adjusted_goal_topic: /adjusted_goal_pose
     adjusted_start_topic: /adjusted_start_pose

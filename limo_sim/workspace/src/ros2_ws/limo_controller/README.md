@@ -56,6 +56,20 @@ costs remain active and footprint collisions remain hard rejections at every
 predicted pose. These parameters are read when configuring
 the controller; restart the application after changing the installed YAML.
 
+Both profiles enable `FollowPath.MPC.StartConnector.ignore_obstacles`. This
+applies only to the initial Dubins prefix declared by the planner on
+`/limo/planning/start_connector`, with metadata matching the entire executed
+path. During this prefix all obstacle costs and footprint collision checks are
+bypassed, obstacle detours are disabled, and the controller follows only the
+Dubins reference. The exception ends after progress along the prefix and arrival
+within `position_tolerance: 0.05` m and `yaw_tolerance: 0.10` rad of its endpoint;
+it cannot reactivate by returning near that point. The rest of the path retains
+normal collision checks. Setting `ignore_obstacles: false` restores ordinary
+collision handling on the prefix too. Chassis, actuator and command-timeout
+checks remain in effect. Rebuild `limo_interfaces`, `limo_smac_planner`,
+`limo_dwb_critics`, `traj_package` and `limo_controller`, source the install and
+restart the application to use this feature.
+
 ```bash
 ros2 launch limo_controller control.launch.py robot_model:=real
 ros2 launch limo_controller control.launch.py robot_model:=sim

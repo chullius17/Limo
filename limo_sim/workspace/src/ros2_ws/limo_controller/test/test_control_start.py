@@ -70,7 +70,7 @@ def test_execution_path_uses_latest_tf_without_mutating_stored_path():
     execution = PathExecutor._path_for_execution(path)
 
     assert execution is not path
-    assert execution.header.stamp.sec == 0
+    assert execution.header.stamp.sec == 10
     assert execution.header.stamp.nanosec == 0
     assert execution.poses[0].header.stamp.sec == 0
     assert execution.poses[0].header.stamp.nanosec == 0
@@ -135,7 +135,7 @@ def test_receiving_a_path_waits_for_start_and_sends_only_once(executor):
     sent = executor.follow_path_client.send_goal_async.call_args[0][0].path
     assert len(sent.poses) == 1
     assert sent.header.frame_id == 'map'
-    assert sent.header.stamp.sec == 0
+    assert sent.header.stamp.sec == 42
     assert path.header.stamp.sec == 42
     assert executor.control_path.header.stamp.sec == 42
 

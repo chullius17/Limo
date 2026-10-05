@@ -88,6 +88,9 @@ if(BUILD_TESTING)
     LIMO_MPC_SIM_PARAMS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../limo_controller/config/control_sim.yaml"
     LIMO_MPC_SNAPSHOT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/online_obstacle_costmap.txt")
 
+  ament_add_gtest(test_start_connector test/test_start_connector.cpp)
+  target_link_libraries(test_start_connector ${PROJECT_NAME})
+
   ament_add_gtest(test_obstacle_guidance test/test_obstacle_guidance.cpp)
   target_link_libraries(test_obstacle_guidance ${PROJECT_NAME})
 endif()
