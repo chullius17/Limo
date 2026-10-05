@@ -111,6 +111,24 @@ def test_mpc_preview_options_are_forwarded(monkeypatch):
     assert compose(monkeypatch, 'real')[2]['arguments']['start_mpc_preview'] == 'true'
 
 
+@pytest.mark.parametrize('profile', ['sim', 'real'])
+def test_mpc_preview_yaml_resolves_despite_empty_parent_argument(monkeypatch, profile):
+    from nav2_common.launch import RewrittenYaml
+
+    controller = compose(monkeypatch, profile)[2]
+    module = load_subsystem(controller['package'], controller['launch'])
+    context = launch_context(module, {
+        'mpc_preview_params_file': '', **controller['arguments']})
+    selected = context.launch_configurations['mpc_preview_params_file']
+    assert selected == str(PACKAGES / 'limo_controller/config/mpc_preview_sim.yaml')
+    rewritten = RewrittenYaml(
+        source_file=selected, root_key='',
+        param_rewrites={'use_sim_time': controller['arguments']['use_sim_time']},
+        convert_types=True)
+    config = yaml.safe_load(Path(rewritten.perform(context)).read_text())
+    assert config['mpc_preview']['ros__parameters']['use_sim_time'] is (profile == 'sim')
+
+
 def test_invalid_control_gui_setting_fails(monkeypatch):
     with pytest.raises(ValueError):
         compose(monkeypatch, 'sim', start_control_gui='invalid')

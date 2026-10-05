@@ -192,7 +192,7 @@ local_costmap:
       height: 5
       resolution: 0.05
       footprint: "[[-0.161, -0.110], [-0.161, 0.110], [0.161, 0.110], [0.161, -0.110]]"
-      footprint_padding: 0.0
+      footprint_padding: 0.01  # Add 2 cm per side to the controller collision footprint.
       track_unknown_space: false
       always_send_full_costmap: false
       trinary_costmap: false

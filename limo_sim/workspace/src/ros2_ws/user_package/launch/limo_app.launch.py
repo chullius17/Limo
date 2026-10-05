@@ -87,8 +87,12 @@ def _launch_app(context):
             context, 'start_mpc_preview', True)).lower(),
     }
     preview_file = LaunchConfiguration('mpc_preview_params_file').perform(context)
-    if preview_file:
-        controller_arguments['mpc_preview_params_file'] = os.path.expanduser(preview_file)
+    # Forward a concrete default: the parent's empty value would otherwise
+    # suppress the controller launch's default in the shared launch context.
+    controller_arguments['mpc_preview_params_file'] = (
+        os.path.expanduser(preview_file) if preview_file else os.path.join(
+            get_package_share_directory('limo_controller'),
+            'config', 'mpc_preview_sim.yaml'))
     for name, arguments, package, prefix in (
             ('planner_params_file', trajectory_arguments, 'traj_package', 'traj'),
             ('controller_params_file', controller_arguments, 'limo_controller', 'control')):
