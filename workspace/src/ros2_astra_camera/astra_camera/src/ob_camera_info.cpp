@@ -11,7 +11,6 @@
 /**************************************************************************/
 
 #include <rclcpp/rclcpp.hpp>
-#include <nlohmann/json.hpp>
 #include <thread>
 
 #include "astra_camera/utils.h"

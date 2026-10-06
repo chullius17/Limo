@@ -101,13 +101,16 @@ application user whose UID/GID matches the host. Its instructions are in the
 The ROS packages were moved into the standard Colcon source directory:
 
 ```text
-limo_sim/
+Limo/
 ├── ros2_foxy_dev/
-│   ├── Dockerfile
-│   ├── build.sh
-│   ├── run.sh
-│   ├── start_limo_docker.sh
-│   └── lab/
+│   ├── asus/
+│   │   ├── Dockerfile
+│   │   ├── build.sh
+│   │   ├── run.sh
+│   │   └── start_limo_docker.sh
+│   ├── lab/
+│   ├── lab_wsl/
+│   └── limo/
 └── workspace/
     ├── src/
     │   ├── custom_start/
@@ -384,7 +387,7 @@ With Docker, NVIDIA support, and X11 configured on the host, start the original
 development container from the repository root:
 
 ```bash
-cd limo_sim/ros2_foxy_dev
+cd ros2_foxy_dev/asus
 ./build.sh
 ./start_limo_docker.sh
 ```
@@ -486,14 +489,3 @@ validation:
   physical validation described in the reports.
 - The camera geometry report covers depth/RGB registration and plane estimation;
   its application implementation is under `ros2_ws/`, outside this history.
-
-## Supporting reports
-
-- [Original Foxy and Gazebo setup report](../../reports/report_ros2_foxy_gazebo.txt).
-- [DaBai U3 camera setup on the Jetson](../../../AVVIO_CAMERA_DABAI_U3.md).
-- [Physical Ackermann command-mode configuration](../../../CONFIGURAZIONE_MODALITA_ACKERMANN.md).
-- [Real-robot odometry, EKF, and steering diagnosis](README_odometria_reale.md).
-- [Real-robot lidar and mapping diagnosis](README_mapping_reale.md).
-- [Real camera geometry and depth/RGB registration diagnosis](README_camera_reale.md).
-- [Launch configuration reference](README_configurazione.md).
-- [Laboratory Docker setup](../../../ros2_foxy_dev/lab/README.md).

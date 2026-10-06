@@ -62,7 +62,7 @@ Copy the **complete project**, including both `workspace` and `ros2_foxy_dev`,
 into the Ubuntu filesystem. Use this layout:
 
 ```text
-/home/YOUR_LINUX_USERNAME/limo_foxy/limo_sim/
+/home/YOUR_LINUX_USERNAME/Limo/
   workspace/
     src/
   ros2_foxy_dev/
@@ -77,7 +77,7 @@ You can use Windows File Explorer. Enter this address, replacing
 \\wsl.localhost\Ubuntu-20.04\home\YOUR_LINUX_USERNAME
 ```
 
-Create the `limo_foxy` folder and copy the `limo_sim` project into it.
+Copy the project into a directory named `Limo` in your Linux home directory.
 Using the Linux filesystem helps workspace build performance.
 
 ## 4. Check the setup
@@ -85,7 +85,7 @@ Using the Linux filesystem helps workspace build performance.
 Open **Ubuntu 20.04**, then run:
 
 ```bash
-cd ~/limo_foxy/limo_sim/ros2_foxy_dev/lab_wsl
+cd ~/Limo/ros2_foxy_dev/lab_wsl
 bash setup-host.sh
 ```
 

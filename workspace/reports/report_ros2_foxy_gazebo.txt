@@ -12,7 +12,7 @@ il workspace ROS 2 Humble funzionante.
 ------------------
 È stata creata la seguente struttura:
 
-~/limo_foxy/limo_sim/
+~/Limo/
 |-- ros2_foxy_dev/
 |   |-- Dockerfile
 |   |-- build.sh
@@ -118,7 +118,7 @@ Il launch avvia:
 ---------------------
 La radice Git del progetto Foxy è:
 
-~/limo_foxy
+~/Limo
 
 Il repository utilizza lo stesso remote del progetto Humble:
 
@@ -128,7 +128,7 @@ https://github.com/chullius17/Limo_humble.git
 
 La precedente cronologia del clone AgileX è stata conservata in:
 
-~/limo_foxy/.git-backups/limo_ros2-agilex.git
+~/Limo/.git-backups/limo_ros2-agilex.git
 
 Il file .gitignore esclude build, install, log e .git-backups.
 
@@ -139,7 +139,7 @@ Sono stati aggiunti i seguenti alias:
 
 start_foxy: avvia il container limo_sim;
 ter_foxy: apre un secondo terminale nel container;
-per_foxy: ripristina la proprietà dei file sotto ~/limo_foxy.
+per_foxy: ripristina la proprietà dei file sotto ~/Limo.
 
 
 7. Verifiche effettuate

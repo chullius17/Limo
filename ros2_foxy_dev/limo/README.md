@@ -25,7 +25,7 @@ workspace; it is an older ROS distribution that is out of support.
 Copy the complete project onto the robot, for example to:
 
 ```text
-~/limo_foxy/limo_sim/
+~/Limo/
   workspace/
     src/
   ros2_foxy_dev/
@@ -36,7 +36,7 @@ Use the normal Linux account that will run the robot. Do not run the setup
 scripts as root; they request `sudo` for system changes when needed.
 
 ```bash
-cd ~/limo_foxy/limo_sim/ros2_foxy_dev/limo
+cd ~/Limo/ros2_foxy_dev/limo
 ```
 
 ## 2. Install system dependencies
@@ -102,35 +102,169 @@ access is granted to the `video` group for Orbbec vendor ID `2bc5`.
 ## 4. Restore the camera runtime
 
 The Astra source driver needs the **manufacturer's Orbbec OpenNI2 runtime**.
-Those binary files are currently missing from this checkout and are not
-provided by apt. Obtain the matching SDK from the manufacturer or the robot's
-known working installation.
+The required binaries are missing from this checkout. The procedure below
+restores the ARM64 runtime from the
+[official Orbbec ROS 2 camera repository](https://github.com/orbbec/ros2_astra_camera/tree/master/astra_camera/openni2_redist/arm64).
+Alternatively, obtain a matching runtime from the manufacturer's SDK or the
+robot's known working installation.
 
-Place the runtime in the original source package, matching the robot CPU:
+### Check an existing installation
+
+On the robot, look for an existing OpenNI2 library and camera drivers:
+
+```bash
+find /home/jetson /opt /usr/local /usr/lib \
+  -name 'libOpenNI2.so*' 2>/dev/null
+find /usr/lib /usr/local /opt /home/jetson \
+  -path '*/OpenNI2/Drivers/*' -type f 2>/dev/null
+```
+
+Replace `/home/jetson` if your robot account has a different home directory.
+Finding `/usr/lib/libOpenNI2.so` alone is not enough. During setup on the
+Jetson Nano, the system driver directory contained `libPSLink.so.0`,
+`libOniFile.so.0`, `libDummyDevice.so.0` and `libPS1080.so.0`, but no
+`liborbbec.so`. That installation did not provide the Orbbec driver needed
+for this procedure.
+
+### Download and copy the ARM64 runtime
+
+Check the robot architecture:
+
+```bash
+dpkg --print-architecture
+```
+
+**Continue with the following commands only if the result is `arm64`.**
+Download the official repository into a separate directory, without `sudo`:
+
+```bash
+git clone --depth 1 --branch master \
+  https://github.com/orbbec/ros2_astra_camera.git \
+  ~/orbbec-astra-runtime
+```
+
+If `~/orbbec-astra-runtime` already contains this checkout, reuse it instead
+of cloning into the same directory again. The commands below assume the
+project is in `~/Limo`; adjust that path if needed.
+
+```bash
+cd ~/Limo/workspace/src/ros2_astra_camera/astra_camera
+```
+
+If `cd` succeeds, copy the complete runtime directory, including its
+configuration files:
+
+```bash
+mkdir -p openni2_redist/arm64
+cp -a ~/orbbec-astra-runtime/astra_camera/openni2_redist/arm64/. \
+  openni2_redist/arm64/
+```
+
+The runtime belongs in the original source package, matching the robot CPU:
 
 | Robot architecture | Required source directory |
 | --- | --- |
 | `arm64` | `workspace/src/ros2_astra_camera/astra_camera/openni2_redist/arm64/` |
 | `amd64` | `workspace/src/ros2_astra_camera/astra_camera/openni2_redist/x64/` |
 
-That directory must include at least:
+The ARM64 directory should contain:
 
 ```text
-libOpenNI2.so
-OpenNI2/
-  Drivers/
-    ... manufacturer's driver libraries (.so)
+openni2_redist/arm64/
+  libOpenNI2.so
+  OpenNI.ini
+  OpenNI2/
+    Drivers/
+      liborbbec.so
+      libOniFile.so
+      orbbec.ini
+      OniFile.ini
 ```
 
-Copy the complete matching runtime directory, including its configuration
-files. Use binaries compatible with the robot's architecture and Ubuntu 20.04.
+For `amd64`, obtain the matching `x64` runtime instead of copying ARM64 files.
+Use binaries compatible with the robot's architecture and Ubuntu 20.04.
 The generic Ubuntu OpenNI2 library is not a replacement for the bundled Orbbec
 driver expected by this package.
+
+### Verify the runtime before building
+
+From the same `astra_camera` directory, run:
+
+```bash
+file openni2_redist/arm64/libOpenNI2.so \
+  openni2_redist/arm64/OpenNI2/Drivers/liborbbec.so
+ldd openni2_redist/arm64/libOpenNI2.so
+ldd openni2_redist/arm64/OpenNI2/Drivers/liborbbec.so
+```
+
+`file` should identify both libraries as ARM aarch64 ELF binaries. The `ldd`
+output must not contain `not found` or version errors. Resolve any missing
+dependencies before building.
+
+The `ldd` check for `liborbbec.so` succeeded on the Jetson Nano during this
+setup: all listed dependencies resolved through the system's AArch64
+libraries. This confirms that the driver library's dependencies are
+available; camera detection and image streaming still need to be checked
+after launching ROS.
+
+Return to the setup directory before following step 5:
+
+```bash
+cd ~/Limo/ros2_foxy_dev/limo
+```
 
 If the camera files are not available yet, use the camera-free build in the
 next step. Chassis, lidar and localization can still be prepared independently.
 
-## 5. Build the physical robot workspace
+### Moving an existing checkout to the new layout
+
+The project now uses `~/Limo/workspace` and `~/Limo/ros2_foxy_dev`, without an
+intermediate `limo_sim` directory. If the robot still has the old layout, run
+from its home directory, with the launch and build processes stopped:
+
+```bash
+cd ~
+```
+
+Verify that `~/Limo` does not already exist and that the old project contains
+both `Limo_humble/limo_sim/workspace` and
+`Limo_humble/limo_sim/ros2_foxy_dev`. Then run:
+
+```bash
+mv -T Limo_humble Limo
+mv -n Limo/limo_sim/workspace Limo/
+mv -n Limo/limo_sim/ros2_foxy_dev Limo/
+rmdir Limo/limo_sim
+```
+
+`rmdir` only succeeds if the old directory is empty. If other files remain,
+inspect and move them to the project root before retrying.
+
+If `workspace/.limo` was built before the move, preserve it under a new name
+before rebuilding. Its CMake caches and installed files refer to the old
+absolute paths:
+
+```bash
+cd ~/Limo
+mv -T -n workspace/.limo workspace/.limo-before-layout-change
+cd ros2_foxy_dev/limo
+```
+
+Run the archive command only if `.limo` exists and
+`.limo-before-layout-change` does not. The local repository migration already
+archives the old profile. Continue with step 5 to build in the new location.
+
+## 5. Build the physical robot workspace for the first time
+
+Before building, remove an unused JSON include from the original camera
+source to avoid a missing-header error. Run from `ros2_foxy_dev/limo`:
+
+```bash
+sed -i '/^#include <nlohmann\/json\.hpp>$/d' \
+  ../../workspace/src/ros2_astra_camera/astra_camera/src/ob_camera_info.cpp
+```
+
+This command is safe to repeat if the include has already been removed.
 
 With the camera runtime restored:
 
@@ -167,7 +301,7 @@ usage; for a lower-memory robot, use:
 BUILD_JOBS=1 bash build-robot.sh
 ```
 
-## 6. Launch the LIMO
+## 6. Launch the LIMO for the first time
 
 From `ros2_foxy_dev/limo`, run:
 
@@ -220,7 +354,7 @@ Open a second terminal on the robot and load the same environment:
 
 ```bash
 source /opt/ros/foxy/setup.bash
-source ~/limo_foxy/limo_sim/workspace/.limo/install/setup.bash
+source ~/Limo/workspace/.limo/install/setup.bash
 ros2 topic list
 ```
 

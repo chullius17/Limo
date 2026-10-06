@@ -38,7 +38,7 @@ Not part of this immediate fix, but flagged: `astra_camera_node` (51.7%) and `de
 
 ## Files touched (for A + B)
 
-- `limo_sim/workspace/src/ros2_ws/simple_pipeline/base_cv_block/cv_package/cv_package/simple_boundaries.py`:
+- `workspace/src/ros2_ws/simple_pipeline/base_cv_block/cv_package/cv_package/simple_boundaries.py`:
   - `convert_depth()` (currently `:285-297`) and `fallback_depth_callback()` (`:318-353`) — zero-copy ingress, matching `depth_correction.py::_view_source`'s pattern.
   - `publish_pointcloud()`'s `8a.3` math section (`:645-674` post-instrumentation) — fused/in-place array ops.
 

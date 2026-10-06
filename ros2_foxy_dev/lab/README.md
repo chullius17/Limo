@@ -6,7 +6,7 @@ RTX 5060 8 GB e ROS 2 Foxy isolato in Ubuntu 20.04.
 ## Prima installazione sull'host
 
 ```bash
-cd ~/limo_foxy/limo_sim/ros2_foxy_dev/lab
+cd ~/Limo/ros2_foxy_dev/lab
 ./setup-host.sh
 ```
 
