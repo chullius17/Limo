@@ -285,7 +285,9 @@ The script first checks required files. It then:
 3. Removes simulator dependencies and simulator launch resources from the
    copied `custom_start` package.
 4. Compiles and installs the C++ YDLidar SDK into `workspace/.limo/sdk-install`.
-5. Compiles the selected ROS packages with colcon, using that SDK.
+5. Compiles the selected ROS packages with `colcon build --symlink-install`,
+   using that SDK.
+6. Configures the ROS environment and robot aliases in your `~/.bashrc`.
 
 The SDK is built before the lidar driver because the original driver manifest
 does not declare that build dependency. The SDK is installed privately, without
@@ -300,6 +302,47 @@ usage; for a lower-memory robot, use:
 ```bash
 BUILD_JOBS=1 bash build-robot.sh
 ```
+
+### Bash environment and aliases
+
+After a successful build, `build-robot.sh` runs `setup-shell.sh`. This adds a
+managed block to your `~/.bashrc` that loads `/opt/ros/foxy/setup.bash`, then
+`workspace/.limo/install/setup.bash` when that file exists, and finally
+`aliases/limo.bash`. The script replaces its own block when rerun, without
+duplicating it or changing other shell settings. The original `.bashrc` is
+saved once as `~/.bashrc.limo-backup` before the first change.
+
+To configure the shell before the first build, or refresh the paths after
+moving the project, run from `ros2_foxy_dev/limo`:
+
+```bash
+bash setup-shell.sh
+```
+
+Open a new terminal, or load the configuration into the current one:
+
+```bash
+source ~/.bashrc
+```
+
+| Alias | Action |
+| --- | --- |
+| `cb_limo` | Run the robot build wrapper with `colcon build --symlink-install` |
+| `wsp` | Change to the project's `workspace` directory |
+| `start` | Launch the real robot through `launch-robot.sh` |
+
+The build alias prepares the physical packages and YDLidar SDK before colcon.
+It builds the robot profile under `workspace/.limo`; the directory selected by
+`wsp` is the original workspace containing `src`. Build and launch options
+can be passed after the alias, for example:
+
+```bash
+BUILD_JOBS=1 cb_limo --without-camera
+start use_camera:=false use_lidar:=false
+```
+
+After rebuilding, reload `~/.bashrc` or open a new terminal to load the updated
+workspace environment. `start` also loads that environment itself.
 
 ## 6. Launch the LIMO for the first time
 
@@ -394,6 +437,8 @@ Use the same value in the second terminal before inspecting topics.
 | `99-limo-hardware.rules` | Chassis, lidar and camera permissions |
 | `prepare-workspace.py` | Create robot-only copies of manifests or sources |
 | `build-robot.sh` | Build the SDK and physical robot packages |
+| `setup-shell.sh` | Configure Foxy, the robot install and aliases in `.bashrc` |
+| `aliases/limo.bash` | Define `cb_limo`, `wsp` and `start` |
 | `launch-robot.sh` | Load the environment and start the real robot launch |
 
 The five directories in `workspace/src/ros2_ws` currently contain Python caches

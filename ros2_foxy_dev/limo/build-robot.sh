@@ -55,8 +55,10 @@ cmake --install "$PROFILE_DIR/sdk-build"
 export CMAKE_PREFIX_PATH="$PROFILE_DIR/sdk-install${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 cd "$PROFILE_DIR"
 colcon --log-base "$PROFILE_DIR/log" build \
+  --symlink-install \
   --base-paths "$PROFILE_DIR/src" \
   --build-base "$PROFILE_DIR/build" --install-base "$PROFILE_DIR/install" \
   --parallel-workers "${BUILD_JOBS:-2}" --cmake-args -DBUILD_TESTING=OFF
 printf '%s\n' "$with_camera" > "$PROFILE_DIR/camera-enabled"
+bash "$SCRIPT_DIR/setup-shell.sh"
 echo "Robot workspace built. Start it with bash launch-robot.sh."
