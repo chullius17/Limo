@@ -19,7 +19,7 @@ import sys
 
 script_dir = Path(sys.argv[1]).resolve()
 bashrc = Path(sys.argv[2]).expanduser()
-install_setup = (script_dir / "../../workspace/.limo/install/setup.bash").resolve()
+install_setup = (script_dir / "../../workspace/install/setup.bash").resolve()
 aliases = script_dir / "aliases/limo.bash"
 begin = "# >>> LIMO shell setup >>>"
 end = "# <<< LIMO shell setup <<<"

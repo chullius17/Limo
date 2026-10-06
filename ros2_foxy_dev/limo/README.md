@@ -248,24 +248,24 @@ bash build-robot.sh --without-camera
 
 The script first checks required files. It then:
 
-1. Copies the physical packages into `workspace/.limo/src`.
-2. Enables the copied sensor drivers by omitting their `COLCON_IGNORE` files.
-3. Removes simulator dependencies and simulator launch resources from the
-   copied `custom_start` package.
-4. Compiles and installs the C++ YDLidar SDK into `workspace/.limo/sdk-install`.
-5. Compiles the selected ROS packages with `colcon build --symlink-install`,
-   using that SDK.
-6. Configures the ROS environment and robot aliases in your `~/.bashrc`.
+1. Checks the physical packages in the original `workspace/src`.
+2. Enables those packages by removing any `COLCON_IGNORE` files they contain.
+3. Compiles the C++ YDLidar SDK in `workspace/build/ydlidar_sdk` and installs it
+   into `workspace/install/ydlidar_sdk`.
+4. Compiles the selected ROS packages directly from their original source
+   directories with `colcon build --symlink-install`, using that SDK.
+5. Configures the ROS environment and robot aliases in your `~/.bashrc`.
 
 The SDK is built before the lidar driver because the original driver manifest
 does not declare that build dependency. The SDK is installed privately, without
 replacing any existing system installation.
 
-Original sources and `COLCON_IGNORE` files are preserved. Build outputs are in
-`workspace/.limo`, separate from the existing lab and WSL build directories.
-Edit files in the original `workspace/src`, then rerun the build to update the
-robot's generated workspace. The default build uses two workers to limit RAM
-usage; for a lower-memory robot, use:
+Build outputs use the standard `workspace/build`, `workspace/install` and
+`workspace/log` directories. The script selects only the physical packages;
+simulator packages are excluded from discovery. Source files and manifests
+are used directly, without creating package copies. Edit files in
+`workspace/src`, then rerun the build. The default build uses two workers to
+limit RAM usage; for a lower-memory robot, use:
 
 ```bash
 BUILD_JOBS=1 bash build-robot.sh
@@ -275,7 +275,7 @@ BUILD_JOBS=1 bash build-robot.sh
 
 After a successful build, `build-robot.sh` runs `setup-shell.sh`. This adds a
 managed block to your `~/.bashrc` that loads `/opt/ros/foxy/setup.bash`, then
-`workspace/.limo/install/setup.bash` when that file exists, and finally
+`workspace/install/setup.bash` when that file exists, and finally
 `aliases/limo.bash`. The script replaces its own block when rerun, without
 duplicating it or changing other shell settings. The original `.bashrc` is
 saved once as `~/.bashrc.limo-backup` before the first change.
@@ -299,10 +299,10 @@ source ~/.bashrc
 | `wsp` | Change to the project's `workspace` directory |
 | `start` | Launch the real robot through `launch-robot.sh` |
 
-The build alias prepares the physical packages and YDLidar SDK before colcon.
-It builds the robot profile under `workspace/.limo`; the directory selected by
-`wsp` is the original workspace containing `src`. Build and launch options
-can be passed after the alias, for example:
+The build alias compiles the YDLidar SDK before colcon, then builds the physical
+packages directly in `workspace`. The directory selected by `wsp` contains
+`src`, `build`, `install` and `log`. Build and launch options can be passed
+after the alias, for example:
 
 ```bash
 BUILD_JOBS=1 cb_limo --without-camera
@@ -365,7 +365,7 @@ Open a second terminal on the robot and load the same environment:
 
 ```bash
 source /opt/ros/foxy/setup.bash
-source ~/Limo/workspace/.limo/install/setup.bash
+source ~/Limo/workspace/install/setup.bash
 ros2 topic list
 ```
 
@@ -414,7 +414,7 @@ Use the same value in the second terminal before inspecting topics.
 | `no-gazebo.pref` | Block new Gazebo packages during dependency installation |
 | `setup-devices.sh` | Install hardware rules and configure user groups |
 | `99-limo-hardware.rules` | Chassis, lidar and camera permissions |
-| `prepare-workspace.py` | Create robot-only copies of manifests or sources |
+| `prepare-workspace.py` | Create temporary robot-only manifests for dependency installation |
 | `build-robot.sh` | Build the SDK and physical robot packages |
 | `setup-shell.sh` | Configure Foxy, the robot install and aliases in `.bashrc` |
 | `aliases/limo.bash` | Define `cb_limo`, `wsp` and `start` |
