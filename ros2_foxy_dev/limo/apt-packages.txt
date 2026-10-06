@@ -38,6 +38,7 @@ ros-foxy-teleop-twist-keyboard
 ros-foxy-twist-mux
 ros-foxy-rviz2
 ros-foxy-rqt-robot-steering
+ros-foxy-rqt-image-view
 ros-foxy-robot-state-publisher
 ros-foxy-joint-state-publisher
 ros-foxy-joint-state-publisher-gui

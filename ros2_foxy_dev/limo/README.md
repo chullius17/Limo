@@ -9,6 +9,11 @@ Run the commands below yourself on the robot, either in a local terminal or
 through SSH. The installation and hardware behavior have not been tested on
 the robot here; no installation or build was executed while preparing these files.
 
+## 0. Robot info 
+
+`NAME`:     jetson
+`PASSWORD`: jetson
+
 ## 1. Check the robot and copy the project
 
 Check the operating system and architecture:
@@ -58,6 +63,7 @@ Included components are:
 - Orbbec/Astra/Dabai camera dependencies: OpenCV, Eigen, USB, libuvc,
   glog/gflags, image transport, camera info manager, cv_bridge and TF helpers.
 - Nav2, SLAM Toolbox, Cartographer, teleop, twist mux and optional RViz tools.
+- `rqt_image_view` for viewing the camera image topics.
 - NumPy, OpenCV, SciPy and YAML for the available Python code.
 
 `custom_start` declares both simulator and robot dependencies in its original
@@ -215,44 +221,6 @@ cd ~/Limo/ros2_foxy_dev/limo
 
 If the camera files are not available yet, use the camera-free build in the
 next step. Chassis, lidar and localization can still be prepared independently.
-
-### Moving an existing checkout to the new layout
-
-The project now uses `~/Limo/workspace` and `~/Limo/ros2_foxy_dev`, without an
-intermediate `limo_sim` directory. If the robot still has the old layout, run
-from its home directory, with the launch and build processes stopped:
-
-```bash
-cd ~
-```
-
-Verify that `~/Limo` does not already exist and that the old project contains
-both `Limo_humble/limo_sim/workspace` and
-`Limo_humble/limo_sim/ros2_foxy_dev`. Then run:
-
-```bash
-mv -T Limo_humble Limo
-mv -n Limo/limo_sim/workspace Limo/
-mv -n Limo/limo_sim/ros2_foxy_dev Limo/
-rmdir Limo/limo_sim
-```
-
-`rmdir` only succeeds if the old directory is empty. If other files remain,
-inspect and move them to the project root before retrying.
-
-If `workspace/.limo` was built before the move, preserve it under a new name
-before rebuilding. Its CMake caches and installed files refer to the old
-absolute paths:
-
-```bash
-cd ~/Limo
-mv -T -n workspace/.limo workspace/.limo-before-layout-change
-cd ros2_foxy_dev/limo
-```
-
-Run the archive command only if `.limo` exists and
-`.limo-before-layout-change` does not. The local repository migration already
-archives the old profile. Continue with step 5 to build in the new location.
 
 ## 5. Build the physical robot workspace for the first time
 
@@ -413,6 +381,17 @@ ros2 topic hz /depth_camera/depth/image_raw
 ```
 
 Stop each topic check with Ctrl+C before starting the next one.
+
+To display an image topic, run from a local desktop terminal with the ROS
+environment loaded:
+
+```bash
+ros2 run rqt_image_view rqt_image_view
+```
+
+Select `/rgb/image_raw` or `/depth_camera/depth/image_raw` in the topic list.
+See the [rqt_image_view package documentation](https://index.ros.org/p/rqt_image_view/).
+
 The current camera profile disables point-cloud publication, so `/depth/points`
 is not expected by default. Nav2 and SLAM require their own launch commands and
 map/settings in addition to this hardware bringup.
