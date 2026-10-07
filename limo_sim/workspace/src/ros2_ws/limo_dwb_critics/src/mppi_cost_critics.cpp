@@ -8,6 +8,7 @@
 
 #include "dwb_core/exceptions.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
+#include "nav2_costmap_2d/footprint.hpp"
 #include "nav2_costmap_2d/footprint_collision_checker.hpp"
 #include "pluginlib/class_list_macros.hpp"
 
@@ -23,6 +24,63 @@ double distance(const geometry_msgs::msg::Pose2D & a, const geometry_msgs::msg::
 double angleError(double a, double b)
 {
   return std::abs(std::atan2(std::sin(a - b), std::cos(a - b)));
+}
+
+// The cell's circumscribed disk conservatively covers its occupied area.
+// This proximity test only selects detour scoring; it never rejects a rollout.
+bool footprintNearObstacle(
+  const geometry_msgs::msg::Pose2D & pose,
+  const nav2_costmap_2d::Footprint & footprint,
+  const nav2_costmap_2d::Costmap2D & map, double margin)
+{
+  if (margin <= 0.0 || footprint.size() < 3) {
+    return false;
+  }
+  nav2_costmap_2d::Footprint oriented;
+  nav2_costmap_2d::transformFootprint(pose.x, pose.y, pose.theta, footprint, oriented);
+  const double reach = margin + map.getResolution() * std::sqrt(0.5);
+  double min_x = oriented.front().x, max_x = min_x;
+  double min_y = oriented.front().y, max_y = min_y;
+  for (const auto & vertex : oriented) {
+    min_x = std::min(min_x, vertex.x);
+    max_x = std::max(max_x, vertex.x);
+    min_y = std::min(min_y, vertex.y);
+    max_y = std::max(max_y, vertex.y);
+  }
+  int first_x, first_y, last_x, last_y;
+  map.worldToMapEnforceBounds(min_x - reach, min_y - reach, first_x, first_y);
+  map.worldToMapEnforceBounds(max_x + reach, max_y + reach, last_x, last_y);
+  for (int y = first_y; y <= last_y; ++y) {
+    for (int x = first_x; x <= last_x; ++x) {
+      if (map.getCost(x, y) < nav2_costmap_2d::LETHAL_OBSTACLE) {
+        continue;
+      }
+      double wx, wy;
+      map.mapToWorld(x, y, wx, wy);
+      bool inside = false;
+      for (std::size_t i = 0, j = oriented.size() - 1; i < oriented.size(); j = i++) {
+        const auto & a = oriented[j];
+        const auto & b = oriented[i];
+        const double dx = b.x - a.x, dy = b.y - a.y;
+        const double length_squared = dx * dx + dy * dy;
+        const double fraction = length_squared > 0.0 ?
+          std::clamp(((wx - a.x) * dx + (wy - a.y) * dy) / length_squared, 0.0, 1.0) :
+          0.0;
+        const double ex = wx - a.x - fraction * dx;
+        const double ey = wy - a.y - fraction * dy;
+        if (ex * ex + ey * ey <= reach * reach) {
+          return true;
+        }
+        if ((a.y > wy) != (b.y > wy) && wx < a.x + (wy - a.y) * dx / dy) {
+          inside = !inside;
+        }
+      }
+      if (inside) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 double readNonnegative(
@@ -107,6 +165,7 @@ void MppiPathCritic::onInit()
   read("PathAngleCritic.threshold_to_consider", angle_distance_);
   read("PathAngleCritic.max_angle_to_furthest", max_angle_to_furthest_);
   read("ObstacleGuidance.clearance_margin", guidance_clearance_margin_);
+  read("ObstacleGuidance.trigger_margin", guidance_trigger_margin_);
   read("ObstacleGuidance.cost_weight", guidance_cost_weight_);
   read("ObstacleGuidance.heading_weight", guidance_heading_weight_);
   read("ObstacleGuidance.rejoin_distance", guidance_rejoin_distance_);
@@ -208,9 +267,11 @@ bool MppiPathCritic::prepare(
         point.y += ratio * (path_[i].y - previous.y);
         const double angle = path_[i].theta - previous.theta;
         point.theta += ratio * std::atan2(std::sin(angle), std::cos(angle));
-        // A valid planned footprint must not trigger a detour merely because
-        // its center lies inside the larger circular guidance margin.
-        if (!collision_free(point)) {
+        // A separate soft trigger anticipates close passes without enlarging
+        // the hard clearance grid or preventing escape from the proximity band.
+        if (!collision_free(point) ||
+          footprintNearObstacle(point, footprint, *costmap, guidance_trigger_margin_))
+        {
           blocked = true;
           break;
         }

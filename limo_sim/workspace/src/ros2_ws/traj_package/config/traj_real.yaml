@@ -129,9 +129,8 @@ global_costmap:
         source_topic: "/limo/map_package/online/map/combined_grid"
         obstacle_threshold: 10
         robot_width: 0.220
-        safety_margin: 0.05
-        # The plugin derives the second preferred distance as 1.5 * robot_width
-        # (0.33 m with the physical 0.220 m width).
+        safety_margin: 0.04  # First lane: 0.5 * 0.22 + 0.04 = 0.15 m.
+        second_lane_distance: 0.29  # Explicit center distance; 0.14 m between lanes.
         distance_tolerance: 0.02
         near_max_cost: 120
         # Strongly discourage crossing between the two preferred lanes while

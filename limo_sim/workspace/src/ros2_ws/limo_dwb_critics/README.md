@@ -127,9 +127,11 @@ horizon does not dilute command continuity. Steering-rate history resets with
 the warm start. Both are soft costs: collision rejection can still force a
 change or braking, and no command is filtered after trajectory evaluation.
 The simulation YAML uses local steering sampling deviation 0.10 rad; the real
-profile uses 0.14 rad with 128 candidates (66 constant-curvature seeds, braking,
-warm start and 60 sampled sequences). Both retain full-range seeds and broad
-exploration. The real profile doubles the reference obstacle weight to favor
+profile uses 0.20 rad. Simulation uses 768 candidates with 8 velocity samples
+and 15 curvature samples. The real profile uses 128 candidates: 6 x 11
+constant-curvature seeds, braking, warm start and 60 sampled sequences.
+Both retain full-range seeds and broad exploration. The real profile doubles
+the reference obstacle weight to favor
 local-costmap clearance relative to path tracking; other critic weights retain
 their reference values.
 
@@ -177,8 +179,20 @@ guarantee identical behavior; simulation and hardware tuning remain necessary.
 
 Both real and simulation profiles enable `MppiPath.ObstacleGuidance.enabled`.
 A detour starts when the oriented robot footprint collides along the local reference,
-including between path samples. A collision-free planned passage remains under
-ordinary path tracking. The path critic builds an eight-connected Dijkstra
+including between path samples. The real profile also uses `trigger_margin: 0.05`
+to anticipate a detour when an occupied or unknown cell comes within 5 cm of
+the padded, oriented reference footprint. Cell area is conservatively covered
+by a half-cell diagonal. This margin only selects detour scoring; it does not
+change collision rejection or the traversable guidance grid, so a valid
+trajectory can leave the proximity band. Simulation keeps the default
+`trigger_margin: 0.0` and preserves collision-free planned passages.
+The real planner's border-follow `safety_margin: 0.04` places its first lane
+at 0.15 m from obstacles, using the declared 0.22 m footprint width.
+`second_lane_distance: 0.29` sets the second lane independently, giving
+0.14 m between lane centers. If omitted, the second lane defaults to 1.5
+times `robot_width`, preserving the simulation profile. Controller footprint
+padding is configured separately.
+The path critic builds an eight-connected Dijkstra
 cost-to-go field through the current controller costmap. Occupied and unknown
 cells are excluded and diagonal corner cutting is forbidden. Lethal cells are
 expanded by the inscribed footprint radius plus `clearance_margin` (0.0 m in
@@ -205,15 +219,20 @@ Both profiles use a 5 x 5 m rolling costmap and a 2.50 m DWB prune distance to
 include the sides and exit of local obstacles. They omit DWB's `Oscillation`
 critic: its direction locks can prevent the steering reversal needed to exit
 a detour. MPC actuation constraints and command regularization remain active.
-Real control retains its physical geometry, padded footprint, 10 Hz frequency,
-128 sequences and 2.5 s horizon. Simulation uses 768 sequences and a 4 s horizon.
+Real control retains its physical geometry with 0.02 m footprint padding.
+Both profiles use a 4 s horizon: real control uses 128 sequences at 10 Hz
+and 40 steps of 0.10 s; simulation uses 768 sequences at 20 Hz and 80 steps
+of 0.05 s. The real local costmap
+updates at 10 Hz and publishes at 2 Hz, with mux commands at 20 Hz. Simulation
+uses 15 Hz, 4 Hz and 50 Hz respectively.
 The real obstacle weight remains 6.0. Both profiles disable ordinary obstacle
 repulsion below 0.15 m from the goal, retaining inflation in the costmap and
 critical/collision checks. Simulation's reverse/direction penalties are not
 applied to the real profile.
 The larger local map and guidance field add computation; verify the full real
-cycle fits within 100 ms on the Nano. The smaller real search budget can limit
-feasible detours even when guidance finds a route through free space.
+cycle fits within 100 ms on the Nano. The reduced real candidate budget
+leaves more computation time for perception and costmap updates. Runtime
+must still be checked with the application active and representative obstacles.
 
 This field is a local scoring aid, not a kinematic global planner. It requires
 a reachable free rejoin point inside the local map and enough room/time for
@@ -258,9 +277,10 @@ The `limo_controller` launch selects `config/control_real.yaml` or
 
 Before physical operation, validate closed-loop simulation on a straight path,
 tight curve, slalom, obstruction and goal approach. Measure lateral error,
-clearance, steering increments and controller execution time. At 20 Hz the
-whole control cycle must fit within 50 ms (simulation). The real Nano profile
-uses 10 Hz, 128 sequences and 25 steps of 0.10 s, retaining a 2.5 s horizon;
-its whole cycle must fit within 100 ms. A model-only benchmark does not
+clearance, steering increments and controller execution time. The whole
+control cycle must fit within 100 ms at 10 Hz on the real robot and within
+50 ms at 20 Hz in simulation. Hardware uses 128 sequences and simulation
+uses 768. Both retain a 4 s horizon, with 40 steps of 0.10 s on hardware
+and 80 steps of 0.05 s in simulation. A model-only benchmark does not
 include costmap or footprint scoring. Enable `publish_evaluation` temporarily
 for DWB candidate diagnostics (`MpcEffort` is the additional cost).

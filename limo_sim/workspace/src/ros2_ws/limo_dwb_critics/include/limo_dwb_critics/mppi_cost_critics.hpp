@@ -63,6 +63,7 @@ protected:
   double lookahead_distance_{1.25};
   double max_angle_to_furthest_{1.0};
   double guidance_clearance_margin_{0.0};
+  double guidance_trigger_margin_{0.0};
   double guidance_cost_weight_{2.0};
   double guidance_heading_weight_{2.0};
   double guidance_rejoin_distance_{0.50};

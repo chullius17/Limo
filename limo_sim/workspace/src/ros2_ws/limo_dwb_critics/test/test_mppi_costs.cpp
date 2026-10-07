@@ -50,7 +50,7 @@ protected:
       {"--ros-args", "--params-file", parameterFile()});
     node_ = std::make_shared<rclcpp_lifecycle::LifecycleNode>("controller_server", options);
     // Nav2's controller_server declares this before configuring its plugin;
-    // mirror that lifecycle here so the YAML's 10 Hz override is visible.
+    // mirror that lifecycle here so the YAML's frequency override is visible.
     node_->declare_parameter("controller_frequency", rclcpp::ParameterValue(20.0));
     costmap_ = std::make_shared<nav2_costmap_2d::Costmap2DROS>("mpc_test_costmap");
     costmap_->set_parameters({
@@ -279,7 +279,7 @@ INSTANTIATE_TEST_CASE_P(
   RealAndSimulation, MppiGuidanceProfilesTest,
   ::testing::Values(LIMO_MPC_PARAMS_PATH, LIMO_MPC_SIM_PARAMS_PATH));
 
-TEST_P(MppiGuidanceProfilesTest, PreservesCollisionFreePlannedPathBesideCube)
+TEST_P(MppiGuidanceProfilesTest, ProfileControlsEarlyDetourBesideCube)
 {
   addCube();
   auto path = pathBehindCube();
@@ -290,14 +290,64 @@ TEST_P(MppiGuidanceProfilesTest, PreservesCollisionFreePlannedPathBesideCube)
   initialize(critic, "MppiPath");
   ASSERT_TRUE(critic.prepare(
     pose(0.0, 0.66), nav_2d_msgs::msg::Twist2D(), pose(2.4, 0.66), path));
-  // Rectangle half-width is 0.11 m: this reference leaves 0.05 m of space.
-  // The old circumscribed-circle margin falsely replaced this valid plan.
-  EXPECT_FALSE(critic.detouring());
+  // A physically valid close pass triggers anticipation only in the real
+  // profile. Simulation retains collision-only activation (default margin 0).
+  EXPECT_EQ(critic.detouring(), std::string(GetParam()) == LIMO_MPC_PARAMS_PATH);
   dwb_msgs::msg::Trajectory2D stopped;
   stopped.poses = {pose(0, 0.66), pose(0, 0.66)};
   dwb_msgs::msg::Trajectory2D forward;
   forward.poses = {pose(0, 0.66), pose(0.5, 0.66)};
   EXPECT_LT(critic.scoreTrajectory(forward), critic.scoreTrajectory(stopped));
+}
+
+TEST_F(MppiCostsTest, EarlyDetourDoesNotRejectEscapeFromProximityBand)
+{
+  // Use cell centers: a boundary coordinate can round into the adjacent cell.
+  setCost(0.125, 0.175, nav2_costmap_2d::LETHAL_OBSTACLE);
+  InspectableMppiPathCritic critic;
+  limo_dwb_critics::MppiObstacleCritic obstacle;
+  initialize(critic, "MppiPath");
+  initialize(obstacle, "MppiObstacle");
+  const auto reference = straightPath();
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(),
+    reference.poses.back(), reference));
+  ASSERT_TRUE(critic.detouring());
+  ASSERT_TRUE(obstacle.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(),
+    reference.poses.back(), reference));
+  dwb_msgs::msg::Trajectory2D escape;
+  escape.poses = {pose(0, 0), pose(0.05, -0.03), pose(0.10, -0.10)};
+  EXPECT_TRUE(std::isfinite(critic.scoreTrajectory(escape)));
+  EXPECT_TRUE(std::isfinite(obstacle.scoreTrajectory(escape)));
+  dwb_msgs::msg::Trajectory2D collision;
+  collision.poses = {pose(0, 0), pose(0.125, 0.175)};
+  EXPECT_THROW(obstacle.scoreTrajectory(collision), dwb_core::IllegalTrajectoryException);
+}
+
+TEST_F(MppiCostsTest, EarlyDetourUsesOrientedFootprintAndIgnoresSoftCosts)
+{
+  auto reference = straightPath();
+  for (auto & point : reference.poses) {
+    point.y = point.x;
+    point.x = 0.0;
+    point.theta = std::acos(-1.0) / 2.0;
+  }
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  const auto prepare = [&]() {
+      return critic.prepare(reference.poses.front(), nav_2d_msgs::msg::Twist2D(),
+        reference.poses.back(), reference);
+    };
+  // After rotation the lateral half-width is 0.11 m, not 0.161 m.
+  setCost(0.20, 0.55, nav2_costmap_2d::LETHAL_OBSTACLE);
+  ASSERT_TRUE(prepare());
+  EXPECT_FALSE(critic.detouring());
+  clearMap();
+  setCost(0.15, 0.55, 120);  // Inflation alone does not trigger the proximity test.
+  ASSERT_TRUE(prepare());
+  EXPECT_FALSE(critic.detouring());
+  setCost(0.15, 0.55, nav2_costmap_2d::LETHAL_OBSTACLE);
+  ASSERT_TRUE(prepare());
+  EXPECT_TRUE(critic.detouring());
 }
 
 TEST_P(MppiGuidanceProfilesTest, FinishesDetourBeforeRestoringReferenceAlignment)
@@ -673,7 +723,8 @@ TEST_F(MppiCostsTest, RealYamlConfiguresAndRunsTheFullDwbControllerPipeline)
     std::chrono::steady_clock::now() - begin).count();
   RecordProperty("full_pipeline_ms", duration);
   EXPECT_GT(command.twist.linear.x, 0.0);
-  EXPECT_LE(command.twist.linear.x, 1.3 * 0.10 + 1e-12);
+  EXPECT_LE(command.twist.linear.x,
+    1.3 / node_->get_parameter("controller_frequency").as_double() + 1e-12);
   EXPECT_DOUBLE_EQ(command.twist.linear.y, 0.0);
   EXPECT_LE(std::abs(command.twist.angular.z), command.twist.linear.x / 0.462 + 1e-12);
   controller.deactivate();

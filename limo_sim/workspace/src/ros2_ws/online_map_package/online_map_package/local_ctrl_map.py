@@ -141,6 +141,7 @@ class LocalCtrlMap(Node):
             'tf_wait_timeout_sec': 0.20,
             'max_pending_clouds': 10,
             'persist_exterior_road': False,
+            'boardwalk_only': False,
             'exterior_road_cost': 0,
             'yellow_line_cost': 60,
             'soft_obstacle_cost': 30,
@@ -178,6 +179,8 @@ class LocalCtrlMap(Node):
             raise ValueError('exterior_road_cost must be an integer in [0, 100]')
         if not isinstance(self.persist_exterior_road, bool):
             raise ValueError('persist_exterior_road must be a boolean')
+        if not isinstance(self.boardwalk_only, bool):
+            raise ValueError('boardwalk_only must be a boolean')
         if not 0.0 < self.minimum_confidence <= 1.0:
             raise ValueError('minimum_confidence must be in (0, 1]')
         if (not math.isfinite(self.confidence_decay_per_sec)
@@ -209,7 +212,8 @@ class LocalCtrlMap(Node):
             self.maximum_points, self.minimum_confidence,
             self.confidence_decay_per_sec,
             self.yellow_decay_multiplier, self.voxel_size,
-            persist_exterior_road=self.persist_exterior_road)
+            persist_exterior_road=self.persist_exterior_road,
+            boardwalk_only=self.boardwalk_only)
         self.local_grid = LocalGrid(
             self.rectangle_length, self.rectangle_width,
             self.grid_resolution, self.inflation_radius,
@@ -266,7 +270,7 @@ class LocalCtrlMap(Node):
         self.get_logger().info(
             f'Local semantic grid: {self.input_topic} -> {self.output_topic} '
             f'and {self.output_cloud_topic}, '
-            f'live/grid_classes=1..6, '
+            f'boardwalk_only={self.boardwalk_only}, '
             f'persistent_classes={self.memory.persistent_classes}, '
             f'maximum_points={self.maximum_points}; '
             f'tf_wait={self.tf_wait_timeout_sec:g}s, '
@@ -338,6 +342,8 @@ class LocalCtrlMap(Node):
             strides=(msg.row_step, msg.point_step)).reshape(-1)
         valid = (np.isfinite(points['x']) & np.isfinite(points['y'])
                  & np.isfinite(points['z']))
+        if self.boardwalk_only:
+            valid &= np.isin(points['class_id'], [4, 6])
         return (np.column_stack((points['x'][valid], points['y'][valid])),
                 points['class_id'][valid])
 

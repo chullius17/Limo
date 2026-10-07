@@ -24,7 +24,7 @@ class SemanticMemory:
                  maximum_points=300,
                  minimum_confidence=0.3, confidence_decay_per_sec=0.1,
                  yellow_decay_multiplier=3.0, voxel_size=0.03,
-                 persist_exterior_road=False):
+                 persist_exterior_road=False, boardwalk_only=False):
         self.length = length
         self.width = width
         self.height = height
@@ -35,7 +35,9 @@ class SemanticMemory:
         self.decay = confidence_decay_per_sec
         self.yellow_decay_multiplier = yellow_decay_multiplier
         self.voxel_size = voxel_size
-        self.persistent_classes = (1, 2, 4) if persist_exterior_road else (2, 4)
+        self.persistent_classes = (
+            (4, 6) if boardwalk_only else
+            (1, 2, 4) if persist_exterior_road else (2, 4))
         self.reset()
 
     def reset(self):

@@ -69,7 +69,7 @@ controller_server:
       angular_granularity: 0.025
       include_last_point: true
 
-      # 25 * 0.10 = 2.5 s horizon. Only the first reachable command is sent;
+      # 40 * 0.10 = 4.0 s horizon. Only the first reachable command is sent;
       # the remaining sequence is shifted and reoptimized at the next cycle.
       MPC:
         StartConnector:
@@ -86,9 +86,9 @@ controller_server:
           enabled: false  # Disable MPC telemetry and the image preview on the real robot.
         steering_feedback_min_velocity: 0.05
         model_dt: 0.10  # Must equal 1 / controller_frequency.
-        time_steps: 25
+        time_steps: 40
         control_segments: 5
-        # 66 deterministic seeds + stop/warm start + 60 sampled sequences.
+        # Nano budget: 66 constant-curvature seeds + stop/warm start + 60 samples.
         batch_size: 128
         velocity_samples: 6
         curvature_samples: 11
@@ -96,7 +96,7 @@ controller_server:
         rear_axle_to_base: 0.10
         max_steering_rate: 0.5  # Bicycle steering rad/s; 0.05 rad per control cycle.
         velocity_std: 0.12
-        steering_std: 0.14
+        steering_std: 0.20
         acceleration_weight: 0.5
         steering_weight: 0.5
         # Immediate command costs are not averaged over the prediction horizon.
@@ -144,6 +144,7 @@ controller_server:
         ObstacleGuidance:
           enabled: true
           clearance_margin: 0.0  # Footprint critic checks the full oriented robot.
+          trigger_margin: 0.05  # Start detours within 5 cm of the padded footprint; trigger only.
           cost_weight: 2.0
           heading_weight: 2.0
           rejoin_distance: 0.50
@@ -186,7 +187,7 @@ local_costmap:
       height: 5
       resolution: 0.05
       footprint: "[[-0.161, -0.110], [-0.161, 0.110], [0.161, 0.110], [0.161, -0.110]]"
-      footprint_padding: 0.02
+      footprint_padding: 0.02  # 2 cm per side: padded footprint 0.362 x 0.260 m.
       track_unknown_space: false
       always_send_full_costmap: false
       trinary_costmap: false
