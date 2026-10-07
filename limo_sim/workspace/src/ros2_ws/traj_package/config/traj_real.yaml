@@ -111,8 +111,8 @@ global_costmap:
       unknown_cost_value: 255
       use_maximum: false
 
-      # Use the physical 0.322 x 0.220 m LIMO footprint, matching the local
-      # controller costmap and the goal-validation footprint.
+      # Use the physical 0.322 x 0.220 m LIMO footprint for planning and goal
+      # validation; the real controller footprint is inset 5 mm per side.
       footprint: "[[-0.161, -0.110], [-0.161, 0.110], [0.161, 0.110], [0.161, -0.110]]"
       footprint_padding: 0.0
 
@@ -139,7 +139,7 @@ global_costmap:
         far_cost_slope: 10.0
         far_max_cost: 8
 
-# Goal selection and validation use the same footprint as the planner/controller.
+# Goal selection and validation use the same footprint as the planner.
 rviz_goal_bridge:
   ros__parameters:
     use_sim_time: false

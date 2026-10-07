@@ -219,7 +219,9 @@ Both profiles use a 5 x 5 m rolling costmap and a 2.50 m DWB prune distance to
 include the sides and exit of local obstacles. They omit DWB's `Oscillation`
 critic: its direction locks can prevent the steering reversal needed to exit
 a detour. MPC actuation constraints and command regularization remain active.
-Real control retains its physical geometry with 0.02 m footprint padding.
+Real control uses a 0.312 x 0.210 m collision footprint with zero padding,
+inset 5 mm per side from the planner's physical 0.322 x 0.220 m footprint.
+This deliberately reduces the collision envelope below the physical dimensions.
 Both profiles use a 4 s horizon: real control uses 128 sequences at 10 Hz
 and 40 steps of 0.10 s; simulation uses 768 sequences at 20 Hz and 80 steps
 of 0.05 s. The real local costmap

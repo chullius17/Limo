@@ -38,7 +38,9 @@ prediction horizon and soft costs for reverse distance and direction changes;
 both profiles retain detour scoring until the robot has returned near the reference.
 Real control retains its 2.5 s horizon and 128 candidates at 10 Hz. Both profiles
 use a 5 x 5 m local costmap and a 2.50 m prune distance to include a free rejoin
-point beyond the obstacle. The real footprint padding, chassis guard and
+point beyond the obstacle. The real controller footprint is 0.312 x 0.210 m
+with zero padding, inset 5 mm per side from the planner footprint; this reduces
+the collision envelope below the physical dimensions. The chassis guard and
 command timeouts remain active. The larger map and guidance field add work to
 the real control cycle; verify the complete cycle still fits within 100 ms on
 the Nano. The shorter real horizon and smaller sample budget can limit detours

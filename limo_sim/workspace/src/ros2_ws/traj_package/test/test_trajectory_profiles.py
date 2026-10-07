@@ -81,15 +81,25 @@ def test_custom_yaml_controls_planner_bridge_and_map_topic(monkeypatch, tmp_path
 
 
 @pytest.mark.parametrize('profile', ['real', 'sim'])
-def test_planning_validation_and_control_footprints_agree(profile):
+def test_planning_validation_and_control_footprint_relationship(profile):
     config = yaml.safe_load(
         (PACKAGE / 'config' / ('traj_' + profile + '.yaml')).read_text())
     control = yaml.safe_load(
         (PACKAGES / 'limo_controller/config' / ('control_' + profile + '.yaml')).read_text())
     global_params = config['global_costmap']['global_costmap']['ros__parameters']
     local_params = control['local_costmap']['local_costmap']['ros__parameters']
-    assert global_params['footprint'] == local_params['footprint']
     footprint = ast.literal_eval(global_params['footprint'])
+    if profile == 'real':
+        local_footprint = ast.literal_eval(local_params['footprint'])
+        assert len(local_footprint) == len(footprint)
+        assert local_params['footprint_padding'] == 0.0
+        for local_point, global_point in zip(local_footprint, footprint):
+            for local_coord, global_coord in zip(local_point, global_point):
+                assert local_coord * global_coord > 0
+                assert abs(local_coord) + local_params['footprint_padding'] == pytest.approx(
+                    abs(global_coord) + global_params['footprint_padding'] - 0.005)
+    else:
+        assert global_params['footprint'] == local_params['footprint']
     bridge = config['rviz_goal_bridge']['ros__parameters']
     assert max(x for x, _ in footprint) - min(x for x, _ in footprint) == (
         bridge['footprint_length'])
