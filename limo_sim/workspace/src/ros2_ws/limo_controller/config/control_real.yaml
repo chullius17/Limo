@@ -190,8 +190,8 @@ local_costmap:
       width: 5
       height: 5
       resolution: 0.05
-      # Inset 5 mm per side from the planner's 0.322 x 0.220 m footprint.
-      footprint: "[[-0.156, -0.105], [-0.156, 0.105], [0.156, 0.105], [0.156, -0.105]]"
+      # Inset 10 mm per side from the planner's 0.322 x 0.220 m footprint.
+      footprint: "[[-0.156, -0.095], [-0.156, 0.095], [0.156, 0.095], [0.156, -0.095]]"
       footprint_padding: 0.0  # Effective controller footprint: 0.312 x 0.210 m.
       track_unknown_space: false
       always_send_full_costmap: false
