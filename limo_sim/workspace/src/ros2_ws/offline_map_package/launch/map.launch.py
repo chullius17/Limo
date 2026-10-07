@@ -16,6 +16,8 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
+from limo_rviz.overlay import waterfall_overlay_bridge
+
 
 def _boolean(value):
     if isinstance(value, bool):
@@ -112,11 +114,15 @@ def _launch_mapping(context):
         if not os.path.isabs(rviz_config):
             rviz_config = os.path.join(
                 get_package_share_directory('limo_rviz'), 'config', rviz_config)
+        bridge, overlay_remappings = waterfall_overlay_bridge(rviz_config, 'offline_rviz')
+        if bridge:
+            nodes.append(Node(**bridge, parameters=[clock]))
         nodes.append(Node(
             package='rviz2', executable='rviz2', name='rviz2', output='screen',
             arguments=['-d', rviz_config, '-f', settings['fixed_frame']],
             # YAML sequences become lists; Foxy requires tuple remap rules.
-            remappings=[tuple(rule) for rule in settings.get('rviz_remappings', [])],
+            remappings=[tuple(rule) for rule in settings.get('rviz_remappings', [])]
+            + overlay_remappings,
             parameters=[clock]))
     return nodes
 

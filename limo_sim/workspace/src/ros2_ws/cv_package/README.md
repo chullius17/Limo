@@ -206,6 +206,12 @@ road overlay is available separately. Debug images are produced only when their
 topics have subscribers, share a single resized camera background, and retain
 the input header. JPEG encoding runs in the publisher worker.
 
+The real online/offline/CV RViz launch profiles decode the waterfall JPEG on
+the desktop using `image_transport republish compressed raw`. RViz Foxy's
+Image display receives the local raw topic through a launch remapping; the
+image sent over the robot-to-PC link stays compressed. `Transport Hint` in a
+Foxy RViz Image configuration does not create a compressed subscription.
+
 Buffers are reused, queues retain only the latest frame, and seed propagation
 uses native connected components and a vectorized component lookup rather than
 Python pixel loops. Telemetry reports grayscale/resize, gradient and growth

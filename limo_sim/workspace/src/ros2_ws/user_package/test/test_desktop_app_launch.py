@@ -77,11 +77,13 @@ def expanded_viewers(monkeypatch, actions):
     return nodes
 
 
-def test_desktop_expands_to_only_rviz_and_control_gui(monkeypatch):
+def test_desktop_expands_to_viewers_and_overlay_decoder(monkeypatch):
     nodes = expanded_viewers(monkeypatch, desktop(monkeypatch))
     assert {(node['package'], node['executable']) for node in nodes} == {
-        ('rviz2', 'rviz2'), ('limo_controller', 'control_gui')}
-    assert {node['name'] for node in nodes} == {'rviz2', 'control_gui'}
+        ('rviz2', 'rviz2'), ('limo_controller', 'control_gui'),
+        ('image_transport', 'republish')}
+    assert {node['name'] for node in nodes} == {
+        'rviz2', 'control_gui', 'online_rviz_waterfall_overlay_decoder'}
     assert sum(node['executable'] == 'rviz2' for node in nodes) == 1
     assert all(node['parameters'][0]['use_sim_time'] is False for node in nodes)
     gui = next(node for node in nodes if node['name'] == 'control_gui')

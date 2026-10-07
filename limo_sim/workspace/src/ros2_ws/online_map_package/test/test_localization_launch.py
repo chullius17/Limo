@@ -111,9 +111,9 @@ def test_real_profile_is_headless_and_starts_cv(monkeypatch):
     assert amcl['cv_enabled'] == 'true'
 
 
-def test_desktop_online_starts_only_rviz(monkeypatch):
+def test_desktop_online_starts_rviz_and_overlay_decoder(monkeypatch):
     nodes, includes = online(monkeypatch, 'real', mode='desktop')
-    assert set(nodes) == {'rviz2'}
+    assert set(nodes) == {'rviz2', 'online_rviz_waterfall_overlay_decoder'}
     assert nodes['rviz2']['values']['use_sim_time'] is False
     assert nodes['rviz2']['arguments'][-2:] == ['-f', 'map']
     assert includes == []

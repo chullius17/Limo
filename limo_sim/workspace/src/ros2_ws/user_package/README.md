@@ -71,11 +71,19 @@ and **Control Footprint** in orange uses `/local_costmap/published_footprint`.
 These are the live planner/controller costmap footprints, including padding;
 they follow the robot and reflect configuration changes without copying sizes
 into RViz. They appear once their costmaps are active and localization is ready.
-The control GUI also has an MPC telemetry/image panel below its control terminal.
-Numeric MPC telemetry requires `FollowPath.MPC.Debug.enabled: true` on the
-backend, enabled in both profiles. The image renderer is off by default;
-`start_mpc_preview:=true` enables it. The GUI image area stays hidden until an
-image arrives.
+The control GUI contains the control buttons and status terminal, with no MPC
+telemetry/image panel. Read MPC telemetry separately on `/limo/control/mpc_debug`.
+
+The real RViz profiles show **Waterfall Lane Overlay** using a desktop
+`image_transport` decoder. The robot sends JPEG on
+`/limo/cv_package/detection/lane_waterfall_overlay/compressed`; the desktop
+decodes it to a local raw Image topic for RViz Foxy, whose Image display does
+not support the old `Transport Hint: compressed` configuration. Online, offline
+and CV viewers use separate output topics under `/limo/desktop/`.
+The decoder starts with RViz only when that profile enables the overlay.
+RViz requires the `image_transport` and `compressed_image_transport` packages
+on the PC. The overlay may take up to 30 processed camera frames to appear,
+because its detector checks for debug subscribers at that interval.
 
 Before selecting a goal, use RViz's **2D Pose Estimate** tool to set the robot's
 actual position and heading on the map. AMCL must publish `map -> odom` before

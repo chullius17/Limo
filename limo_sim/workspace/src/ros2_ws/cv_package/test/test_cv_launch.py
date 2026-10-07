@@ -76,7 +76,7 @@ def test_sim_detector_does_not_depend_on_clock(monkeypatch, clock):
 
 def test_desktop_starts_only_viewer_and_backend_ignores_rviz(monkeypatch):
     desktop = pipeline(monkeypatch, mode='desktop')
-    assert set(desktop) == {'cv_rviz'}
+    assert set(desktop) == {'cv_rviz', 'cv_rviz_waterfall_overlay_decoder'}
     assert desktop['cv_rviz']['arguments'] == [
         '-d', str(PACKAGES / 'limo_rviz/config/cv_visual_real.rviz')]
     nodes = pipeline(monkeypatch, mode='backend', start_rviz='true',

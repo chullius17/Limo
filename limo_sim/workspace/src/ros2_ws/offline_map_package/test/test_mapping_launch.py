@@ -77,7 +77,10 @@ def test_real_profile_is_headless_with_wall_clock(monkeypatch):
 @pytest.mark.parametrize('profile,sim_time', [('sim', True), ('real', False)])
 def test_desktop_never_starts_mapping_nodes(monkeypatch, profile, sim_time):
     nodes = mapping(monkeypatch, profile, mode='desktop', start_slam='true', start_mapper='true')
-    assert set(nodes) == {'rviz2', 'map_save_gui'}
+    expected = {'rviz2', 'map_save_gui'}
+    if profile == 'real':
+        expected.add('offline_rviz_waterfall_overlay_decoder')
+    assert set(nodes) == expected
     assert all(node['values']['use_sim_time'] is sim_time for node in nodes.values())
     assert nodes['map_save_gui']['values']['save_service'].endswith('/map_saver/save_map')
 
@@ -96,7 +99,7 @@ def test_cli_overrides_and_backend_guards(monkeypatch):
 
 def test_disable_single_desktop_window(monkeypatch):
     nodes = mapping(monkeypatch, 'real', mode='desktop', start_gui='false', fixed_frame='odom')
-    assert set(nodes) == {'rviz2'}
+    assert set(nodes) == {'rviz2', 'offline_rviz_waterfall_overlay_decoder'}
     assert nodes['rviz2']['arguments'][-2:] == ['-f', 'odom']
 
 

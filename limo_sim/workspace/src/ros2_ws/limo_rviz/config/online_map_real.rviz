@@ -262,7 +262,6 @@ Visualization Manager:
       Min Value: 0.0
       Name: Waterfall Lane Overlay
       Normalize Range: true
-      Transport Hint: compressed
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

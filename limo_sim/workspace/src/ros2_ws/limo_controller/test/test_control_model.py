@@ -277,24 +277,11 @@ def test_custom_mpc_preview_file_is_used(monkeypatch, tmp_path):
     assert config['mpc_preview']['ros__parameters']['image_width'] == 720
 
 
-def test_gui_follows_custom_telemetry_topics_and_preview_timeout(monkeypatch, tmp_path):
-    config = yaml.safe_load((PACKAGE / 'config/control_sim.yaml').read_text())
-    config['controller_server']['ros__parameters']['FollowPath']['MPC']['Debug'][
-        'topic'] = '/custom/mpc_debug'
-    control_path = tmp_path / 'control.yaml'
-    control_path.write_text(yaml.safe_dump(config))
-    preview_path = tmp_path / 'preview.yaml'
-    preview_path.write_text(yaml.safe_dump({'mpc_preview': {'ros__parameters': {
-        'debug_topic': '/custom/mpc_debug', 'image_topic': '/custom/preview/compressed',
-        'stale_timeout': 2.5,
-    }}}))
+def test_gui_uses_clock_without_mpc_parameters(monkeypatch):
     context, _, description = controller(
-        monkeypatch, robot_model='sim', controller_params_file=str(control_path),
-        mpc_preview_params_file=str(preview_path))
+        monkeypatch, robot_model='sim', use_sim_time='false')
     gui = next(action for action in description.entities
                if isinstance(action, dict) and action.get('name') == 'control_gui')
     params = gui['parameters'][0]
-    assert params['mpc_debug_topic'] == '/custom/mpc_debug'
-    assert params['mpc_image_topic'] == '/custom/preview/compressed'
-    assert params['mpc_stale_timeout'] == 2.5
-    assert params['use_sim_time'].evaluate(context)
+    assert set(params) == {'use_sim_time'}
+    assert not params['use_sim_time'].evaluate(context)

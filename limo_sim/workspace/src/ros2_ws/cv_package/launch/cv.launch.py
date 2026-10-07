@@ -10,6 +10,8 @@ from launch.event_handlers import OnProcessStart
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+from limo_rviz.overlay import waterfall_overlay_bridge
+
 
 def _boolean(value):
     if isinstance(value, bool):
@@ -99,12 +101,16 @@ def _launch_cv(context):
     if start_rviz:
         config_dir = os.path.join(
             get_package_share_directory('limo_rviz'), 'config')
+        rviz_config = os.path.join(config_dir, settings['rviz_config'])
+        bridge, overlay_remappings = waterfall_overlay_bridge(rviz_config, 'cv_rviz')
+        if bridge:
+            nodes.append(Node(**bridge, parameters=[{'use_sim_time': use_sim_time}]))
         nodes.append(Node(
             package='rviz2', executable='rviz2', name='cv_rviz',
             output='screen',
-            arguments=['-d', os.path.join(config_dir, settings['rviz_config'])],
+            arguments=['-d', rviz_config],
             parameters=[{'use_sim_time': use_sim_time}],
-            remappings=settings.get('rviz_remappings', []),
+            remappings=settings.get('rviz_remappings', []) + overlay_remappings,
         ))
     return nodes
 

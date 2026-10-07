@@ -14,7 +14,6 @@
 
 """Small Qt GUI used to start, pause and abort Nav2 path control."""
 
-import math
 import signal
 import sys
 import threading
@@ -24,23 +23,18 @@ from action_msgs.msg import GoalStatus, GoalStatusArray
 from geometry_msgs.msg import Twist
 import rclpy
 from PyQt5.QtCore import Qt, QTime, QTimer, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
     QLabel,
     QPushButton,
-    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import Bool, String
 from std_srvs.srv import SetBool
-
-from limo_interfaces.msg import MpcDebug
 
 
 class GuiSignals(QWidget):
@@ -51,8 +45,6 @@ class GuiSignals(QWidget):
     active_received = pyqtSignal(bool)
     paused_received = pyqtSignal(bool)
     diagnostic_received = pyqtSignal(str)
-    mpc_received = pyqtSignal(str, float)
-    preview_received = pyqtSignal(bytes, float)
 
 
 class ControlGuiNode(Node):
@@ -61,21 +53,6 @@ class ControlGuiNode(Node):
     def __init__(self, signals):
         super().__init__('control_gui')
         self.signals = signals
-        self.declare_parameter('mpc_debug_topic', '/limo/control/mpc_debug')
-        self.declare_parameter(
-            'mpc_image_topic', '/limo/control/mpc_preview/image/compressed')
-        self.declare_parameter('mpc_stale_timeout', 1.0)
-        self.mpc_stale_timeout = self.get_parameter('mpc_stale_timeout').value
-        if not math.isfinite(self.mpc_stale_timeout) or self.mpc_stale_timeout <= 0:
-            raise ValueError('mpc_stale_timeout must be positive and finite')
-        telemetry_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
-        self.create_subscription(
-            MpcDebug, self.get_parameter('mpc_debug_topic').value,
-            self._mpc_callback, telemetry_qos)
-        self.create_subscription(
-            CompressedImage, self.get_parameter('mpc_image_topic').value,
-            lambda msg: self.signals.preview_received.emit(
-                bytes(msg.data), time.monotonic()), telemetry_qos)
         self.start_abort_client = self.create_client(
             SetBool,
             '/limo/control/set_active',
@@ -137,24 +114,6 @@ class ControlGuiNode(Node):
             state_qos,
         )
         self.create_timer(1.0, self._report_service_availability)
-
-    def _mpc_callback(self, msg):
-        winner = next((candidate for candidate in msg.candidates
-                       if candidate.candidate_id == msg.selected_id), None)
-        selected = ('nessuno' if msg.selected_id < 0 else str(msg.selected_id))
-        cost = f'{winner.total_cost:.3f}' if winner is not None else 'n/d'
-        velocity = f'{msg.command_velocity:.3f}' if msg.selected_id >= 0 else 'n/d'
-        steering = f'{math.degrees(msg.command_steering):.1f}°' if msg.selected_id >= 0 else 'n/d'
-        summary = (
-            f'Campioni generati: {msg.generated_count} | '
-            f'in telemetria: {len(msg.candidates)} | scelto: {selected} | costo: {cost}\n'
-            f'Orizzonte: {msg.time_steps * msg.model_dt:.2f} s '
-            f'({msg.time_steps} passi, dt={msg.model_dt:.3f} s)\n'
-            f'Velocità: {msg.initial_velocity:.3f} → {velocity} m/s | '
-            f'Sterzo: {math.degrees(msg.initial_steering):.1f}° '
-            f'→ {steering}'
-        )
-        self.signals.mpc_received.emit(summary, time.monotonic())
 
     def _diagnostic(self, message):
         self.get_logger().info(message)
@@ -282,39 +241,6 @@ class ControlGuiNode(Node):
         )
 
 
-class MpcImageView(QLabel):
-    """Keep the source image and fit it to the available space without distortion."""
-
-    def __init__(self):
-        super().__init__('In attesa dell’anteprima MPC')
-        self.source = QPixmap()
-        self.setAlignment(Qt.AlignCenter)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
-        self.setMinimumHeight(220)
-        self.setStyleSheet('background-color: #101418; color: #d7e0e7;')
-
-    def show_image(self, pixmap):
-        """Display a decoded image at the current widget size."""
-        self.source = pixmap
-        self._fit_image()
-
-    def show_status(self, message):
-        """Replace the image with a waiting, stale or decoding status."""
-        self.source = QPixmap()
-        self.clear()
-        self.setText(message)
-
-    def _fit_image(self):
-        if not self.source.isNull():
-            self.setPixmap(self.source.scaled(
-                self.contentsRect().size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-
-    def resizeEvent(self, event):
-        """Rescale the original image when the layout changes."""
-        super().resizeEvent(event)
-        self._fit_image()
-
-
 class ControlWindow(QWidget):
     """Window containing pause/resume and start/abort controls."""
 
@@ -326,13 +252,11 @@ class ControlWindow(QWidget):
         self.control_requested = False
         self.path_ready = False
         self.last_status = 'waiting for status'
-        self.last_mpc_received = None
-        self.last_preview_received = None
 
         self.setWindowTitle('LIMO Control')
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         self.setMinimumWidth(360)
-        self.resize(580, 820)
+        self.resize(580, 520)
 
         layout = QVBoxLayout(self)
         self.state_label = QLabel('Control state: waiting for status')
@@ -363,62 +287,13 @@ class ControlWindow(QWidget):
         )
         layout.addWidget(self.terminal)
 
-        telemetry_label = QLabel('TELEMETRIA MPC')
-        telemetry_label.setStyleSheet('font-weight: bold;')
-        layout.addWidget(telemetry_label)
-        self.mpc_state_label = QLabel('In attesa di dati MPC (abilitare MPC.Debug.enabled)')
-        self.mpc_state_label.setWordWrap(True)
-        layout.addWidget(self.mpc_state_label)
-        self.mpc_summary = QLabel('Nessuno snapshot ricevuto')
-        self.mpc_summary.setWordWrap(True)
-        self.mpc_summary.setStyleSheet('font-family: monospace; font-size: 12px;')
-        layout.addWidget(self.mpc_summary)
-        self.mpc_image = MpcImageView()
-        layout.addWidget(self.mpc_image, 2)
-        self.mpc_image.hide()
-
         signals.request_finished.connect(self._request_finished)
         signals.status_received.connect(self._set_status)
         signals.active_received.connect(self._set_active)
         signals.paused_received.connect(self._set_paused)
         signals.diagnostic_received.connect(self._append_status)
-        signals.mpc_received.connect(self._set_mpc)
-        signals.preview_received.connect(self._set_preview)
-        self.mpc_timer = QTimer(self)
-        self.mpc_timer.timeout.connect(self._check_mpc_freshness)
-        self.mpc_timer.start(250)
         self._refresh_buttons()
         self._append_status('GUI ready; waiting for path executor status')
-
-    @pyqtSlot(str, float)
-    def _set_mpc(self, summary, received_at):
-        self.last_mpc_received = received_at
-        self.mpc_summary.setText(summary)
-        self.mpc_state_label.setText('Telemetria MPC attiva')
-        self._check_mpc_freshness()
-
-    @pyqtSlot(bytes, float)
-    def _set_preview(self, data, received_at):
-        pixmap = QPixmap()
-        if not pixmap.loadFromData(data):
-            self.last_preview_received = None
-            self.mpc_image.show_status('Anteprima MPC non decodificabile')
-            return
-        self.last_preview_received = received_at
-        self.mpc_image.show()
-        self.mpc_image.show_image(pixmap)
-        self._check_mpc_freshness()
-
-    def _check_mpc_freshness(self):
-        now = time.monotonic()
-        timeout = self.node.mpc_stale_timeout
-        if self.last_mpc_received is not None and now - self.last_mpc_received > timeout:
-            self.mpc_state_label.setText('Telemetria MPC scaduta: controllo fermo o dati assenti')
-            self.mpc_summary.setText('Nessuno snapshot recente')
-        if (self.last_preview_received is not None
-                and now - self.last_preview_received > timeout):
-            self.last_preview_received = None
-            self.mpc_image.show_status('Anteprima MPC scaduta: nessuna immagine recente')
 
     @staticmethod
     def _button_style(color):

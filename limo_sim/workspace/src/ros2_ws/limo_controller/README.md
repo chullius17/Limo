@@ -122,26 +122,19 @@ These real/sim profiles are the only built-in controller parameter files.
 
 `FollowPath.MPC.Debug.enabled` enables telemetry on `/limo/control/mpc_debug`.
 It is explicitly `true` in both `control_sim.yaml` and `control_real.yaml`.
-The default GUI shows numeric telemetry only: generated samples, selected
-candidate and cost, prediction horizon, velocity and steering. The image area
-stays hidden until an image arrives. `control.launch.py` and the application
-launches leave the image renderer off by default; use `start_mpc_preview:=true`
+The control GUI contains only the control buttons and status terminal; it does
+not subscribe to MPC telemetry or images. Read numerical telemetry in a separate
+terminal with `ros2 topic echo /limo/control/mpc_debug --no-arr`.
+`control.launch.py` and the application launches leave the image renderer off
+by default; use `start_mpc_preview:=true`
 to opt in. Rendering requires the YAML telemetry flag as well. Clock overrides
 do not change that flag; a custom controller YAML uses its own flag (missing
 means disabled).
 
 The node publishes `sensor_msgs/CompressedImage` on
-`/limo/control/mpc_preview/image/compressed` (PNG by default). The control GUI
-shows this image in a second panel below the existing control terminal, with
-snapshot values for generated/displayed samples, selected candidate and cost,
-prediction horizon, velocity and equivalent bicycle steering angle. The panel
-keeps the image aspect ratio when resized and clears old telemetry/images when
-their reception timeout expires, even when the simulation clock is paused.
-The renderer opens no window of its own; `rqt_image_view` can also display the
-compressed topic. The controller launch forwards custom debug/image topics and
-the renderer's stale timeout to the GUI. For a separately started desktop GUI,
-use its `mpc_debug_topic`, `mpc_image_topic` and `mpc_stale_timeout` ROS parameters
-or topic remappings if the backend uses custom topic names.
+`/limo/control/mpc_preview/image/compressed` (PNG by default).
+The renderer opens no window of its own; `rqt_image_view` can display the
+compressed image separately from the control GUI.
 
 The top-down image is centered on the snapshot's `base_link`, with +x upward
 and +y leftward. It contains the controller's local costmap, its effective
