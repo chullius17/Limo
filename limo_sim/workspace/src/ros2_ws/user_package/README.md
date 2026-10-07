@@ -72,8 +72,10 @@ These are the live planner/controller costmap footprints, including padding;
 they follow the robot and reflect configuration changes without copying sizes
 into RViz. They appear once their costmaps are active and localization is ready.
 The control GUI also has an MPC telemetry/image panel below its control terminal.
-It requires `FollowPath.MPC.Debug.enabled: true` on the backend (enabled in the
-simulation profile, disabled by default on the real robot).
+Numeric MPC telemetry requires `FollowPath.MPC.Debug.enabled: true` on the
+backend, enabled in both profiles. The image renderer is off by default;
+`start_mpc_preview:=true` enables it. The GUI image area stays hidden until an
+image arrives.
 
 Before selecting a goal, use RViz's **2D Pose Estimate** tool to set the robot's
 actual position and heading on the map. AMCL must publish `map -> odom` before

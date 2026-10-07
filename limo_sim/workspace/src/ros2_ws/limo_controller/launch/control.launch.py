@@ -188,8 +188,10 @@ def generate_launch_description():
             description='Require healthy command-mode feedback before START.',
         ),
         DeclareLaunchArgument(
-            'start_mpc_preview', default_value='true',
-            description='Allow the MPC preview when FollowPath.MPC.Debug.enabled is true in YAML.',
+            'start_mpc_preview', default_value='false',
+            description=(
+                'Opt in to the image renderer when MPC.Debug.enabled is true; '
+                'telemetry is independent.'),
         ),
         DeclareLaunchArgument(
             'mpc_preview_params_file',

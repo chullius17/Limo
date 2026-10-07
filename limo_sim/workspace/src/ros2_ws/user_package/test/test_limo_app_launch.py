@@ -106,9 +106,10 @@ def test_mpc_preview_options_are_forwarded(monkeypatch):
                       mpc_preview_params_file='/tmp/custom_preview.yaml')
     assert actions[2]['arguments']['start_mpc_preview'] == 'false'
     assert actions[2]['arguments']['mpc_preview_params_file'] == '/tmp/custom_preview.yaml'
-    assert compose(monkeypatch, 'sim')[2]['arguments']['start_mpc_preview'] == 'true'
-    # Both profiles delegate activation to FollowPath.MPC.Debug.enabled in YAML.
-    assert compose(monkeypatch, 'real')[2]['arguments']['start_mpc_preview'] == 'true'
+    assert compose(monkeypatch, 'sim')[2]['arguments']['start_mpc_preview'] == 'false'
+    assert compose(monkeypatch, 'real')[2]['arguments']['start_mpc_preview'] == 'false'
+    assert compose(monkeypatch, 'sim', start_mpc_preview='true')[2][
+        'arguments']['start_mpc_preview'] == 'true'
 
 
 @pytest.mark.parametrize('profile', ['sim', 'real'])

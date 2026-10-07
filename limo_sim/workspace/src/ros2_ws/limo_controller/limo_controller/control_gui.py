@@ -147,7 +147,7 @@ class ControlGuiNode(Node):
         steering = f'{math.degrees(msg.command_steering):.1f}°' if msg.selected_id >= 0 else 'n/d'
         summary = (
             f'Campioni generati: {msg.generated_count} | '
-            f'visualizzati: {len(msg.candidates)} | scelto: {selected} | costo: {cost}\n'
+            f'in telemetria: {len(msg.candidates)} | scelto: {selected} | costo: {cost}\n'
             f'Orizzonte: {msg.time_steps * msg.model_dt:.2f} s '
             f'({msg.time_steps} passi, dt={msg.model_dt:.3f} s)\n'
             f'Velocità: {msg.initial_velocity:.3f} → {velocity} m/s | '
@@ -375,6 +375,7 @@ class ControlWindow(QWidget):
         layout.addWidget(self.mpc_summary)
         self.mpc_image = MpcImageView()
         layout.addWidget(self.mpc_image, 2)
+        self.mpc_image.hide()
 
         signals.request_finished.connect(self._request_finished)
         signals.status_received.connect(self._set_status)
@@ -404,6 +405,7 @@ class ControlWindow(QWidget):
             self.mpc_image.show_status('Anteprima MPC non decodificabile')
             return
         self.last_preview_received = received_at
+        self.mpc_image.show()
         self.mpc_image.show_image(pixmap)
         self._check_mpc_freshness()
 

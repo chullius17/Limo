@@ -83,7 +83,11 @@ controller_server:
         # even when noisy/lagging odometry still reports near-zero motion.
         feedback: "OPEN_LOOP"
         Debug:
-          enabled: false  # Disable MPC telemetry and the image preview on the real robot.
+          enabled: true  # MPC telemetry; the image renderer is opt-in at launch.
+          topic: /limo/control/mpc_debug
+          publish_rate: 4.0
+          samples_per_family: 6
+          pose_stride: 2
         steering_feedback_min_velocity: 0.05
         model_dt: 0.10  # Must equal 1 / controller_frequency.
         time_steps: 40

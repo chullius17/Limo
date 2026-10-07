@@ -116,15 +116,17 @@ desktop workload before supervised physical execution.
 
 These real/sim profiles are the only built-in controller parameter files.
 
-## Simulation MPC image preview
+## MPC telemetry and optional image preview
 
-`control.launch.py` reads `FollowPath.MPC.Debug.enabled` from the selected
-controller YAML to start `mpc_preview`, including when launched through
-`user_package/limo_app_sim.launch.py`. This flag is explicitly `true` in
-`control_sim.yaml` and `false` in `control_real.yaml`; it enables both telemetry
-and the preview node. Clock overrides do not change it. A custom controller YAML
-uses its own flag (missing means disabled). Setting `start_mpc_preview:=false`
-can suppress the renderer; setting it to `true` cannot override a false YAML flag.
+`FollowPath.MPC.Debug.enabled` enables telemetry on `/limo/control/mpc_debug`.
+It is explicitly `true` in both `control_sim.yaml` and `control_real.yaml`.
+The default GUI shows numeric telemetry only: generated samples, selected
+candidate and cost, prediction horizon, velocity and steering. The image area
+stays hidden until an image arrives. `control.launch.py` and the application
+launches leave the image renderer off by default; use `start_mpc_preview:=true`
+to opt in. Rendering requires the YAML telemetry flag as well. Clock overrides
+do not change that flag; a custom controller YAML uses its own flag (missing
+means disabled).
 
 The node publishes `sensor_msgs/CompressedImage` on
 `/limo/control/mpc_preview/image/compressed` (PNG by default). The control GUI
@@ -164,7 +166,7 @@ controller. The preview is diagnostic and has no effect on selection.
 Settings are split between two YAML files:
 
 - `config/control_sim.yaml` / `config/control_real.yaml`, under `FollowPath.MPC.Debug`:
-  enable telemetry and the preview node with `enabled` (sim: true, real: false),
+  enable telemetry with `enabled` (true in both profiles),
   its topic, publication rate, samples per family and pose downsampling stride.
   Representatives are evenly distributed over each family's generated order;
   the winner is always included even if it was not among those representatives.
@@ -190,6 +192,34 @@ new snapshot, the image displays a waiting/stale status and removes old paths.
 After changing YAML settings, restart the application. A custom renderer file
 can be selected with `mpc_preview_params_file:=/path/to/preview.yaml` in either
 the standalone controller launch or the application launch.
+
+### Controller costmap frequency
+
+The MPC reads Nav2's internal local costmap, merging `/scan` and the raw
+semantic grid `/limo/map_package/online/local_costmap` before inflation.
+Its configured update and publication rates differ:
+
+| Profile | Internal update target | Topic publication target | Controller target |
+| --- | --- | --- | --- |
+| sim | 15 Hz | 4 Hz | 20 Hz |
+| real | 10 Hz | 2 Hz | 10 Hz |
+
+Read the active configuration in the ROS environment running the backend:
+
+```bash
+ros2 param get /local_costmap/local_costmap update_frequency
+ros2 param get /local_costmap/local_costmap publish_frequency
+ros2 param get /controller_server controller_frequency
+ros2 topic hz /limo/map_package/online/local_costmap
+ros2 topic hz /local_costmap/costmap_updates
+```
+
+The first topic measures the incoming semantic grid; the second measures
+published Nav2 map deltas. With `always_send_full_costmap: false`, full maps
+and deltas use different topics. Neither topic measures the internal update
+loop. The parameters are targets; measuring achieved internal update frequency
+requires timing that loop. MPC debug snapshots are throttled to 4 Hz and their
+costmap timestamps describe capture time, not the last internal update.
 
 Build the new interfaces before loading the updated plugin:
 

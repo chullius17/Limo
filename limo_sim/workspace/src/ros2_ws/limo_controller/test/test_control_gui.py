@@ -63,6 +63,20 @@ def image_bytes():
     return output.getvalue()
 
 
+def test_numeric_telemetry_works_without_preview_images(gui):
+    _, node, window, _ = gui
+    msg = MpcDebug()
+    msg.generated_count = 128
+    msg.selected_id = 7
+    msg.candidates = [MpcCandidate(candidate_id=7, total_cost=3.4)]
+    node._mpc_callback(msg)
+    assert window.mpc_state_label.text() == 'Telemetria MPC attiva'
+    assert 'generati: 128' in window.mpc_summary.text()
+    assert 'scelto: 7 | costo: 3.400' in window.mpc_summary.text()
+    assert window.mpc_image.isHidden()
+    assert window.last_preview_received is None
+
+
 def test_gui_receives_ros_snapshot_and_compressed_image_below_control_terminal(gui):
     app, node, window, _ = gui
     transport = Node('gui_telemetry_test')
@@ -98,6 +112,7 @@ def test_gui_receives_ros_snapshot_and_compressed_image_below_control_terminal(g
         assert '2.50 s' in window.mpc_summary.text()
         assert '0.200 → 0.300 m/s' in window.mpc_summary.text()
         assert '5.7° → 11.5°' in window.mpc_summary.text()
+        assert window.mpc_image.isVisible()
         assert window.mpc_image.y() > window.terminal.y() + window.terminal.height()
         window.resize(720, 900)
         app.processEvents()

@@ -84,7 +84,7 @@ def _launch_app(context):
         'autostart': 'true',
         'start_gui': str(start_gui).lower(),
         'start_mpc_preview': str(_optional_boolean(
-            context, 'start_mpc_preview', True)).lower(),
+            context, 'start_mpc_preview', False)).lower(),
     }
     preview_file = LaunchConfiguration('mpc_preview_params_file').perform(context)
     # Forward a concrete default: the parent's empty value would otherwise
@@ -129,7 +129,7 @@ def generate_launch_description():
             description='Controller YAML override; empty follows the app profile.'),
         DeclareLaunchArgument(
             'start_mpc_preview', default_value='',
-            description='Allow the MPC preview; its enabled flag comes from the controller YAML.'),
+            description='Opt in to the MPC image renderer; empty defaults to telemetry only.'),
         DeclareLaunchArgument(
             'mpc_preview_params_file', default_value='',
             description='Optional MPC preview rendering YAML override.'),
