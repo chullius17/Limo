@@ -127,9 +127,17 @@ uses its own flag (missing means disabled). Setting `start_mpc_preview:=false`
 can suppress the renderer; setting it to `true` cannot override a false YAML flag.
 
 The node publishes `sensor_msgs/CompressedImage` on
-`/limo/control/mpc_preview/image/compressed` (PNG by default). View this topic
-with `rqt_image_view`, selecting the compressed transport. No local window is
-opened by the node.
+`/limo/control/mpc_preview/image/compressed` (PNG by default). The control GUI
+shows this image in a second panel below the existing control terminal, with
+snapshot values for generated/displayed samples, selected candidate and cost,
+prediction horizon, velocity and equivalent bicycle steering angle. The panel
+keeps the image aspect ratio when resized and clears old telemetry/images when
+their reception timeout expires, even when the simulation clock is paused.
+The renderer opens no window of its own; `rqt_image_view` can also display the
+compressed topic. The controller launch forwards custom debug/image topics and
+the renderer's stale timeout to the GUI. For a separately started desktop GUI,
+use its `mpc_debug_topic`, `mpc_image_topic` and `mpc_stale_timeout` ROS parameters
+or topic remappings if the backend uses custom topic names.
 
 The top-down image is centered on the snapshot's `base_link`, with +x upward
 and +y leftward. It contains the controller's local costmap, its effective

@@ -65,6 +65,16 @@ planner, controller, velocity mux, path executor or second goal bridge.
 RViz publishes goals to the robot; the GUI uses the robot's existing control
 services to start, pause, resume or abort a planned path.
 
+Both simulation and desktop RViz profiles show two outlines around the robot:
+**Trajectory Footprint** in dark blue uses `/global_costmap/published_footprint`,
+and **Control Footprint** in orange uses `/local_costmap/published_footprint`.
+These are the live planner/controller costmap footprints, including padding;
+they follow the robot and reflect configuration changes without copying sizes
+into RViz. They appear once their costmaps are active and localization is ready.
+The control GUI also has an MPC telemetry/image panel below its control terminal.
+It requires `FollowPath.MPC.Debug.enabled: true` on the backend (enabled in the
+simulation profile, disabled by default on the real robot).
+
 Before selecting a goal, use RViz's **2D Pose Estimate** tool to set the robot's
 actual position and heading on the map. AMCL must publish `map -> odom` before
 the planner can finish activation. Until then, the GUI reports localization

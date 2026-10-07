@@ -61,6 +61,27 @@ def mpc_preview_node(context, configured_params, preview_params):
     )]
 
 
+def control_gui_node(context, configured_params, preview_params):
+    """Connect the GUI to the selected controller and renderer telemetry topics."""
+    with open(configured_params.perform(context), encoding='utf-8') as stream:
+        controller = yaml.safe_load(stream)
+    with open(preview_params.perform(context), encoding='utf-8') as stream:
+        preview = yaml.safe_load(stream)['mpc_preview']['ros__parameters']
+    debug = controller['controller_server']['ros__parameters'].get(
+        'FollowPath', {}).get('MPC', {}).get('Debug', {})
+    return [Node(
+        package='limo_controller', executable='control_gui', name='control_gui',
+        output='screen', condition=IfCondition(LaunchConfiguration('start_gui')),
+        parameters=[{
+            'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool),
+            'mpc_debug_topic': debug.get('topic', '/limo/control/mpc_debug'),
+            'mpc_image_topic': preview.get(
+                'image_topic', '/limo/control/mpc_preview/image/compressed'),
+            'mpc_stale_timeout': preview.get('stale_timeout', 1.0),
+        }],
+    )]
+
+
 def generate_launch_description():
     """Create the controller server and its lifecycle manager."""
     package_share = get_package_share_directory('limo_controller')
@@ -73,7 +94,6 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     log_level = LaunchConfiguration('log_level')
-    start_gui = LaunchConfiguration('start_gui')
     require_chassis_status = LaunchConfiguration('require_chassis_status')
     preview_params = RewrittenYaml(
         source_file=LaunchConfiguration('mpc_preview_params_file'),
@@ -125,12 +145,8 @@ def generate_launch_description():
         }],
     )
 
-    control_gui = Node(
-        package='limo_controller',
-        executable='control_gui',
-        name='control_gui',
-        output='screen',
-        condition=IfCondition(start_gui),
+    control_gui = OpaqueFunction(
+        function=control_gui_node, args=[configured_params, preview_params],
     )
     mpc_preview = OpaqueFunction(
         function=mpc_preview_node, args=[configured_params, preview_params],
