@@ -30,6 +30,16 @@ Mapping and `user_package` continue to use
 when `start_cv:=true`. CV stays opt-in there to avoid duplicating an already
 running `cv_real`. The selected CV profile is independent of `use_sim_time`.
 
+The simulation profile enables `visual_ptcld.enable_debug_publications`; the real
+profile leaves it disabled. This exposes the JPEG topics
+`/limo/cv_package/visual_ptcld/curb_points_debug/compressed`,
+`/limo/cv_package/visual_ptcld/lines_and_curbs/compressed` and
+`/limo/cv_package/visual_ptcld/blue_filter_debug/compressed` when a viewer subscribes.
+The HSV detector's `lane_masks/compressed` and `lane_overlay/compressed` topics
+under `/limo/cv_package/detection/` already publish on subscription. Depth debug
+images are also available without an additional enable flag. Use `rqt_image_view`
+to inspect them and restart CV after changing its profile.
+
 `cv_real.yaml` enables `visual_ptcld.road_boardwalk_only`. The outgoing cloud
 `/limo/cv_package/visual_ptcld/points` contains only these semantic classes:
 

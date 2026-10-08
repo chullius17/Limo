@@ -106,17 +106,18 @@ def test_mpc_preview_options_are_forwarded(monkeypatch):
                       mpc_preview_params_file='/tmp/custom_preview.yaml')
     assert actions[2]['arguments']['start_mpc_preview'] == 'false'
     assert actions[2]['arguments']['mpc_preview_params_file'] == '/tmp/custom_preview.yaml'
-    assert compose(monkeypatch, 'sim')[2]['arguments']['start_mpc_preview'] == 'false'
-    assert compose(monkeypatch, 'real')[2]['arguments']['start_mpc_preview'] == 'false'
+    assert compose(monkeypatch, 'sim')[2]['arguments']['start_mpc_preview'] == ''
+    assert compose(monkeypatch, 'real')[2]['arguments']['start_mpc_preview'] == ''
     assert compose(monkeypatch, 'sim', start_mpc_preview='true')[2][
         'arguments']['start_mpc_preview'] == 'true'
 
 
 @pytest.mark.parametrize('profile', ['sim', 'real'])
-def test_mpc_preview_yaml_resolves_despite_empty_parent_argument(monkeypatch, profile):
+@pytest.mark.parametrize('override', ['', 'true', 'false'])
+def test_mpc_preview_yaml_resolves_despite_empty_parent_argument(monkeypatch, profile, override):
     from nav2_common.launch import RewrittenYaml
 
-    controller = compose(monkeypatch, profile)[2]
+    controller = compose(monkeypatch, profile, start_mpc_preview=override)[2]
     module = load_subsystem(controller['package'], controller['launch'])
     context = launch_context(module, {
         'mpc_preview_params_file': '', **controller['arguments']})
@@ -128,6 +129,14 @@ def test_mpc_preview_yaml_resolves_despite_empty_parent_argument(monkeypatch, pr
         convert_types=True)
     config = yaml.safe_load(Path(rewritten.perform(context)).read_text())
     assert config['mpc_preview']['ros__parameters']['use_sim_time'] is (profile == 'sim')
+    module.Node = lambda **kwargs: kwargs
+    controller_yaml = RewrittenYaml(
+        source_file=context.launch_configurations['controller_params_file'], root_key='',
+        param_rewrites={'use_sim_time': controller['arguments']['use_sim_time']},
+        convert_types=True)
+    preview = module.mpc_preview_node(context, controller_yaml, rewritten)[0]
+    expected = profile == 'sim' if override == '' else override == 'true'
+    assert preview['condition'].evaluate(context) is expected
 
 
 def test_invalid_control_gui_setting_fails(monkeypatch):

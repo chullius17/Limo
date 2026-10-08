@@ -83,7 +83,8 @@ controller_server:
         # even when noisy/lagging odometry still reports near-zero motion.
         feedback: "OPEN_LOOP"
         Debug:
-          enabled: true  # MPC telemetry; the image renderer is opt-in at launch.
+          enabled: true  # MPC telemetry.
+          preview_enabled: true  # Start the image renderer; requires telemetry.
           topic: /limo/control/mpc_debug
           publish_rate: 4.0
           samples_per_family: 6  # Evenly spread across each family's candidates.
@@ -104,7 +105,7 @@ controller_server:
         steering_weight: 0.5
         # Immediate command costs are not averaged over the prediction horizon.
         steering_command_weight: 0.2
-        steering_rate_change_weight: 0.1
+        steering_rate_change_weight: 0.3  # Penalize rapid reversals of the steering correction.
         # Keep reverse available for necessary maneuvers, but discourage
         # backing up and alternating direction to gain a small scoring benefit.
         reverse_distance_weight: 2.0  # Cost per metre travelled in reverse.

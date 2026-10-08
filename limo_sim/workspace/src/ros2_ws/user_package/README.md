@@ -73,6 +73,10 @@ they follow the robot and reflect configuration changes without copying sizes
 into RViz. They appear once their costmaps are active and localization is ready.
 The control GUI contains the control buttons and status terminal, with no MPC
 telemetry/image panel. Read MPC telemetry separately on `/limo/control/mpc_debug`.
+The controller YAML's `FollowPath.MPC.Debug.preview_enabled` starts the MPC image
+renderer by default in simulation and leaves it off on the real robot.
+Override it for one run with `start_mpc_preview:=true` or `start_mpc_preview:=false`.
+View `/limo/control/mpc_preview/image/compressed` separately with `rqt_image_view`.
 
 The real RViz profiles show **Waterfall Lane Overlay** using a desktop
 `image_transport` decoder. The robot sends JPEG on

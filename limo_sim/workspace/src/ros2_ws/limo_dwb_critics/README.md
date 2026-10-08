@@ -120,8 +120,9 @@ not a translation of MPPI's `gamma` or `temperature`.
 
 `MPC.steering_command_weight: 0.2` additionally penalizes the squared first
 steering increment normalized by `max_steering_rate * model_dt`.
-`MPC.steering_rate_change_weight: 0.1` penalizes its difference from the previous
-issued steering increment, in the same normalized units. These immediate
+`MPC.steering_rate_change_weight` (0.3 in simulation, 0.1 on the real robot)
+penalizes its difference from the previous issued steering increment, in the
+same normalized units. These immediate
 costs are **not divided by the horizon length**, so increasing the prediction
 horizon does not dilute command continuity. Steering-rate history resets with
 the warm start. Both are soft costs: collision rejection can still force a

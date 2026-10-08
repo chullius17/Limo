@@ -52,8 +52,10 @@ def test_ros_snapshot_becomes_png_and_stale_paths_disappear_without_clock_update
     executor.add_node(transport)
     qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
     images = []
+    # Match Foxy's rqt_image_view; a best-effort image writer cannot serve it.
+    image_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
     subscription = transport.create_subscription(
-        CompressedImage, '/test_mpc_preview/image/compressed', images.append, qos)
+        CompressedImage, '/test_mpc_preview/image/compressed', images.append, image_qos)
     publisher = transport.create_publisher(MpcDebug, '/test_mpc_preview/debug', qos)
     frame = sample_frame()
     msg = MpcDebug()

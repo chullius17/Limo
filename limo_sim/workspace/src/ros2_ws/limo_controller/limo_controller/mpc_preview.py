@@ -70,11 +70,15 @@ class MpcPreview(Node):
                 or not math.isfinite(rate) or not 0 < rate <= 100
                 or not math.isfinite(self.stale_timeout) or self.stale_timeout <= 0):
             raise ValueError('Invalid image format, compression, rate or stale timeout')
-        qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        input_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        # Foxy's rqt_image_view requests reliable delivery for image transport.
+        # Reliable image output also serves best-effort viewers; telemetry input
+        # keeps its existing best-effort contract with the controller.
+        image_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
         self.publisher = self.create_publisher(
-            CompressedImage, self.get_parameter('image_topic').value, qos)
+            CompressedImage, self.get_parameter('image_topic').value, image_qos)
         self.subscription = self.create_subscription(
-            MpcDebug, self.get_parameter('debug_topic').value, self._snapshot, qos)
+            MpcDebug, self.get_parameter('debug_topic').value, self._snapshot, input_qos)
         self.frame = None
         self.header = None
         self.base_frame = 'base_link'

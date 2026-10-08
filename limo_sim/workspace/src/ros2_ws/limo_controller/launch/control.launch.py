@@ -49,15 +49,21 @@ def mpc_preview_node(context, configured_params, preview_params):
     with open(configured_params.perform(context), encoding='utf-8') as stream:
         config = yaml.safe_load(stream)
     params = config['controller_server']['ros__parameters']
-    enabled = params.get('FollowPath', {}).get('MPC', {}).get('Debug', {}).get('enabled', False)
-    if not isinstance(enabled, bool):
-        raise ValueError('FollowPath.MPC.Debug.enabled must be a YAML boolean')
+    debug = params.get('FollowPath', {}).get('MPC', {}).get('Debug', {})
+    enabled = debug.get('enabled', False)
+    preview_enabled = debug.get('preview_enabled', False)
+    for name, value in (('enabled', enabled), ('preview_enabled', preview_enabled)):
+        if not isinstance(value, bool):
+            raise ValueError('FollowPath.MPC.Debug.{} must be a YAML boolean'.format(name))
+    override = LaunchConfiguration('start_mpc_preview').perform(context)
+    if override:
+        if override.lower() not in ('true', 'false'):
+            raise ValueError('start_mpc_preview must be true or false')
+        preview_enabled = override.lower() == 'true'
     return [Node(
         package='limo_controller', executable='mpc_preview', name='mpc_preview',
         output='screen', parameters=[preview_params],
-        condition=IfCondition(PythonExpression([
-            str(enabled), " and '", LaunchConfiguration('start_mpc_preview'),
-            "'.lower() == 'true'"])),
+        condition=IfCondition(str(enabled and preview_enabled).lower()),
     )]
 
 
@@ -176,10 +182,10 @@ def generate_launch_description():
             description='Require healthy command-mode feedback before START.',
         ),
         DeclareLaunchArgument(
-            'start_mpc_preview', default_value='false',
+            'start_mpc_preview', default_value='',
             description=(
-                'Opt in to the image renderer when MPC.Debug.enabled is true; '
-                'telemetry is independent.'),
+                'Override MPC.Debug.preview_enabled; empty uses the controller YAML. '
+                'Rendering requires MPC.Debug.enabled.'),
         ),
         DeclareLaunchArgument(
             'mpc_preview_params_file',

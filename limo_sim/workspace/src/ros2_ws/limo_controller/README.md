@@ -125,16 +125,20 @@ It is explicitly `true` in both `control_sim.yaml` and `control_real.yaml`.
 The control GUI contains only the control buttons and status terminal; it does
 not subscribe to MPC telemetry or images. Read numerical telemetry in a separate
 terminal with `ros2 topic echo /limo/control/mpc_debug --no-arr`.
-`control.launch.py` and the application launches leave the image renderer off
-by default; use `start_mpc_preview:=true`
-to opt in. Rendering requires the YAML telemetry flag as well. Clock overrides
-do not change that flag; a custom controller YAML uses its own flag (missing
+`FollowPath.MPC.Debug.preview_enabled` starts the image renderer: it is `true`
+in `control_sim.yaml` and `false` in `control_real.yaml`. Both the standalone
+controller and application launches use the selected controller YAML setting.
+Use `start_mpc_preview:=true` or `start_mpc_preview:=false` to override it for
+one run. Rendering requires the YAML telemetry flag as well. Clock overrides
+do not change these flags; a custom controller YAML uses its own flags (missing
 means disabled).
 
 The node publishes `sensor_msgs/CompressedImage` on
 `/limo/control/mpc_preview/image/compressed` (PNG by default).
 The renderer opens no window of its own; `rqt_image_view` can display the
 compressed image separately from the control GUI.
+Image output uses reliable delivery to support Foxy's `rqt_image_view`; the
+telemetry subscription remains best effort.
 
 The top-down image is centered on the snapshot's `base_link`, with +x upward
 and +y leftward. It contains the controller's local costmap, its effective
@@ -161,8 +165,9 @@ controller. The preview is diagnostic and has no effect on selection.
 Settings are split between two YAML files:
 
 - `config/control_sim.yaml` / `config/control_real.yaml`, under `FollowPath.MPC.Debug`:
-  enable telemetry with `enabled` (true in both profiles),
-  its topic, publication rate, samples per family and pose downsampling stride.
+  enable telemetry with `enabled` (true in both profiles) and start the image
+  renderer with `preview_enabled` (true for sim, false for real); configure the
+  telemetry topic, publication rate, samples per family and pose downsampling stride.
   Representatives are evenly distributed over each family's generated order;
   the winner is always included even if it was not among those representatives.
 - `config/mpc_preview_sim.yaml`, under `mpc_preview.ros__parameters`: input/output

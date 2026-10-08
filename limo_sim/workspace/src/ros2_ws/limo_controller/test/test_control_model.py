@@ -210,19 +210,23 @@ def test_nano_budget_preserves_horizon_and_safety_timeouts():
 
 
 @pytest.mark.parametrize('profile', ['sim', 'real'])
-def test_default_launch_enables_telemetry_without_image_renderer(monkeypatch, profile):
+def test_default_launch_uses_profile_mpc_preview_setting(monkeypatch, profile):
     context, config, description = controller(monkeypatch, robot_model=profile)
     debug = config['controller_server']['ros__parameters']['FollowPath']['MPC']['Debug']
     assert debug['enabled'] is True
+    assert debug['preview_enabled'] is (profile == 'sim')
     preview = next(action for action in description.entities
                    if isinstance(action, dict) and action.get('name') == 'mpc_preview')
-    assert not preview['condition'].evaluate(context)
+    assert preview['condition'].evaluate(context) is (profile == 'sim')
 
 
 @pytest.mark.parametrize('profile,clock,requested,enabled', [
     ('sim', 'true', 'true', True),
     ('sim', 'false', 'true', True),
+    ('sim', 'false', '', True),
     ('sim', 'true', 'false', False),
+    ('real', 'true', '', False),
+    ('real', 'false', 'false', False),
     ('real', 'false', 'true', True),
     ('real', 'true', 'true', True),
 ])
@@ -237,19 +241,25 @@ def test_mpc_preview_uses_yaml_flag_and_optional_launch_disable(
     assert config['mpc_preview']['ros__parameters']['use_sim_time'] is (clock == 'true')
 
 
-@pytest.mark.parametrize('profile,enabled', [('sim', False), ('real', True)])
-def test_custom_yaml_controls_mpc_preview_activation(monkeypatch, tmp_path, profile, enabled):
+@pytest.mark.parametrize('profile', ['sim', 'real'])
+@pytest.mark.parametrize('enabled', [True, False])
+@pytest.mark.parametrize('preview_enabled', [True, False, None])
+def test_custom_yaml_controls_mpc_preview_activation(
+        monkeypatch, tmp_path, profile, enabled, preview_enabled):
     config = yaml.safe_load((PACKAGE / 'config' / ('control_' + profile + '.yaml')).read_text())
     debug = config['controller_server']['ros__parameters']['FollowPath']['MPC']['Debug']
     debug['enabled'] = enabled
+    if preview_enabled is None:
+        del debug['preview_enabled']
+    else:
+        debug['preview_enabled'] = preview_enabled
     path = tmp_path / 'control.yaml'
     path.write_text(yaml.safe_dump(config))
     context, _, description = controller(
-        monkeypatch, robot_model=profile, controller_params_file=str(path),
-        start_mpc_preview='true')
+        monkeypatch, robot_model=profile, controller_params_file=str(path))
     preview = next(action for action in description.entities
                    if isinstance(action, dict) and action.get('name') == 'mpc_preview')
-    assert preview['condition'].evaluate(context) is enabled
+    assert preview['condition'].evaluate(context) is (enabled and preview_enabled is True)
 
 
 def test_yaml_disabled_preview_cannot_be_enabled_by_launch(monkeypatch, tmp_path):

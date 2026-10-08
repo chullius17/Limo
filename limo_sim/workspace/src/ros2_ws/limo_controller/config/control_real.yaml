@@ -83,7 +83,8 @@ controller_server:
         # even when noisy/lagging odometry still reports near-zero motion.
         feedback: "OPEN_LOOP"
         Debug:
-          enabled: true  # MPC telemetry; the image renderer is opt-in at launch.
+          enabled: true  # MPC telemetry.
+          preview_enabled: false  # Start the image renderer; requires telemetry.
           topic: /limo/control/mpc_debug
           publish_rate: 4.0
           samples_per_family: 6
