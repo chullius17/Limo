@@ -15,6 +15,9 @@ def reference_labels(points, labels, minimum, maximum, radius):
     blue = points[labels == 1]
     white_indices = np.flatnonzero(labels == 3)
     white = points[white_indices]
+    minimum, maximum, radius = (
+        np.broadcast_to(value, (len(points),))[white_indices]
+        for value in (minimum, maximum, radius))
     if not len(blue) or not len(white):
         return output
     distances = np.linalg.norm(white[:, None, :] - blue[None, :, :], axis=2).min(axis=1)
@@ -139,3 +142,32 @@ def test_blue_filter_uses_the_seven_by_seven_white_neighborhood(shape):
 def test_invalid_thresholds(thresholds):
     with pytest.raises(ValueError):
         BoardwalkClassifier().classify(np.empty((0, 2)), np.empty(0), *thresholds)
+
+
+@pytest.mark.parametrize('seed', range(6))
+def test_per_point_radii_match_direct_distances(seed):
+    rng = np.random.RandomState(seed)
+    points = rng.uniform(-1, 1, (250, 2))
+    labels = rng.choice([1, 2, 3, 5], len(points)).astype(np.uint8)
+    minimum = rng.uniform(0, 0.2, len(points))
+    maximum = minimum + rng.uniform(0, 0.4, len(points))
+    propagation = rng.choice([0.0, 0.125, 0.25], len(points))
+    expected = reference_labels(points, labels, minimum, maximum, propagation)
+    classify_boardwalk(points, labels, minimum, maximum, propagation)
+    np.testing.assert_array_equal(labels, expected)
+
+
+def test_propagation_uses_target_radius_and_can_cross_depth_levels():
+    points = np.column_stack(([0, 0.5, 0.375, 0.25, 0.125], np.zeros(5)))
+    labels = np.array([1, 3, 3, 3, 3], dtype=np.uint8)
+    # The only seed is x=0.5. Its own radius is zero; target radii decide growth.
+    classify_boardwalk(points, labels, 0.375, 0.5, [0, 0, 0.125, 0.5, 0])
+    np.testing.assert_array_equal(labels, [1, 4, 3, 4, 3])
+
+
+def test_per_point_radii_remain_aligned_after_nonfinite_points_are_removed():
+    points = np.array([[0, 0], [np.nan, 0], [0.125, 0], [np.inf, 0], [0.25, 0]])
+    labels = np.array([1, 3, 3, 3, 3], dtype=np.uint8)
+    stats = classify_boardwalk(points, labels, 0.1, [0.5, 0.5, 0.5, 0.5, 0.2], 0)
+    np.testing.assert_array_equal(labels, [1, 3, 4, 3, 6])
+    assert stats['boardwalk_nonfinite_count'] == 2

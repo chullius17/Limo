@@ -110,7 +110,8 @@ def build_semantic_cloud(
         point_groups, depth, intrinsics, width, height, input_crop_y_min,
         ray_cache, rotation, translation, cloud_min_depth, cloud_max_depth,
         boardwalk_classifier, blue_radius_min, blue_radius_max,
-        boardwalk_propagation_radius, road_boardwalk_only, voxel_size):
+        boardwalk_propagation_radius, road_boardwalk_only, voxel_size,
+        depth_radius_profile=None):
     """Project labeled pixels, classify boardwalk and reduce the outgoing cloud."""
     projection_started_at = time.perf_counter()
     nonempty_groups = [
@@ -154,10 +155,12 @@ def build_semantic_cloud(
 
     stats = {}
     if boardwalk_classifier is not None:
+        radii = (blue_radius_min, blue_radius_max, boardwalk_propagation_radius)
+        if depth_radius_profile is not None and depth_radius_profile.enabled:
+            radii = depth_radius_profile.resolve(z)
         stats = boardwalk_classifier.classify(
             bev_points, class_ids,
-            blue_radius_min, blue_radius_max,
-            boardwalk_propagation_radius,
+            *radii,
             LABEL_BLUE, LABEL_BACKGROUND, LABEL_BOARDWALK,
             LABEL_INTERIOR_BOARDWALK,
         )

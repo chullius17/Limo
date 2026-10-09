@@ -63,6 +63,43 @@ Offline and online mapping profiles no longer start CV automatically. Launch
 CV separately; the mapping launch's explicit `start_cv:=true` override remains
 available. Restart CV after changing its profile.
 
+## Point-cloud radii by depth
+
+`visual_ptcld` can choose its three metric classification radii from discrete
+depth bands. In `cv_real.yaml`, set the upper boundaries and
+radius values directly:
+
+```yaml
+visual_ptcld:
+  radius_depth_breakpoints_m: [0.5, 0.8]
+  blue_radius_min_m: [0.07, 0.09, 0.10]
+  blue_radius_max_m: [0.25]
+  enable_boardwalk: true
+  boardwalk_propagation_radius_m: [0.15]
+```
+
+The minimum radius is 0.07 m at depth <= 0.5 m, 0.09 m at
+0.5 < depth <= 0.8 m, and 0.10 m at depth > 0.8 m. There is no interpolation.
+Each radius accepts a scalar or a list with 1 through N+1 values for N depth
+boundaries. Short lists repeat their last value in every remaining band:
+`blue_radius_min_m: [0.07, 0.09]` uses 0.09 m for all depths above 0.5 m.
+A single value applies to every band, independently for each of the three radii.
+Omitting `radius_depth_breakpoints_m` preserves constant scalar configuration.
+
+Depth means each candidate point's optical Z from the corrected depth image,
+before the BEV transform and metric voxelization. Invalid/out-of-range depths
+are removed before selecting radii. Neighbor distances still use metric BEV XY;
+both passes use the target point's selected radii. First-pass seeds remain shared
+across depth bands, and propagation remains nonrecursive. `enable_boardwalk`
+continues to enable or disable the entire classification.
+
+Boundaries must be finite, positive and strictly increasing. Radius lists cannot
+be empty or exceed N+1 entries; radii must be finite and nonnegative, with
+minimum <= maximum in every effective band. Invalid profiles fail at startup
+with an explanation. Restart CV after editing these startup parameters.
+The real profile starts with the three minimum radii above; simulation keeps its
+previous fixed scalar values and has no depth bands. Tune real values on camera data.
+
 ## Adaptive binary lane detector (manual)
 
 `lane_detector_binary` is an optional alternative to `lane_detector`; no launch
@@ -253,6 +290,7 @@ The node and its support modules are grouped in `cv_package/visual_ptcld/`:
 - `cloud_cpu.py`: cached camera rays, planar transforms and voxel grouping.
 - `cloud_message.py`: `PointCloud2` serialization.
 - `boardwalk.py`: metric boardwalk classification and exterior-road filtering.
+- `depth_radius_profile.py`: validation and selection of discrete depth bands.
 
 Python imports use `cv_package.visual_ptcld.<module>`. The ROS executable remains
 `visual_ptcld`; its entry point is `cv_package.visual_ptcld.visual_ptcld:main`.

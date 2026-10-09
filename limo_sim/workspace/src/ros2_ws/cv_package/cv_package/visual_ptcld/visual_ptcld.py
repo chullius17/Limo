@@ -31,6 +31,7 @@ from .boardwalk import (
 )
 from . import cloud_pipeline
 from .cloud_cpu import RayCache
+from .depth_radius_profile import DepthRadiusProfile
 from .cloud_message import (
     CLOUD_FIELDS as POINT_CLOUD_FIELDS,
     make_pointcloud2,
@@ -138,6 +139,7 @@ class VisualPtcld(Node):
         self.declare_parameter('pointcloud_max_depth_m', 2.5)
         self.declare_parameter('blue_radius_min_m', 0.15)
         self.declare_parameter('blue_radius_max_m', 0.25)
+        self.declare_parameter('radius_depth_breakpoints_m', [])
         self.declare_parameter('enable_boardwalk', True)
         self.declare_parameter('road_boardwalk_only', False)
         self.declare_parameter('boardwalk_propagation_radius_m', 0.15)
@@ -154,18 +156,20 @@ class VisualPtcld(Node):
             self.get_parameter('fallback_depth_width').value)
         self.fallback_depth_height = int(
             self.get_parameter('fallback_depth_height').value)
-        self.blue_radius_min = float(
-            self.get_parameter('blue_radius_min_m').value)
-        self.blue_radius_max = float(
-            self.get_parameter('blue_radius_max_m').value)
+        self.depth_radius_profile = DepthRadiusProfile(
+            self.get_parameter('radius_depth_breakpoints_m').value,
+            self.get_parameter('blue_radius_min_m').value,
+            self.get_parameter('blue_radius_max_m').value,
+            self.get_parameter('boardwalk_propagation_radius_m').value)
+        # Preserve scalar pipeline inputs for profiles with no depth breakpoints.
+        (self.blue_radius_min, self.blue_radius_max,
+         self.boardwalk_propagation_radius) = self.depth_radius_profile.radii[:, 0]
         self.enable_boardwalk = bool(
             self.get_parameter('enable_boardwalk').value)
         self.road_boardwalk_only = bool(
             self.get_parameter('road_boardwalk_only').value)
         if self.road_boardwalk_only and not self.enable_boardwalk:
             raise ValueError('road_boardwalk_only requires enable_boardwalk')
-        self.boardwalk_propagation_radius = float(
-            self.get_parameter('boardwalk_propagation_radius_m').value)
         self.boardwalk_classifier = BoardwalkClassifier()
         self.bev_frame = str(self.get_parameter('bev_frame').value)
         if not 0.0 <= self.input_crop_y_min < 1.0:
@@ -176,12 +180,6 @@ class VisualPtcld(Node):
             raise ValueError('corrected_depth_timeout_sec must be positive')
         if self.fallback_depth_width <= 0 or self.fallback_depth_height <= 0:
             raise ValueError('Fallback depth dimensions must be positive')
-        if (not np.isfinite([self.blue_radius_min, self.blue_radius_max]).all()
-                or not 0.0 <= self.blue_radius_min <= self.blue_radius_max):
-            raise ValueError('Blue point radii are invalid')
-        if (not np.isfinite(self.boardwalk_propagation_radius)
-                or self.boardwalk_propagation_radius < 0.0):
-            raise ValueError('Boardwalk propagation radius must be finite and non-negative')
         if not self.bev_frame:
             raise ValueError('bev_frame cannot be empty')
 
@@ -311,9 +309,7 @@ class VisualPtcld(Node):
             f'Boardwalk classification {"enabled" if self.enable_boardwalk else "disabled"}: '
             f'class_id={int(self.LABEL_BOARDWALK)}, '
             f'interior_class_id={int(self.LABEL_INTERIOR_BOARDWALK)}, '
-            f'exterior-road distance ({self.blue_radius_min:.3f}, '
-            f'{self.blue_radius_max:.3f}] m, '
-            f'propagation < {self.boardwalk_propagation_radius:.3f} m; '
+            f'{self.boardwalk_radius_description()}; '
             f'CPU cKDTree; two exact point neighbor passes; '
             f'exterior-road boundary kernel={self.blue_boundary_kernel_size}x'
             f'{self.blue_boundary_kernel_size}.')
@@ -702,6 +698,15 @@ class VisualPtcld(Node):
                 f"======================================================================"
             )
 
+    def boardwalk_radius_description(self):
+        """Describe active discrete levels or the legacy constant thresholds."""
+        if self.depth_radius_profile.enabled:
+            return self.depth_radius_profile.describe()
+        return (
+            f'Exterior road band: ({self.blue_radius_min:.3f}, '
+            f'{self.blue_radius_max:.3f}] m | '
+            f'Propagation: < {self.boardwalk_propagation_radius:.3f} m')
+
     def boardwalk_diagnostics(self, current):
         """Report classification cost and workload over evaluated clouds only."""
         if not self.enable_boardwalk:
@@ -717,9 +722,7 @@ class VisualPtcld(Node):
         lines = [
             f'  [Boardwalk class 4: direct points]    Rolling window: {len(samples)} clouds\n',
             f'    Backend: CPU cKDTree | Exterior road filter: OpenCV CPU\n',
-            f'    Exterior road band: ({self.blue_radius_min:.3f}, '
-            f'{self.blue_radius_max:.3f}] m | '
-            f'Propagation: < {self.boardwalk_propagation_radius:.3f} m\n',
+            f'    {self.boardwalk_radius_description()}\n',
         ]
         for key, title in BOARDWALK_TIMINGS:
             values = self.telemetry_stats[key]
@@ -846,6 +849,7 @@ class VisualPtcld(Node):
             boardwalk_propagation_radius=self.boardwalk_propagation_radius,
             road_boardwalk_only=self.road_boardwalk_only,
             voxel_size=self.pointcloud_voxel_size,
+            depth_radius_profile=self.depth_radius_profile,
         )
         math_ms = projection_ms + transform_ms
 

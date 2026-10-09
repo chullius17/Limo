@@ -45,10 +45,17 @@ class BoardwalkClassifier:
             self, points, class_ids, minimum, maximum, propagation_radius,
             blue_label=1, white_label=3, boardwalk_label=4,
             interior_boardwalk_label=6):
-        """Relabel selected soft obstacles; preserve coordinates and order."""
+        """Relabel soft obstacles using scalar or per-target-point radii."""
+        minimum, maximum, propagation_radius = np.broadcast_arrays(
+            np.asarray(minimum, dtype=np.float64),
+            np.asarray(maximum, dtype=np.float64),
+            np.asarray(propagation_radius, dtype=np.float64))
         if (not np.isfinite([minimum, maximum, propagation_radius]).all()
-                or not 0 <= minimum <= maximum or propagation_radius < 0):
+                or np.any(minimum < 0) or np.any(minimum > maximum)
+                or np.any(propagation_radius < 0)):
             raise ValueError('Invalid boardwalk distance thresholds')
+        thresholds = [np.broadcast_to(value, (len(points),))
+                      for value in (minimum, maximum, propagation_radius)]
 
         started = time.perf_counter()
         stats = {key: 0.0 for key, _ in BOARDWALK_TIMINGS}
@@ -58,6 +65,8 @@ class BoardwalkClassifier:
         finite = np.isfinite(points).all(axis=1)
         blue_indices = np.flatnonzero((class_ids == blue_label) & finite)
         white_indices = np.flatnonzero((class_ids == white_label) & finite)
+        minimum, maximum, propagation_radius = (
+            value[white_indices] for value in thresholds)
         # cKDTree expects contiguous float64 coordinates.
         blue = np.ascontiguousarray(points[blue_indices], dtype=np.float64)
         white = np.ascontiguousarray(points[white_indices], dtype=np.float64)
@@ -87,7 +96,8 @@ class BoardwalkClassifier:
             seeds = eligible & (distance_blue > minimum)
             selected = seeds.copy()
             remaining = np.flatnonzero(eligible & ~seeds)
-            if np.any(seeds) and len(remaining) and propagation_radius > 0:
+            remaining_radii = propagation_radius[remaining]
+            if np.any(seeds) and np.any(remaining_radii > 0):
                 stage = time.perf_counter()
                 seed_tree = cKDTree(white[seeds])
                 stats['boardwalk_seed_build_ms'] = (
@@ -95,11 +105,11 @@ class BoardwalkClassifier:
                 stage = time.perf_counter()
                 distance_seed, _ = seed_tree.query(
                     white[remaining], k=1, eps=0.0, p=2,
-                    distance_upper_bound=propagation_radius)
+                    distance_upper_bound=float(np.max(remaining_radii)))
                 stats['boardwalk_seed_query_ms'] = (
                     time.perf_counter() - stage) * 1000.0
                 # Only first-pass seeds are sources: propagation is not recursive.
-                selected[remaining[distance_seed < propagation_radius]] = True
+                selected[remaining[distance_seed < remaining_radii]] = True
 
         stats['boardwalk_eligible_count'] = int(np.count_nonzero(eligible))
         stats['boardwalk_seed_count'] = int(np.count_nonzero(seeds))
