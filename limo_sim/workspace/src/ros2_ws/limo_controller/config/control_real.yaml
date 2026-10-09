@@ -43,7 +43,7 @@ controller_server:
 
       # Match the real LIMO limits used by the Humble MPPI profile.
       min_vel_x: 0.0  # Forward motion and stopping only.
-      max_vel_x: 0.30
+      max_vel_x: 0.40
       min_vel_y: 0.0
       max_vel_y: 0.0
       max_vel_theta: 1.10
@@ -83,7 +83,7 @@ controller_server:
         feedback: "OPEN_LOOP"
         Debug:
           enabled: true  # MPC telemetry.
-          preview_enabled: false  # Start the image renderer; requires telemetry.
+          preview_enabled: true  # Start the image renderer; requires telemetry.
           topic: /limo/control/mpc_debug
           publish_rate: 4.0
           samples_per_family: 6
@@ -105,7 +105,7 @@ controller_server:
         steering_weight: 0.5
         # Immediate command costs are not averaged over the prediction horizon.
         steering_command_weight: 0.2
-        steering_rate_change_weight: 0.1
+        steering_rate_change_weight: 0.10
 
       transform_tolerance: 0.20
       # Keep a free rejoin point beyond newly observed local obstacles.

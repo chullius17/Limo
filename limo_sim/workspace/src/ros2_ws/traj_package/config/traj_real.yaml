@@ -61,7 +61,7 @@ planner_server:
       # The theoretical centre-line limit is 0.462 m. Use a conservative
       # operational radius so every planned primitive remains comfortably
       # inside the steering capability of the physical robot.
-      minimum_turning_radius: 0.7
+      minimum_turning_radius: 0.55
       # Only the real-to-virtual start prefix is a collision-unchecked Dubins curve.
       explicit_start_service: /compute_path_with_start
       start_connector_sample_step: 0.02
@@ -113,7 +113,7 @@ global_costmap:
 
       # Use the physical 0.322 x 0.220 m LIMO footprint for planning and goal
       # validation; the real controller footprint is inset 5 mm per side.
-      footprint: "[[-0.161, -0.110], [-0.161, 0.110], [0.161, 0.110], [0.161, -0.110]]"
+      footprint: "[[-0.161, -0.100], [-0.161, 0.100], [0.161, 0.100], [0.161, -0.100]]"
       footprint_padding: 0.0
 
       plugins: ["static_layer", "border_follow_layer"]
@@ -136,8 +136,8 @@ global_costmap:
         # Strongly discourage crossing between the two preferred lanes while
         # keeping the ridge traversable when no lower-cost route exists.
         inter_lane_peak_cost: 100
-        far_cost_slope: 10.0
-        far_max_cost: 8
+        far_cost_slope: 50.0
+        far_max_cost: 40
 
 # Goal selection and validation use the same footprint as the planner.
 rviz_goal_bridge:

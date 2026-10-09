@@ -35,7 +35,7 @@ local_ctrl_map:
   voxel_size: 0.03
   grid_resolution: 0.02
   # Soft boardwalk repulsion band; Nav2 separately inflates lethal laser cells.
-  inflation_radius: 0.15
+  inflation_radius: 0.01
   grid_publish_rate: 10.0
   live_cloud_timeout_sec: 0.50
   tf_wait_timeout_sec: 0.20  # Bounded non-blocking wait for exact cloud TF.
