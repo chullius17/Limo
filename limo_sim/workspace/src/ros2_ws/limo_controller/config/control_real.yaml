@@ -73,9 +73,8 @@ controller_server:
       # the remaining sequence is shifted and reoptimized at the next cycle.
       MPC:
         StartConnector:
-          # Ignore repulsion, critical costs, footprint collisions and detours
-          # ONLY while following the planner-declared initial Dubins prefix.
-          ignore_obstacles: true
+          # Keep physical obstacle collision checks on the initial prefix too.
+          ignore_obstacles: false
           topic: /limo/planning/start_connector
           position_tolerance: 0.05
           yaw_tolerance: 0.10
@@ -175,8 +174,8 @@ controller_server:
           max_angle_to_furthest: 1.0
           forward_preference: false
 
-# The controller costmap merges the live LaserScan and the raw semantic grid,
-# marks semantic values above 85 as lethal, and then performs the only inflation.
+# Laser observations stay lethal and receive Nav2 inflation. Semantic boardwalk
+# costs (90) stay soft, including their source-grid repulsion band.
 local_costmap:
   local_costmap:
     ros__parameters:
@@ -191,13 +190,13 @@ local_costmap:
       width: 5
       height: 5
       resolution: 0.05
-      # Inset 10 mm per side from the planner's 0.322 x 0.220 m footprint.
-      footprint: "[[-0.156, -0.095], [-0.156, 0.095], [0.156, 0.095], [0.156, -0.095]]"
-      footprint_padding: 0.0  # Effective controller footprint: 0.312 x 0.210 m.
+      # Match the physical/planner footprint when checking laser collisions.
+      footprint: "[[-0.161, -0.110], [-0.161, 0.110], [0.161, 0.110], [0.161, -0.110]]"
+      footprint_padding: 0.0  # Effective controller footprint: 0.322 x 0.220 m.
       track_unknown_space: false
       always_send_full_costmap: false
       trinary_costmap: false
-      lethal_cost_threshold: 86
+      lethal_cost_threshold: 100  # Boardwalk 90 is repulsive, never a hard collision.
       unknown_cost_value: 255
       use_maximum: true
 
