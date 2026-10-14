@@ -29,8 +29,15 @@
  */
 
 #include "limo_base/limo_driver.h"
+// Original AgileX code (disabled):
+// int flag=0;
+// LIMO removal: a global first-IMU flag was shared by all driver instances.
+// imu_yaw_initialized_ now belongs to each instance and starts as false.
+// LIMO additions: yaw unwrapping and calibration validation use <cmath>;
+// invalid startup calibration throws std::invalid_argument from <stdexcept>.
 #include <cmath>
 #include <stdexcept>
+// ParameterDescriptor supplies the ROS rule that freezes calibration after startup.
 #include "rcl_interfaces/msg/parameter_descriptor.hpp"
 
 namespace AgileX {
@@ -43,11 +50,13 @@ LimoDriver::LimoDriver(std::string node_name):rclcpp::Node(node_name),keep_runni
     this->declare_parameter("base_frame");
     this->declare_parameter("pub_odom_tf");
     this->declare_parameter("use_mcnamu");
-    this->declare_parameter("motion_mode");
     this->declare_parameter("control_rate");  
 
-    // Physical inner-wheel angle / protocol angle, for each signed turn.
-    // Keep startup-only: changing calibration during motion is discontinuous.
+    // LIMO addition: replace fixed steering constants with startup parameters.
+    // Each scale is physical inner-wheel angle / protocol angle for that turn.
+    // Keep the generic default 2.47; the real robot profile supplies 1.0.
+    // read_only freezes the ROS parameters for the entire driver lifetime,
+    // preventing a sudden change in command conversion during motion.
     rcl_interfaces::msg::ParameterDescriptor steering_descriptor;
     steering_descriptor.read_only = true;
     steering_descriptor.description =
@@ -56,10 +65,12 @@ LimoDriver::LimoDriver(std::string node_name):rclcpp::Node(node_name),keep_runni
         "steering_left_scale", 2.47, steering_descriptor);
     right_angle_scale_ = this->declare_parameter<double>(
         "steering_right_scale", 2.47, steering_descriptor);
+    // Reject invalid ratios before starting the driver or dividing by them.
     if (!std::isfinite(left_angle_scale_) || left_angle_scale_ < 1.0 ||
         !std::isfinite(right_angle_scale_) || right_angle_scale_ < 1.0) {
         throw std::invalid_argument("Steering scales must be finite and >= 1.0");
     }
+    // Report the selected calibration so the startup configuration can be checked.
     RCLCPP_INFO(this->get_logger(),
                 "Steering scales: left=%.3f, right=%.3f; inner-wheel limit=28 deg",
                 left_angle_scale_, right_angle_scale_);
@@ -69,22 +80,15 @@ LimoDriver::LimoDriver(std::string node_name):rclcpp::Node(node_name),keep_runni
     this->get_parameter_or<std::string>("base_frame", base_frame_, "base_link");
     this->get_parameter_or<bool>("pub_odom_tf", pub_odom_tf_, "false");
     this->get_parameter_or<bool>("use_mcnamu", use_mcnamu_, "false");
-    this->get_parameter_or<int64_t>("motion_mode", motion_mode_override_, -1);
 
     std::cout << "Loading parameters: " << std::endl;
     std::cout << "- port name: " << port_name << std::endl;
     std::cout << "- odom frame name: " << odom_frame_ << std::endl;
     std::cout << "- base frame name: " << base_frame_ << std::endl;
     std::cout << "- odom topic name: " << pub_odom_tf_ << std::endl;
-    if (motion_mode_override_ >= MODE_FOUR_DIFF &&
-        motion_mode_override_ <= MODE_MCNAMU) {
-        RCLCPP_INFO_STREAM(this->get_logger(),
-                           "Command motion mode override: " << motion_mode_override_);
-    }
         
     if(use_mcnamu_) {
         motion_mode_ = MODE_MCNAMU;
-        motion_mode_override_ = MODE_MCNAMU;
     }
     tf_broadcaster_=std::make_shared<tf2_ros::TransformBroadcaster>(*this);
     odom_publisher_=this->create_publisher<nav_msgs::msg::Odometry>("/odom",50);
@@ -455,26 +459,19 @@ void LimoDriver::sendFrame(const LimoFrame& frame) {
 }
 void LimoDriver::twistCmdCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
 {
-    // Keep motion_mode_ as raw chassis feedback, but allow the command
-    // conversion to be selected independently for mechanically converted
-    // robots whose firmware keeps reporting a stale mode.
-    int64_t configured_mode = -1;
-    this->get_parameter_or<int64_t>("motion_mode", configured_mode, -1);
-    const uint8_t command_motion_mode =
-        configured_mode >= MODE_FOUR_DIFF && configured_mode <= MODE_MCNAMU
-            ? static_cast<uint8_t>(configured_mode)
-            : motion_mode_;
-
-    switch (command_motion_mode) {
+    switch (motion_mode_) {
         case MODE_FOUR_DIFF: {
             setMotionCommand(msg->linear.x, msg->angular.z, 0, 0);
             break;
         }
         case MODE_ACKERMANN: {
+            // LIMO addition: stop without computing a turning radius at zero speed.
+            // Ackermann steering cannot satisfy a request to rotate in place.
             if (std::fabs(msg->linear.x) < 1e-6) {
                 setMotionCommand(0, 0, 0, 0);
                 break;
             }
+            // Handle straight travel before dividing by angular.z below.
             if (std::fabs(msg->angular.z) < 1e-6) {
                 setMotionCommand(msg->linear.x, 0, 0, 0);
                 break;
@@ -499,6 +496,10 @@ void LimoDriver::twistCmdCallback(const geometry_msgs::msg::Twist::SharedPtr msg
             double steering_angle;
             // Positive steering is left, matching the feedback conversion.
             if (inner_angle > 0) {
+                // Original AgileX code (disabled):
+                // steering_angle = inner_angle / right_angle_scale_;
+                // LIMO replacement: a left turn must use the left calibration,
+                // consistent with decoding the steering feedback in parseFrame().
                 steering_angle = inner_angle / left_angle_scale_;
             }
             else {
@@ -537,14 +538,33 @@ void LimoDriver::publishIMUData(double stamp) {
     tf2::Quaternion q;
     q.setRPY(0.0, 0.0, degToRad(imu_data_.yaw));
 
-    // Odometry yaw starts at zero at the first IMU sample. Keep state per
-    // driver instance, including before any IMU frame has been received.
+    // Original AgileX code (disabled):
+    // if (flag==0)
+    // {
+    //     double present_theta_ =imu_data_.yaw;
+    //     double last_theta_ = imu_data_.yaw;
+    //     flag=1;
+    //
+    // }
+    // //ROS_INFO("flag:%d",flag);
+    // present_theta_ = imu_data_.yaw;
+    // delta_theta_ = present_theta_ - last_theta_;
+    // if(delta_theta_< 0.1 && delta_theta_> -0.1) delta_theta_=0;
+    // real_theta_ = real_theta_ + delta_theta_;
+    // last_theta_ = present_theta_;
+    // //ROS_INFO("present_theta_:%f;delta_theta_:%f;real_theta_:%f;last_theta_:%f",present_theta_,delta_theta_,real_theta_,last_theta_);
+    // LIMO replacement: first-sample locals above hid the driver members,
+    // leaving them uninitialized, and the global flag was shared across instances.
+    // Use the first sample as a reference; relative odometry yaw starts at zero.
+    // The absolute IMU orientation above still uses the sensor's current yaw.
     if (!imu_yaw_initialized_) {
         last_theta_ = imu_data_.yaw;
         imu_yaw_initialized_ = true;
     } else {
-        // Preserve slow turns and unwrap the IMU's +/-180 degree boundary.
-        // A per-sample deadband discards real motion at high sample rates.
+        // LIMO replacement: remainder unwraps the +/-180 degree boundary:
+        // 179 -> -179 degrees becomes +2 degrees rather than -358 degrees.
+        // Removing the old 0.1-degree deadband preserves slow turns made of
+        // many small increments instead of discarding each increment.
         const double delta_theta = std::remainder(imu_data_.yaw - last_theta_, 360.0);
         real_theta_ += delta_theta;
         last_theta_ = imu_data_.yaw;
@@ -616,6 +636,10 @@ void LimoDriver::publishOdometry(double stamp, double linear_velocity,
         default:
             break;
     }
+    // Original AgileX code (disabled):
+    // rad = degToRad(real_theta_);
+    // LIMO replacement: radians are a temporary value for this odometry update,
+    // so use a local constant instead of another persistent driver member.
     const double rad = degToRad(real_theta_);
 
     position_x_ += cos(rad) * vx * dt - sin(rad) * vy * dt;

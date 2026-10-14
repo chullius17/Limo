@@ -17,6 +17,8 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+# LIMO addition: ParameterDescriptor defines the steering parameters' read_only rule.
+# Find its package so the driver can include the generated C++ interface.
 find_package(rcl_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -45,6 +47,10 @@ add_executable(limo_base
     src/limo_base_node.cpp
     src/limo_driver.cpp
     src/serial_port.cpp)
+# Original AgileX code (disabled):
+# ament_target_dependencies(limo_base rclcpp std_msgs tf2 tf2_ros nav_msgs sensor_msgs limo_msgs)
+# LIMO replacement: expose rcl_interfaces to the executable that uses ParameterDescriptor.
+# This changes build dependencies; steering conversion is implemented in limo_driver.cpp.
 ament_target_dependencies(limo_base rclcpp rcl_interfaces std_msgs tf2 tf2_ros nav_msgs sensor_msgs limo_msgs)
 
 install(

@@ -28,6 +28,10 @@ ros2 launch build_map_2d revo_build_map_2d.launch.py
 # 键盘控制
 
 ```shell
+# Original AgileX command (disabled):
+# ros2 run teleop_twist_keyboard teleop_twist_keyboard
+# LIMO replacement: use the launch that remaps manual commands to /cmd_vel_teleop.
+# A separately launched velocity mux must forward that channel to /cmd_vel.
 ros2 launch limo_bringup limon_teletop_keyboard.launch.py
 ros2 launch limo_bringup limo_start.launch.py
 ```

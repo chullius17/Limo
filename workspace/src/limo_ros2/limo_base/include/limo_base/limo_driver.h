@@ -103,8 +103,15 @@ private:
 
     bool pub_odom_tf_ = false;
     bool use_mcnamu_ = false;
+    // Original AgileX code (disabled):
+    // double present_theta_,last_theta_,delta_theta_,real_theta_,rad;
+    // LIMO replacement: give each driver instance its own initialized yaw state.
+    // The old members had no initial values; first-sample locals also hid them.
+    // Temporary deltas and radians are now local to the functions that use them.
     bool imu_yaw_initialized_ = false;
+    // Previous IMU yaw in degrees; the first sample establishes the reference.
     double last_theta_ = 0.0;
+    // Accumulated rotation in degrees relative to that reference, used by odometry.
     double real_theta_ = 0.0;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher_;
     rclcpp::Publisher<limo_msgs::msg::LimoStatus>::SharedPtr status_publisher_;
@@ -126,12 +133,19 @@ private:
     double theta_ = 0.0;
 
     ImuData imu_data_;
-    uint8_t motion_mode_;  // current motion type
-    int64_t motion_mode_override_ = -1;  // -1: use the mode reported by the chassis
+    // Wait for a supported mode from chassis feedback before sending commands.
+    uint8_t motion_mode_ = 0xff;
 
     static constexpr double max_inner_angle_ = 0.48869;  // 28 degree
     static constexpr double track_ = 0.172;           // m (left right wheel distance)
     static constexpr double wheelbase_ = 0.2;         // m (front rear wheel distance)
+    // Original AgileX code (disabled):
+    // static constexpr double left_angle_scale_ = 2.47;
+    // static constexpr double right_angle_scale_ = 2.47;
+    // LIMO replacement: per-instance variables can receive startup parameters,
+    // whereas constexpr constants cannot be assigned values from configuration.
+    // The generic default is still 2.47; custom_start/config/limo_real.yaml selects
+    // 1.0 for this robot. ROS read_only descriptors prevent changes after startup.
     double left_angle_scale_ = 2.47;
     double right_angle_scale_ = 2.47;
 };

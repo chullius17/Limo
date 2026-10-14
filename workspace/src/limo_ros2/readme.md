@@ -63,6 +63,10 @@ ros2 launch limo_base limo_base.launch.py
 Start the keyboard teleop node
 
 ```
+# Original AgileX command (disabled):
+# ros2 run teleop_twist_keyboard teleop_twist_keyboard
+# LIMO replacement: keep manual commands on /cmd_vel_teleop for priority arbitration.
+# A separately launched velocity mux must forward that channel to /cmd_vel.
 ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args \
   -r cmd_vel:=/cmd_vel_teleop
 ```

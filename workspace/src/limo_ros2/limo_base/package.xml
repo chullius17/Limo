@@ -10,6 +10,9 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
   <build_depend>limo_msgs</build_depend>
   <depend>rclcpp</depend>
+  <!-- LIMO addition: the driver uses rcl_interfaces/ParameterDescriptor to make
+       steering calibration parameters read_only after startup. Declare the
+       dependency for ROS package tools and rosdep, matching CMakeLists.txt. -->
   <depend>rcl_interfaces</depend>
   <depend>std_msgs</depend>
   <depend>tf2</depend>

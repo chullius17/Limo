@@ -291,7 +291,7 @@ Although the robot had been mechanically converted to Ackermann, its firmware
 still reported Mecanum mode (`motion_mode: 2`). The ROS driver therefore selected
 the wrong command conversion.
 
-The driver gained an independent `motion_mode` parameter:
+The historical driver gained an independent `motion_mode` parameter:
 
 | Value | Command conversion |
 | --- | --- |
@@ -300,7 +300,7 @@ The driver gained an independent `motion_mode` parameter:
 | `1` | Ackermann. |
 | `2` | Mecanum. |
 
-The physical launch selects `1`. `/limo_status` continues to show raw chassis
+The physical launch selected `1`. `/limo_status` continued to show raw chassis
 feedback, so its mode can remain `2` while the command conversion is Ackermann.
 The override changes the ROS conversion and does not reprogram the firmware.
 
@@ -432,7 +432,7 @@ ros2 launch custom_start limo_real.launch.py use_camera:=false
 Useful checks after startup include:
 
 ```bash
-ros2 param get /limo_base motion_mode
+ros2 topic echo /limo_status --once
 ros2 param get /limo_base steering_left_scale
 ros2 param get /limo_base steering_right_scale
 ros2 param get /ekf_filter_node odom0_config

@@ -21,14 +21,14 @@ def generate_launch_description():
                                                 description='Base link frame id')
     odom_topic_arg = DeclareLaunchArgument('odom_topic_name', default_value='odom',
                                            description='Odometry topic name')
+    # LIMO addition: expose the IMU topic so the real robot can use /limo/imu
+    # for its EKF, while the generic launch keeps the original /imu name.
     imu_topic_arg = DeclareLaunchArgument('imu_topic_name', default_value='/imu',
                                           description='IMU topic name')
     odom_tf_arg = DeclareLaunchArgument('pub_odom_tf', default_value='True',
                                            description='Odometry topic name')
-    motion_mode_arg = DeclareLaunchArgument(
-        'motion_mode', default_value='-1',
-        description='Override chassis motion mode: -1 auto, 0 differential, 1 Ackermann, 2 Mecanum')
-
+    # LIMO addition: pass calibration at startup instead of changing C++ constants.
+    # Keep the upstream ratio here; the real profile supplies 1.0 for both turns.
     steering_args = [
         DeclareLaunchArgument(
             name, default_value='2.47',
@@ -51,6 +51,7 @@ def generate_launch_description():
         executable='limo_base',  #foxy executable='limo_base',
         output='screen',
         emulate_tty=True,
+        # LIMO addition: apply the selected IMU topic to the driver's publisher.
         remappings=[
             ('/imu', launch.substitutions.LaunchConfiguration('imu_topic_name')),
         ],
@@ -64,8 +65,8 @@ def generate_launch_description():
                 # 'is_omni_wheel': launch.substitutions.LaunchConfiguration('is_omni_wheel'),
                 # 'simulated_robot': launch.substitutions.LaunchConfiguration('simulated_robot'),
                 'pub_odom_tf': launch.substitutions.LaunchConfiguration('pub_odom_tf'),
-                'motion_mode': launch.substitutions.LaunchConfiguration('motion_mode'),
                 'control_rate': launch.substitutions.LaunchConfiguration('control_rate'),
+                # The driver declares these read_only and validates their startup values.
                 'steering_left_scale': LaunchConfiguration('steering_left_scale'),
                 'steering_right_scale': LaunchConfiguration('steering_right_scale'),
         }])
@@ -76,9 +77,9 @@ def generate_launch_description():
         odom_frame_arg,
         base_link_frame_arg,
         odom_topic_arg,
+        # Register the added arguments before starting the node that uses them.
         imu_topic_arg,
         odom_tf_arg,
-        motion_mode_arg,
         *steering_args,
         # is_scout_mini_arg,
         # is_omni_wheel_arg,
