@@ -157,10 +157,6 @@ installs the world, model definitions, materials, and textures, and adds its
 model directory to `GAZEBO_MODEL_PATH`. The default spawn position is
 `(0, 0, 0.30)` metres with zero yaw.
 
-The initial report records a startup failure caused by another Gazebo process
-occupying port `11345`. Releasing that port resolved the server and spawn
-failures in that session.
-
 ### Simulated sensors and EKF
 
 The following settings were introduced with the model:
@@ -454,12 +450,18 @@ ros2 launch custom_start limo_real.launch.py config_file:=/absolute/path/limo_re
 ros2 launch custom_start limo_circuit.launch.py config_file:=/absolute/path/limo_circuit.yaml
 ```
 
-### Historical obstacle-world extension
+### Circuit with obstacles
 
 Commit `1a62922` added `limo_obstacles.yaml`, `limo_obstacles.launch.py`, and
 `limo_obstacle_world.world`. The wrapper launch reuses the circuit setup with
-a different profile. These files belong to the documented `foxy` snapshot;
-their availability depends on the checkout being used.
+a different profile. These files are also included in this checkout, imported
+from the `foxy` branch. After building and sourcing the workspace, start it with:
+
+```bash
+ros2 launch custom_start limo_obstacles.launch.py
+```
+
+For a headless simulation, add `gui:=false`.
 
 ## Validation and remaining limitations
 

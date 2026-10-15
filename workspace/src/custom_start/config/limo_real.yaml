@@ -14,13 +14,10 @@ launch:
   camera_yaw: 0.0
   open_rviz: false
 
-# Argomenti del driver Astra.
+# Argomenti del driver Astra. Risoluzioni dai default di dabai_u3.launch.xml:
+# RGB 640x480, profondità 640x400.
 camera_driver:
   camera_name: camera
-  color_width: 640
-  color_height: 480
-  depth_width: 640
-  depth_height: 400
   enable_point_cloud: false
   enable_ir: false
   color_depth_synchronization: true
