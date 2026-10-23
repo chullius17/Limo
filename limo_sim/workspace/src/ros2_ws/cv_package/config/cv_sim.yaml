@@ -15,7 +15,11 @@ lane_detector:
 depth_correction:
   input_topic: /depth_camera/depth/image_raw
   camera_info_topic: /depth_camera/depth/camera_info
-  # Plane z in plane_frame (m); .nan estimates it from depth frames.
+  # Fit height AND tilt, using the same RGB geometry path as the real robot.
+  register_to_rgb: true
+  rgb_camera_info_topic: /rgb/camera_info
+  input_crop_y_min: 0.5
+  calibration_frames: 30
   plane_height_m: .nan
   enable_telemetry: false
 
@@ -29,6 +33,7 @@ visual_ptcld:
   pointcloud_voxel_size_m: 0.02
   blue_boundary_kernel_size: 7
   camera_info_topic: /rgb/camera_info
+  require_rgb_depth: true
   depth_topic: limo/cv_package/depth_correction/depth_corrected/raw
   fallback_depth_topic: /depth_camera/depth/image_raw
   corrected_depth_timeout_sec: 1.0

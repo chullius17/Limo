@@ -13,6 +13,8 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob(os.path.join('launch', '*.launch.py'))),
+        ('share/' + package_name + '/launch/experiments',
+            glob(os.path.join('launch', 'experiments', '*.launch.py'))),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -23,6 +25,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'ekf_experiment = user_package.ekf_experiment:main',
         ],
     },
 )

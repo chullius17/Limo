@@ -16,7 +16,6 @@ from std_msgs.msg import Header
 from cv_package.visual_ptcld.boardwalk import BOARDWALK_COUNTS, BOARDWALK_TIMINGS, BoardwalkClassifier
 from cv_package.visual_ptcld.visual_ptcld import VisualPtcld
 from cv_package.visual_ptcld.cloud_cpu import RayCache
-from cv_package.visual_ptcld.depth_radius_profile import DepthRadiusProfile
 
 
 def detector_stub(enabled=True):
@@ -38,7 +37,6 @@ def detector_stub(enabled=True):
         blue_radius_min=0.10,
         blue_radius_max=0.16,
         boardwalk_propagation_radius=0.10,
-        depth_radius_profile=DepthRadiusProfile([], 0.10, 0.16, 0.10),
         pointcloud_voxel_size=0.02,
         ray_cache=RayCache(),
         boardwalk_classifier=BoardwalkClassifier(),
@@ -54,8 +52,6 @@ def detector_stub(enabled=True):
     detector.voxelize_bev_cloud = (
         lambda points, class_ids: VisualPtcld.voxelize_bev_cloud(
             detector, points, class_ids))
-    detector.boardwalk_radius_description = (
-        lambda: VisualPtcld.boardwalk_radius_description(detector))
     return detector, published
 
 
@@ -142,7 +138,7 @@ def test_empty_cloud_is_published_with_zero_workload():
 
 
 @pytest.mark.parametrize('profile_name', [None, 'real', 'sim'])
-def test_node_accepts_scalar_defaults_and_profile_radius_arrays(profile_name):
+def test_node_accepts_constant_radii_from_defaults_and_profiles(profile_name):
     import rclpy
 
     arguments = []
@@ -151,25 +147,16 @@ def test_node_accepts_scalar_defaults_and_profile_radius_arrays(profile_name):
         parameters = yaml.safe_load(path.read_text())['visual_ptcld']
         arguments = ['--ros-args']
         for name, value in parameters.items():
-            # Match the actual profile's ROS types, including single-element arrays.
+            # Match the actual profile's ROS parameter types.
             serialized = yaml.safe_dump(value, default_flow_style=True).splitlines()[0]
             arguments.extend(['-p', f'{name}:={serialized}'])
     rclpy.init(args=arguments)
     node = None
     try:
         node = VisualPtcld()
-        if profile_name in (None, 'sim'):
-            assert not node.depth_radius_profile.enabled
-            assert node.depth_radius_profile.resolve([1]) == (0.15, 0.25, 0.15)
-        else:
-            assert node.depth_radius_profile.enabled
-            expected = DepthRadiusProfile(
-                parameters['radius_depth_breakpoints_m'], parameters['blue_radius_min_m'],
-                parameters['blue_radius_max_m'], parameters['boardwalk_propagation_radius_m'])
-            for actual, wanted in zip(node.depth_radius_profile.resolve([0.25, 0.6, 1.2]),
-                                      expected.resolve([0.25, 0.6, 1.2])):
-                np.testing.assert_array_equal(actual, wanted)
-            assert 'depth bands' in node.boardwalk_radius_description()
+        expected = (0.07, 0.25, 0.15) if profile_name == 'real' else (0.15, 0.25, 0.15)
+        assert (node.blue_radius_min, node.blue_radius_max,
+                node.boardwalk_propagation_radius) == expected
     finally:
         if node is not None:
             node.destroy_node()

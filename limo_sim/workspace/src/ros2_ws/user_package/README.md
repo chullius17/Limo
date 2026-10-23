@@ -1,5 +1,84 @@
 # LIMO application launch
 
+## Esperimenti EKF: confronto delle odometrie
+
+Il launch unico `launch/experiments/ekf_experiment.launch.py` apre una finestra
+con sei grafici aggiornati: traiettoria XY, yaw, velocità longitudinale, velocità
+angolare, distanza fra le posizioni e differenza di yaw. Confronta `/odom` e
+`/odometry/filtered` durante lo stesso movimento, senza pubblicare comandi o TF.
+
+Compilare `user_package` nel workspace ROS e caricare l'installazione:
+
+```bash
+colcon build --packages-select user_package --symlink-install
+source install/setup.bash
+```
+
+Con robot, sensori ed EKF già avviati, eseguire sul PC con ambiente ROS Foxy e
+display grafico:
+
+```bash
+ros2 launch user_package ekf_experiment.launch.py profile:=real
+```
+
+Per Gazebo, lo stesso launch seleziona l'orologio di simulazione:
+
+```bash
+ros2 launch user_package ekf_experiment.launch.py profile:=sim
+```
+
+Il file rimane nella sottocartella `experiments` anche dopo l'installazione;
+`ros2 launch` lo trova per nome. Il PC deve vedere gli stessi topic DDS del robot.
+Il launch apre solo il confronto, quindi si può affiancare all'applicazione o
+alla teleoperazione esistente. Per avviare anche il bringup e il suo EKF, quando
+non sono già attivi, usare sul computer che ospita il robot o Gazebo:
+
+```bash
+ros2 launch user_package ekf_experiment.launch.py profile:=sim start_bringup:=true
+ros2 launch user_package ekf_experiment.launch.py profile:=real start_bringup:=true
+```
+
+Sono due alternative. Il profilo reale avvia il bringup senza camera e RViz;
+quello simulato usa il circuito Gazebo. Non vengono avviati planner, controller
+o teleop. `bringup_config:=/percorso/profilo.yaml` seleziona un diverso YAML di
+`custom_start`. Non avviare nuovamente il bringup se il robot è già attivo.
+
+Opzioni del confronto:
+
+```bash
+ros2 launch user_package ekf_experiment.launch.py profile:=sim \
+  raw_topic:=/odom filtered_topic:=/odometry/filtered \
+  history_seconds:=300.0 max_samples:=40000 refresh_hz:=5.0 max_sync_gap:=0.2
+```
+
+Le differenze sono calcolate ai timestamp dell'odometria originale interpolando
+la stima filtrata, senza estrapolazione e senza attraversare intervalli maggiori
+di `max_sync_gap` secondi. Lo yaw usa la distanza angolare più breve. Sono
+accettati solo campioni con `header.frame_id` e `child_frame_id` uguali e non
+vuoti: non viene stimata o applicata alcuna trasformazione fra frame diversi.
+La finestra mostra conteggi, età degli ultimi messaggi e RMS delle differenze
+sui campioni confrontabili conservati. L'RMS non è un errore rispetto al vero.
+
+**Pausa grafici** congela la vista, continuando ad acquisire. **Nuova prova**
+svuota i dati locali senza cambiare la posa del robot. **Esporta CSV + PNG**
+salva la vista corrente in una nuova cartella, con `raw.csv`, `filtered.csv`,
+`differences.csv` e `odometry.png`. I CSV usano secondi ROS assoluti, metri,
+radianti, m/s e rad/s; i grafici mostrano gli angoli in gradi. La memoria è
+limitata sia dalla durata sia dal numero massimo di campioni: l'esportazione
+contiene solo la finestra conservata, o quella congelata quando in pausa.
+Per conservare l'esperimento completo, registrare anche un rosbag.
+Un salto indietro maggiore di un secondo in uno stream azzera le due storie;
+piccoli messaggi fuori ordine vengono scartati.
+
+Il confronto funziona anche riproducendo un bag con `/clock`, impostando
+`use_sim_time:=true` e lasciando `start_bringup:=false`.
+
+Per dimostrare un miglioramento di accuratezza occorre un riferimento
+indipendente. Sul LIMO reale `/odom` usa già lo yaw dell'IMU; il confronto non
+è quindi fra sole ruote e ruote+IMU. Inoltre il plugin Ackermann standard Foxy
+produce `/odom` dalla posa di Gazebo: per valutare realisticamente la fusione
+servono ingressi sensoriali con errori, mantenendo separata la ground truth.
+
 The application includes online localization/mapping, trajectory planning and
 control. Start sensors first, then launch the application:
 

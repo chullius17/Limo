@@ -63,42 +63,25 @@ Offline and online mapping profiles no longer start CV automatically. Launch
 CV separately; the mapping launch's explicit `start_cv:=true` override remains
 available. Restart CV after changing its profile.
 
-## Point-cloud radii by depth
+## Point-cloud classification radii
 
-`visual_ptcld` can choose its three metric classification radii from discrete
-depth bands. In `cv_real.yaml`, set the upper boundaries and
-radius values directly:
+The real CV profile uses constant metric radii at every depth:
 
 ```yaml
 visual_ptcld:
-  radius_depth_breakpoints_m: [0.5, 0.8]
-  blue_radius_min_m: [0.07, 0.09, 0.10]
-  blue_radius_max_m: [0.25]
+  blue_radius_min_m: 0.07
+  blue_radius_max_m: 0.25
   enable_boardwalk: true
-  boardwalk_propagation_radius_m: [0.15]
+  boardwalk_propagation_radius_m: 0.15
 ```
 
-The minimum radius is 0.07 m at depth <= 0.5 m, 0.09 m at
-0.5 < depth <= 0.8 m, and 0.10 m at depth > 0.8 m. There is no interpolation.
-Each radius accepts a scalar or a list with 1 through N+1 values for N depth
-boundaries. Short lists repeat their last value in every remaining band:
-`blue_radius_min_m: [0.07, 0.09]` uses 0.09 m for all depths above 0.5 m.
-A single value applies to every band, independently for each of the three radii.
-Omitting `radius_depth_breakpoints_m` preserves constant scalar configuration.
+Each radius is a finite, nonnegative scalar, with minimum <= maximum.
+Neighbor distances are measured in metric BEV XY. Propagation uses only
+first-pass seeds and remains nonrecursive. `enable_boardwalk` enables or
+disables the classification.
 
-Depth means each candidate point's optical Z from the corrected depth image,
-before the BEV transform and metric voxelization. Invalid/out-of-range depths
-are removed before selecting radii. Neighbor distances still use metric BEV XY;
-both passes use the target point's selected radii. First-pass seeds remain shared
-across depth bands, and propagation remains nonrecursive. `enable_boardwalk`
-continues to enable or disable the entire classification.
-
-Boundaries must be finite, positive and strictly increasing. Radius lists cannot
-be empty or exceed N+1 entries; radii must be finite and nonnegative, with
-minimum <= maximum in every effective band. Invalid profiles fail at startup
-with an explanation. Restart CV after editing these startup parameters.
-The real profile starts with the three minimum radii above; simulation keeps its
-previous fixed scalar values and has no depth bands. Tune real values on camera data.
+The simulation profile also uses constant radii, with a minimum radius of 0.15 m.
+Restart CV after editing these startup parameters.
 
 ## Adaptive binary lane detector (manual)
 
@@ -290,7 +273,6 @@ The node and its support modules are grouped in `cv_package/visual_ptcld/`:
 - `cloud_cpu.py`: cached camera rays, planar transforms and voxel grouping.
 - `cloud_message.py`: `PointCloud2` serialization.
 - `boardwalk.py`: metric boardwalk classification and exterior-road filtering.
-- `depth_radius_profile.py`: validation and selection of discrete depth bands.
 
 Python imports use `cv_package.visual_ptcld.<module>`. The ROS executable remains
 `visual_ptcld`; its entry point is `cv_package.visual_ptcld.visual_ptcld:main`.
@@ -302,6 +284,18 @@ colcon build --packages-select cv_package --symlink-install
 source install/setup.bash
 ```
 
+
+## Depth-correction implementation
+
+The depth node and geometry helpers are grouped in `cv_package/depth_correction/`:
+
+- `depth_correction.py`: ROS node, calibration, subscriptions and publication.
+- `depth_geometry.py`: camera rays, depth registration and ground-plane fitting.
+
+Python imports use `cv_package.depth_correction.<module>`. The ROS executable
+remains `depth_correction`; its entry point is
+`cv_package.depth_correction.depth_correction:main`. Rebuild `cv_package` and
+source the workspace after changing the package layout, as shown above.
 
 ## Real RGB/depth geometry (30 September 2026)
 
@@ -338,6 +332,12 @@ shows completion. Debug JPEGs are generated only when subscribed in this mode.
 
 `visual_ptcld.require_rgb_depth` checks agreement between label, RGB CameraInfo
 and depth frames and disables the unregistered raw fallback. The existing
-classification and class filtering are unchanged. Simulation retains the
-legacy path (`register_to_rgb: false`, `require_rgb_depth: false` defaults).
+classification and class filtering are unchanged. Simulation uses the
+same full-plane path through `cv_sim.yaml` (`register_to_rgb: true`,
+`require_rgb_depth: true`), with 30 calibration frames instead of the real
+profile's ten. Gazebo RGB and depth share an optical frame and calibration,
+so registration preserves that geometry while producing the same 320x120 crop.
+Simulation also estimates ground tilt and freezes the fitted LUT after startup;
+the HSV detector and semantic classification settings remain unchanged.
+The legacy horizontal-plane path is available when `register_to_rgb: false`.
 Restart the CV nodes after updating the package; recalibration runs at startup.

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from cv_package.depth_geometry import (
+from cv_package.depth_correction.depth_geometry import (
     complete_depth, fit_ground_plane, ground_depth, pixel_rays, register_depth,
 )
 

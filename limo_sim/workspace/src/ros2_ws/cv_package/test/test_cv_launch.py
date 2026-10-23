@@ -72,21 +72,24 @@ def test_sim_detector_does_not_depend_on_clock(monkeypatch, clock):
     assert nodes['lane_node']['remappings'] == []
     assert 'seed_max_gray' not in nodes['lane_node']['parameters'][0]
     assert nodes['lane_node']['parameters'][0]['use_sim_time'] is (clock == 'true')
+    depth = nodes['depth_correction']['parameters'][0]
+    assert depth['register_to_rgb'] is True
+    assert depth['calibration_frames'] == 30
+    assert depth['rgb_camera_info_topic'] == '/rgb/camera_info'
+    assert np.isnan(depth['plane_height_m'])
+    assert nodes['visual_ptcld']['parameters'][0]['require_rgb_depth'] is True
 
 
 @pytest.mark.parametrize('profile', ['real', 'sim'])
-def test_depth_radius_configuration_is_valid_ros_launch_parameters(monkeypatch, profile):
+def test_constant_radii_are_valid_ros_launch_parameters(monkeypatch, profile):
     from launch_ros.utilities import evaluate_parameters, normalize_parameters
 
     cloud = pipeline(monkeypatch, profile)['visual_ptcld']['parameters'][0]
     context = LaunchContext()
     evaluated = evaluate_parameters(context, normalize_parameters([cloud]))[0]
     names = ['blue_radius_min_m', 'blue_radius_max_m', 'boardwalk_propagation_radius_m']
-    if profile == 'real':
-        names.append('radius_depth_breakpoints_m')
-    else:
-        assert 'radius_depth_breakpoints_m' not in evaluated
-        assert all(isinstance(evaluated[name], float) for name in names)
+    assert 'radius_depth_breakpoints_m' not in evaluated
+    assert all(isinstance(evaluated[name], float) for name in names)
     for name in names:
         np.testing.assert_array_equal(evaluated[name], cloud[name])
 

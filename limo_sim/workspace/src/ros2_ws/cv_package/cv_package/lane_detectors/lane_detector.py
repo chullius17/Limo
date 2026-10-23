@@ -422,6 +422,7 @@ class ColorLaneDetector(Node):
         if self._use_copyto:
             cv2.copyTo(self._const_blue, black_mask, band_view)
             cv2.copyTo(self._const_turquoise, yellow_mask, band_view)
+            # cv2.copyTo is better than np.copyto because it creates less buffers
         else:
             np.copyto(band_view, self.LABEL_BLUE, where=(black_mask != 0))
             np.copyto(band_view, self.LABEL_TURQUOISE, where=(yellow_mask != 0))

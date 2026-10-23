@@ -24,6 +24,53 @@ def register_depth(depth, rays, rotation, translation, rgb_k, rgb_size,
 
     No interpolation across holes or foreground/background boundaries. Input
     and target calibrations describe rectified/zero-distortion images.
+
+    Args:
+            depth: Array of shape (H_depth, W_depth) containing optical-axis
+                depth (Z) in metres, expressed in the depth camera frame.
+                Non-finite values and values outside the allowed range are ignored.
+    
+            rays: Array of shape (H_depth, W_depth, 3) containing the depth
+                camera ray for each input pixel:
+                [(u - cx_depth) / fx_depth, (v - cy_depth) / fy_depth, 1].
+                These vectors are not unit-length; multiplying by depth gives
+                the corresponding 3D point in the depth camera frame.
+    
+            rotation: Rotation matrix of shape (3, 3) that transforms points
+                from the depth optical frame into the RGB optical frame.
+    
+            translation: Translation vector of shape (3,), in metres, used
+                with rotation:
+                point_rgb = rotation @ point_depth + translation.
+    
+            rgb_k: RGB intrinsic calibration matrix, supplied as a flat
+                9-element sequence or a (3, 3) array:
+                [[fx_rgb, 0, cx_rgb], [0, fy_rgb, cy_rgb], [0, 0, 1]].
+                Values are in pixels and refer to the full RGB resolution.
+                Both camera calibrations must describe rectified images
+                or images with zero distortion.
+    
+            rgb_size: Tuple (width, height) of the full RGB image, in pixels.
+                This is the resolution associated with rgb_k.
+    
+            output_size: Tuple (width, height) of the output depth image,
+                in pixels, representing the retained RGB region.
+    
+            crop: Fraction of the RGB image height discarded from the top,
+                in [0, 1). The first retained row is int(rgb_height * crop).
+                For example, 0.5 keeps the lower half; 0.0 keeps the full image.
+    
+            min_depth: Minimum accepted optical-axis depth in metres,
+                inclusive. Applied to both input depth and transformed RGB Z.
+    
+            max_depth: Maximum accepted optical-axis depth in metres,
+                inclusive. Applied to both input depth and transformed RGB Z.
+    
+        Returns:
+            float32 array of shape (output_height, output_width), containing
+            RGB optical-axis depth in metres. If multiple points map to the
+            same pixel, the smallest RGB Z is retained. Pixels without a
+            measurement contain NaN; no interpolation or hole filling is applied.
     """
     width, height = output_size
     rgb_width, rgb_height = rgb_size
@@ -46,7 +93,7 @@ def register_depth(depth, rays, rotation, translation, rgb_k, rgb_size,
     np.minimum.at(result, rows * width + cols, points[visible, 2])
     result[~np.isfinite(result)] = np.nan
     return result.reshape(height, width)
-
+    # TODO: verify if the passage of intrinsics and the frame transformation is useful or can be avoided
 
 def fit_ground_plane(points, threshold=.008, min_points=150,
                      min_inlier_ratio=.6, max_tilt_deg=20.0):

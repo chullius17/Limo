@@ -110,8 +110,7 @@ def build_semantic_cloud(
         point_groups, depth, intrinsics, width, height, input_crop_y_min,
         ray_cache, rotation, translation, cloud_min_depth, cloud_max_depth,
         boardwalk_classifier, blue_radius_min, blue_radius_max,
-        boardwalk_propagation_radius, road_boardwalk_only, voxel_size,
-        depth_radius_profile=None):
+        boardwalk_propagation_radius, road_boardwalk_only, voxel_size):
     """Project labeled pixels, classify boardwalk and reduce the outgoing cloud."""
     projection_started_at = time.perf_counter()
     nonempty_groups = [
@@ -131,6 +130,7 @@ def build_semantic_cloud(
     rows = pixels[:, 0]
     cols = pixels[:, 1]
     z = depth[rows, cols]
+    # Pixels should already be aligned with depth
     valid = (
         np.isfinite(z)
         & (z >= cloud_min_depth)
@@ -155,12 +155,10 @@ def build_semantic_cloud(
 
     stats = {}
     if boardwalk_classifier is not None:
-        radii = (blue_radius_min, blue_radius_max, boardwalk_propagation_radius)
-        if depth_radius_profile is not None and depth_radius_profile.enabled:
-            radii = depth_radius_profile.resolve(z)
         stats = boardwalk_classifier.classify(
             bev_points, class_ids,
-            *radii,
+            blue_radius_min, blue_radius_max,
+            boardwalk_propagation_radius,
             LABEL_BLUE, LABEL_BACKGROUND, LABEL_BOARDWALK,
             LABEL_INTERIOR_BOARDWALK,
         )
@@ -186,3 +184,20 @@ def build_semantic_cloud(
         bev_points, class_ids, point_count_before_voxel, stats,
         projection_ms, transform_ms, voxel_ms,
     )
+
+# Parameters of build_semantic_cloud:
+# | Parameter | Meaning |
+# | --- | --- |
+# | `point_groups` | Sequence of `(points, label)` pairs: each `points` is an `(N, 2)` array of pixels in **`(row, column)`** format, all belonging to the same class. |
+# | `depth` | Depth image: `depth[row, column]` gives the depth of the pixel. |
+# | `intrinsics` | Camera intrinsic parameters used for projection. |
+# | `width`, `height` | Image dimensions used by the ray cache. |
+# | `input_crop_y_min` | Vertical image crop offset needed to compute the rays correctly. |
+# | `ray_cache` | Object that returns the projection factors `ray_x` and `ray_y`. |
+# | `rotation`, `translation` | Rotation and translation from the camera frame to the target frame. |
+# | `cloud_min_depth`, `cloud_max_depth` | Accepted depth limits; points outside this range are discarded. |
+# | `boardwalk_classifier` | Classifier that updates point classes and produces statistics. May be `None`. |
+# | `blue_radius_min`, `blue_radius_max` | Radii used by the classifier to search for blue points. |
+# | `boardwalk_propagation_radius` | Radius used to propagate the boardwalk classification. |
+# | `road_boardwalk_only` | If `True`, keeps only the blue, interior blue, boardwalk, and interior boardwalk classes. |
+# | `voxel_size` | Cell size used to downsample points in the BEV plane, separately for each class. |

@@ -30,6 +30,7 @@
   <exec_depend>online_map_package</exec_depend>
   <exec_depend>traj_package</exec_depend>
   <exec_depend>limo_controller</exec_depend>
+  <exec_depend>custom_start</exec_depend>
 
   <!-- Custom interfaces -->
   <depend>limo_interfaces</depend>

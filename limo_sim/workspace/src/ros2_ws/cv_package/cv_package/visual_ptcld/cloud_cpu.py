@@ -2,6 +2,7 @@
 
 import numpy as np
 
+# We use the class in order to implement persistent memory of previous intrinsics
 
 class RayCache:
     """Cache normalized pixel rays until calibration, crop or shape changes."""
@@ -22,6 +23,8 @@ class RayCache:
             self.y = (rows - cy) / fy
             self.key = key
         return self.x, self.y
+    # self.x and self.y must be still multiplied by Z in order to obtain
+    # the real world position
 
 
 def transform_xy(x, y, z, rotation, translation):
@@ -44,18 +47,24 @@ def voxel_groups(points, labels, size):
     cells = np.floor(points.astype(np.float64) / size)
     if np.isfinite(cells).all() and np.all(np.abs(cells) < 2**62):
         cells = cells.astype(np.int64)
-        minimum = cells.min(axis=0)
+        minimum = cells.min(axis=0) 
         maximum = cells.max(axis=0)
+        # axis=0 doesn't indicate that we take the minimum along the x coord, 
+        # it means that the comparison is vertical
         span_x = int(maximum[0]) - int(minimum[0]) + 1
         span_y = int(maximum[1]) - int(minimum[1]) + 1
         if (int(labels.max()) + 1) * span_x * span_y <= 2**63:
             cells -= minimum
             keys = ((labels.astype(np.int64) * span_x + cells[:, 0])
                     * span_y + cells[:, 1])
+            # * span_x and * span_y are used to ensure collision-free keys
             _, first, inverse = np.unique(
                 keys, return_index=True, return_inverse=True)
             return first, inverse
     keys = np.column_stack((labels, cells))
     _, first, inverse = np.unique(
         keys, axis=0, return_index=True, return_inverse=True)
-    return first, inverse
+    # Alternative method, less efficient
+    return first, inverse 
+    # First will be used to reduce the list to the centroids
+    # Inverse contains the class ids

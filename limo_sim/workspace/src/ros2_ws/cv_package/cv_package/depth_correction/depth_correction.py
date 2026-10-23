@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Register real depth to RGB and complete holes using a fitted ground plane.
+"""Register depth to RGB and complete holes using a fitted ground plane.
 
-The real path estimates both normal and height and fills all missing pixels.
-The legacy simulation path below keeps its original crop and horizontal LUT.
+Both CV profiles estimate normal and height and fill all missing pixels.
+The optional legacy path keeps its original crop and horizontal LUT.
 
 Optimized hot path: the crop happens before any dtype conversion (a
 zero-copy view over the raw message buffer, honoring row padding), the
