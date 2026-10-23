@@ -25,8 +25,8 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 class ColorLaneDetector(Node):
 
     LABEL_INVALID = np.uint8(0)
-    LABEL_BLUE = np.uint8(1)
-    LABEL_TURQUOISE = np.uint8(2)
+    LABEL_ROAD = np.uint8(1)
+    LABEL_YELLOW = np.uint8(2)
     LABEL_BACKGROUND = np.uint8(3)
 
     # Encodings the zero-copy ingress path understands directly, mapped to
@@ -376,9 +376,9 @@ class ColorLaneDetector(Node):
         self._buf_v = np.empty((band_h, out_w), dtype=np.uint8)
         self._buf_black = np.empty((band_h, out_w), dtype=np.uint8)
         self._buf_yellow = np.empty((band_h, out_w), dtype=np.uint8)
-        self._const_blue = np.full((band_h, out_w), self.LABEL_BLUE, dtype=np.uint8)
+        self._const_blue = np.full((band_h, out_w), self.LABEL_ROAD, dtype=np.uint8)
         self._const_turquoise = np.full(
-            (band_h, out_w), self.LABEL_TURQUOISE, dtype=np.uint8)
+            (band_h, out_w), self.LABEL_YELLOW, dtype=np.uint8)
         self._geometry_key = key
 
         self.get_logger().info(
@@ -414,18 +414,18 @@ class ColorLaneDetector(Node):
         return self._buf_band
 
     def _compose_label_band(self, band_view, black_mask, yellow_mask):
-        """Write BLUE then TURQUOISE into `band_view` according to the masks.
+        """Write ROAD then YELLOW into `band_view` according to the masks.
 
         `band_view` must already hold LABEL_BACKGROUND everywhere; overlap
-        precedence (TURQUOISE overwrites BLUE) is preserved by ordering.
+        precedence (YELLOW overwrites ROAD) is preserved by ordering.
         """
         if self._use_copyto:
             cv2.copyTo(self._const_blue, black_mask, band_view)
             cv2.copyTo(self._const_turquoise, yellow_mask, band_view)
             # cv2.copyTo is better than np.copyto because it creates less buffers
         else:
-            np.copyto(band_view, self.LABEL_BLUE, where=(black_mask != 0))
-            np.copyto(band_view, self.LABEL_TURQUOISE, where=(yellow_mask != 0))
+            np.copyto(band_view, self.LABEL_ROAD, where=(black_mask != 0))
+            np.copyto(band_view, self.LABEL_YELLOW, where=(yellow_mask != 0))
 
     def _process_frame(self, cv_image, hsv_code, to_bgr_code, header, t_start):
         """Process a frame using HSV thresholds restricted to the ROI band."""
@@ -483,8 +483,8 @@ class ColorLaneDetector(Node):
             if to_bgr_code is not None:
                 low_res_full = cv2.cvtColor(low_res_full, to_bgr_code)
             mask_overlay = np.zeros_like(low_res_full)
-            mask_overlay[labels == self.LABEL_BLUE] = (255, 0, 0)
-            mask_overlay[labels == self.LABEL_TURQUOISE] = (0, 255, 0)
+            mask_overlay[labels == self.LABEL_ROAD] = (255, 0, 0)
+            mask_overlay[labels == self.LABEL_YELLOW] = (0, 255, 0)
             if publish_overlay:
                 overlay_image = cv2.addWeighted(
                     low_res_full, 0.7, mask_overlay, 0.5, 0)

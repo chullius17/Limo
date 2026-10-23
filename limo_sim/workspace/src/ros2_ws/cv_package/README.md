@@ -63,6 +63,24 @@ Offline and online mapping profiles no longer start CV automatically. Launch
 CV separately; the mapping launch's explicit `start_cv:=true` override remains
 available. Restart CV after changing its profile.
 
+## Semantic labels
+
+The detector label image and the point cloud use the following numeric IDs:
+
+| Class ID | Constant | Meaning |
+| --- | --- | --- |
+| 0 | `LABEL_INVALID` | Outside the detector ROI; not published as cloud points |
+| 1 | `LABEL_ROAD` | Road in the detector; boundary road in the cloud |
+| 2 | `LABEL_YELLOW` | Yellow lines (color detector) |
+| 3 | `LABEL_BACKGROUND` | Background / soft-obstacle candidates |
+| 4 | `LABEL_BOARDWALK` | Boardwalk |
+| 5 | `LABEL_INTERIOR_ROAD` | Interior road |
+| 6 | `LABEL_INTERIOR_BOARDWALK` | Interior boardwalk |
+
+The detector produces labels 0 through 3 (the binary and waterfall detectors
+do not produce yellow). `visual_ptcld` adds classes 4, 5 and 6. Numeric IDs
+and the `PointCloud2` field layout are shared with the mapping consumers.
+
 ## Point-cloud classification radii
 
 The real CV profile uses constant metric radii at every depth:

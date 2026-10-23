@@ -22,7 +22,7 @@ class BinaryLaneDetector(Node):
     """Label dark road pixels using mean(neighborhood) - C in the resized ROI."""
 
     LABEL_INVALID = np.uint8(0)
-    LABEL_BLUE = np.uint8(1)
+    LABEL_ROAD = np.uint8(1)
     LABEL_BACKGROUND = np.uint8(3)
 
     _ENCODINGS = {
@@ -322,7 +322,7 @@ class BinaryLaneDetector(Node):
         labels = np.full((out_h, out_w), self.LABEL_INVALID, dtype=np.uint8)
         label_band = labels[self._y_min:self._y_max]
         label_band.fill(self.LABEL_BACKGROUND)
-        np.copyto(label_band, self.LABEL_BLUE, where=self._buf_road != 0)
+        np.copyto(label_band, self.LABEL_ROAD, where=self._buf_road != 0)
         if self.frame_counter % self.debug_probe_interval_frames == 0:
             self._publish_debug_mask = self.debug_mask_pub.get_subscription_count() > 0
             self._publish_overlay = self.debug_overlay_pub.get_subscription_count() > 0

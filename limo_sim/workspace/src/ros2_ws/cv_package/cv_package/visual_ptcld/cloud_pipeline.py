@@ -8,11 +8,11 @@ from .cloud_cpu import transform_xy, voxel_groups
 
 
 LABEL_INVALID = np.uint8(0)
-LABEL_BLUE = np.uint8(1)
-LABEL_TURQUOISE = np.uint8(2)
+LABEL_ROAD = np.uint8(1)
+LABEL_YELLOW = np.uint8(2)
 LABEL_BACKGROUND = np.uint8(3)
 LABEL_BOARDWALK = np.uint8(4)
-LABEL_INTERIOR_BLUE = np.uint8(5)
+LABEL_INTERIOR_ROAD = np.uint8(5)
 LABEL_INTERIOR_BOARDWALK = np.uint8(6)
 
 CLOUD_DTYPE = np.dtype({
@@ -23,11 +23,11 @@ CLOUD_DTYPE = np.dtype({
 })
 
 PUBLISHED_LABELS = (
-    ('published_blue_count', LABEL_BLUE),
-    ('published_turquoise_count', LABEL_TURQUOISE),
+    ('published_blue_count', LABEL_ROAD),
+    ('published_turquoise_count', LABEL_YELLOW),
     ('published_background_count', LABEL_BACKGROUND),
     ('published_boardwalk_count', LABEL_BOARDWALK),
-    ('published_interior_blue_count', LABEL_INTERIOR_BLUE),
+    ('published_interior_blue_count', LABEL_INTERIOR_ROAD),
     ('published_interior_boardwalk_count', LABEL_INTERIOR_BOARDWALK),
 )
 
@@ -159,13 +159,13 @@ def build_semantic_cloud(
             bev_points, class_ids,
             blue_radius_min, blue_radius_max,
             boardwalk_propagation_radius,
-            LABEL_BLUE, LABEL_BACKGROUND, LABEL_BOARDWALK,
+            LABEL_ROAD, LABEL_BACKGROUND, LABEL_BOARDWALK,
             LABEL_INTERIOR_BOARDWALK,
         )
 
     if road_boardwalk_only:
         keep = np.isin(class_ids, (
-            LABEL_BLUE, LABEL_INTERIOR_BLUE,
+            LABEL_ROAD, LABEL_INTERIOR_ROAD,
             LABEL_BOARDWALK, LABEL_INTERIOR_BOARDWALK,
         ))
         bev_points, class_ids = bev_points[keep], class_ids[keep]

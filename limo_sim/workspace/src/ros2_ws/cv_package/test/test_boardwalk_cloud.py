@@ -45,8 +45,8 @@ def detector_stub(enabled=True):
         pointcloud_pub=SimpleNamespace(publish=published.append),
         get_logger=lambda: SimpleNamespace(warning=lambda *args, **kwargs: None),
     )
-    for name in ('LABEL_BLUE', 'LABEL_TURQUOISE', 'LABEL_BACKGROUND',
-                 'LABEL_BOARDWALK', 'LABEL_INTERIOR_BLUE',
+    for name in ('LABEL_ROAD', 'LABEL_YELLOW', 'LABEL_BACKGROUND',
+                 'LABEL_BOARDWALK', 'LABEL_INTERIOR_ROAD',
                  'LABEL_INTERIOR_BOARDWALK', 'CLOUD_DTYPE', 'CLOUD_FIELDS'):
         setattr(detector, name, getattr(VisualPtcld, name))
     detector.voxelize_bev_cloud = (
@@ -57,7 +57,7 @@ def detector_stub(enabled=True):
 
 def test_metric_voxelization_reduces_every_class_separately():
     detector = SimpleNamespace(
-        LABEL_BLUE=VisualPtcld.LABEL_BLUE,
+        LABEL_ROAD=VisualPtcld.LABEL_ROAD,
         pointcloud_voxel_size=0.02,
     )
     points = np.array([

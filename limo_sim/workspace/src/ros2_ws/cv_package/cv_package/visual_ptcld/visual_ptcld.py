@@ -56,11 +56,11 @@ PUBLISHED_CLASS_COUNTS = (
 class VisualPtcld(Node):
 
     LABEL_INVALID = cloud_pipeline.LABEL_INVALID
-    LABEL_BLUE = cloud_pipeline.LABEL_BLUE
-    LABEL_TURQUOISE = cloud_pipeline.LABEL_TURQUOISE
+    LABEL_ROAD = cloud_pipeline.LABEL_ROAD
+    LABEL_YELLOW = cloud_pipeline.LABEL_YELLOW
     LABEL_BACKGROUND = cloud_pipeline.LABEL_BACKGROUND
     LABEL_BOARDWALK = cloud_pipeline.LABEL_BOARDWALK
-    LABEL_INTERIOR_BLUE = cloud_pipeline.LABEL_INTERIOR_BLUE
+    LABEL_INTERIOR_ROAD = cloud_pipeline.LABEL_INTERIOR_ROAD
     LABEL_INTERIOR_BOARDWALK = cloud_pipeline.LABEL_INTERIOR_BOARDWALK
     CLOUD_DTYPE = cloud_pipeline.CLOUD_DTYPE
     CLOUD_FIELDS = POINT_CLOUD_FIELDS
@@ -488,7 +488,7 @@ class VisualPtcld(Node):
 
         # --- STEP 1: DIRECT LABEL MASKS ---
         t_start = time.perf_counter()
-        turquoise_mask = labels == self.LABEL_TURQUOISE
+        turquoise_mask = labels == self.LABEL_YELLOW
         background_mask = labels == self.LABEL_BACKGROUND
         # Dilating soft obstacle before intersecting it with exterior road
         # selects the road boundary band. A larger odd kernel keeps it thicker.
@@ -496,8 +496,8 @@ class VisualPtcld(Node):
         # OpenCV applies the 7x7 soft-obstacle dilation before intersection.
         blue_mask = self.boardwalk_classifier.filter_blue(
             labels, self.blue_boundary_kernel,
-            self.LABEL_BLUE, self.LABEL_BACKGROUND)
-        interior_blue_mask = (labels == self.LABEL_BLUE) & ~blue_mask
+            self.LABEL_ROAD, self.LABEL_BACKGROUND)
+        interior_blue_mask = (labels == self.LABEL_ROAD) & ~blue_mask
         t['step1_masks'] = (time.perf_counter() - t_start) * 1000.0
 
         # --- STEP 3: OPTIONAL ADDITIONAL BOUNDARY ROI ---
@@ -604,7 +604,7 @@ class VisualPtcld(Node):
                 and self.blue_filter_debug_pub.get_subscription_count() > 0):
             # Compare blue pixels before and after filtering, before voxelization.
             # Use the same ROI on both panels to isolate the adjacency filter.
-            original_blue_mask = (labels == self.LABEL_BLUE) & roi_mask
+            original_blue_mask = (labels == self.LABEL_ROAD) & roi_mask
             title_height = 24
             filter_frame = np.zeros(
                 (height + title_height, width * 2, 3), dtype=np.uint8)
@@ -813,13 +813,13 @@ class VisualPtcld(Node):
         tf_ms = (time.perf_counter() - tf_started_at) * 1000.0
 
         point_groups = [
-            (blue_points, self.LABEL_BLUE),
-            (turquoise_points, self.LABEL_TURQUOISE),
+            (blue_points, self.LABEL_ROAD),
+            (turquoise_points, self.LABEL_YELLOW),
             (background_points, self.LABEL_BACKGROUND),
         ]
         if interior_blue_points is not None:
             point_groups.append(
-                (interior_blue_points, self.LABEL_INTERIOR_BLUE))
+                (interior_blue_points, self.LABEL_INTERIOR_ROAD))
 
         (
             bev_points, class_ids, point_count_before_voxel,
