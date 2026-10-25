@@ -54,7 +54,7 @@ def test_simulation_preserves_mapping_parameters(monkeypatch):
     assert nodes['slam_toolbox']['values']['base_frame'] == 'base_link'
     assert nodes['slam_toolbox']['values']['minimum_time_interval'] == 0.1
     mapper = nodes['semantic_mapper']['values']
-    assert (mapper['turquoise_cost'], mapper['white_cost'], mapper['boardwalk_cost']) == (60, 30, 90)
+    assert (mapper['yellow_cost'], mapper['white_cost'], mapper['boardwalk_cost']) == (60, 30, 90)
     assert mapper['save_directory'] == ''
     assert mapper['publish_rate_hz'] == 4.0
 

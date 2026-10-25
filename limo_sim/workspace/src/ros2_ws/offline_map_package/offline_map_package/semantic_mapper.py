@@ -133,7 +133,7 @@ class SemanticMapper(Node):
             'cloud_topic': '/limo/cv_package/visual_ptcld/points',
             'reference_map_topic': '/map', 'map_frame': 'map', 'odom_frame': 'odom',
             'pose_source': 'tf', 'submap_topic': '/submap_list', 'trajectory_id': 0,
-            'resolution': 0.05, 'turquoise_cost': 60, 'white_cost': 30,
+            'resolution': 0.05, 'yellow_cost': 60, 'white_cost': 30,
             'boardwalk_cost': 90, 'hit_log_odds': 0.85, 'miss_log_odds': 0.4,
             'log_odds_limit': 3.0, 'min_evidence': 0.5,
             'free_confirmations': 1,

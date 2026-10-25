@@ -8,7 +8,7 @@ import numpy as np
 
 CLASS_IDS = np.array([2, 3, 4, 5], dtype=np.uint8)
 INPUT_CLASS_IDS = np.array([1, 2, 3, 4, 5, 6], dtype=np.uint8)
-CLASS_NAMES = ('turquoise', 'white', 'boardwalk')
+CLASS_NAMES = ('yellow', 'white', 'boardwalk')
 DEFAULT_COSTS = (60, 30, 90)
 # Boundary and interior blue share observed-road evidence, represented by
 # class 5 internally. Road competes for evidence with the three
@@ -114,7 +114,7 @@ class LaserEndpointGrid:
         return bool(additions)
 
     def geometry(self):
-        """Return tight axis-aligned geometry around all retained endpoints."""
+        """Returns bounding rectangle for the map."""
         if not self.cells:
             return None
         cells = np.asarray(list(self.cells), dtype=np.int64)
@@ -133,6 +133,7 @@ class LaserEndpointGrid:
         points = (cells + 0.5) * self.resolution
         indices, valid = geometry.indices(points)
         output.ravel()[indices[valid]] = 100
+        # The index validation is useless but I'll keep it for safety
         return output
 
 
@@ -184,6 +185,8 @@ class SemanticGrid:
 
     def update(self, points, labels, key=(0, 0)):
         """Integrate one cloud in the selected submap's local coordinates."""
+        # In this case we use only one submap for visual data since we don't want to exploit
+        # the cartographer to correct visual information
         if key not in self.poses:
             raise ValueError('Submap pose not available')
         valid = np.isfinite(points).all(axis=1) & np.isin(labels, INPUT_CLASS_IDS)
@@ -196,6 +199,7 @@ class SemanticGrid:
         labels[labels == 6] = 4
         cells = np.floor(points / self.resolution).astype(np.int64)
         cells, inverse = np.unique(cells, axis=0, return_inverse=True)
+        # inverse is a list where instead of points I have cell indexes
         counts = np.stack([
             np.bincount(inverse, weights=labels == label, minlength=len(cells))
             for label in CLASS_IDS], axis=1)
@@ -310,3 +314,7 @@ class SemanticGrid:
             combined[target] = self.costs[classes]
         shape = (geometry.height, geometry.width)
         return geometry, layers.reshape((3,) + shape), combined.reshape(shape)
+
+    # NOTE: in this class we use a tile partition method in order to use as less memory as possible.
+    #       The main disadvantage of this approach are the increased CPU costs, thus the code can still 
+    #       be optimized in the future by another student.

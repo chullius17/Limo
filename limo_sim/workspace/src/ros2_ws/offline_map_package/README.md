@@ -175,7 +175,7 @@ the final optimization.
 
 Prefix: '/limo/map_package/offline/map/'.
 
-- 'turquoise_map' (yellow lines), 'white_map' (soft obstacle), and
+- 'yellow_map' (yellow lines), 'white_map' (soft obstacle), and
   'boardwalk_map': selected-class cost, 0 in differently classified cells, and
   -1 in unknown or uncertain cells.
 - 'combined_grid': live laser-plus-CV map; laser obstacles at 100 take
