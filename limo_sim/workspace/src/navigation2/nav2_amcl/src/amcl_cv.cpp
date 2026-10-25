@@ -64,8 +64,17 @@ bool AmclNode::applyCvFusion(
   pf_sample_set_t * set, const builtin_interfaces::msg::Time & laser_stamp,
   bool lidar_information_valid)
 {
+  CvFusionDiagnostics diagnostics;
+  diagnostics.particles = set && set->sample_count > 0 ? set->sample_count : 0;
+  const auto finish = [this, &diagnostics, &laser_stamp](
+    bool accepted, const std::string & reason) {
+      diagnostics.accepted = accepted;
+      diagnostics.reason = reason;
+      publishCvDiagnostics(laser_stamp, diagnostics);
+      return accepted;
+    };
   if (cv_weight_factor_ == 0.0 || cv_sad_gain_ == 0.0 || !set || set->sample_count <= 0) {
-    return false;
+    return finish(false, "disabled_or_empty_filter");
   }
   sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud;
   double time_error = std::numeric_limits<double>::infinity();
@@ -74,7 +83,7 @@ bool AmclNode::applyCvFusion(
     std::lock_guard<std::mutex> lock(cv_mutex_);
     if (!cv_likelihood_model_ || !cv_likelihood_model_->ready()) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Waiting for CV obstacle map");
-      return false;
+      return finish(false, "waiting_for_map");
     }
     for (const auto & candidate : cv_cloud_buffer_) {
       const double error = std::abs(
@@ -84,27 +93,33 @@ bool AmclNode::applyCvFusion(
         cloud = candidate;
       }
     }
+    if (cloud) {
+      diagnostics.input_points = static_cast<uint64_t>(cloud->width) * cloud->height;
+      diagnostics.cloud_stamp = rclcpp::Time(cloud->header.stamp).seconds();
+      diagnostics.sync_error = time_error;
+    }
     if (!cloud || time_error > cv_sync_tolerance_) {
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 2000,
         "No synchronized CV cloud (dt=%.3f s, tolerance=%.3f s); skipping CV update",
         time_error, cv_sync_tolerance_);
-      return false;
+      return finish(false, "no_synchronized_cloud");
     }
     if (last_fused_cv_cloud_) {
       // Never reprocess the same scan or go backwards through the CV buffer.
       if (rclcpp::Time(laser_stamp) <= rclcpp::Time(last_cv_fusion_stamp_) ||
         rclcpp::Time(cloud->header.stamp) < rclcpp::Time(last_fused_cv_cloud_->header.stamp))
       {
-        return false;
+        return finish(false, "out_of_order_update");
       }
       reused = cloud->header.stamp == last_fused_cv_cloud_->header.stamp;
+      diagnostics.reused = reused;
       // Match Humble's timeout, but allow reuse only without useful lidar.
       // The timeout above always refers to the original cloud timestamp.
       if (reused && ((lidar_information_valid && laser_weight_factor_ > 0.0) ||
         rclcpp::Time(cloud->header.stamp) > rclcpp::Time(laser_stamp)))
       {
-        return false;
+        return finish(false, "cloud_already_used");
       }
     }
   }
@@ -121,35 +136,38 @@ bool AmclNode::applyCvFusion(
   } catch (const tf2::TransformException & error) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 2000, "Cannot synchronize CV cloud: %s", error.what());
-    return false;
+    return finish(false, "unavailable_odometry_tf");
   }
   std::vector<CvTemplateCell2D> cells;
   std::string error;
   if (!voxelizeCvCloud(*cloud, cloud_to_base, cv_voxel_size_, cells, error)) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 2000, "Rejected CV cloud: %s", error.c_str());
-    return false;
+    return finish(false, "invalid_cloud");
   }
+  diagnostics.candidate_points = cells.size();
   if (cells.size() < cv_min_points_) {
     RCLCPP_INFO_THROTTLE(
       get_logger(), *get_clock(), 2000,
       "CV cloud has %zu obstacle/road voxels, minimum %.0f; skipping CV update",
       cells.size(), cv_min_points_);
-    return false;
+    return finish(false, "insufficient_points");
   }
   const auto non_road_voxels = static_cast<std::size_t>(std::count_if(
       cells.begin(), cells.end(), [](const CvTemplateCell2D & cell) {
         return cell.occupancy > 0.5;
       }));
+  diagnostics.non_road_points = non_road_voxels;
   if (non_road_voxels < static_cast<std::size_t>(cv_min_non_road_voxels_)) {
     RCLCPP_INFO_THROTTLE(
       get_logger(), *get_clock(), 2000,
       "CV cloud has %zu non-road voxels, minimum %d; skipping CV update",
       non_road_voxels, cv_min_non_road_voxels_);
-    return false;
+    return finish(false, "insufficient_non_road_points");
   }
   std::lock_guard<std::mutex> lock(cv_mutex_);
   const auto score = cv_likelihood_model_->scoreSad(set, cells);
+  diagnostics.evaluations = static_cast<uint64_t>(cells.size()) * set->sample_count;
   CvLikelihoodModel::QualityReport quality;
   if (cv_quality_gate_enabled_ && !CvLikelihoodModel::assessQuality(
       set, score, cv_weight_factor_ * cv_sad_gain_, cv_quality_limits_, quality))
@@ -158,12 +176,12 @@ bool AmclNode::applyCvFusion(
       get_logger(), *get_clock(), 2000,
       "CV update rejected: %s, information=%.4f, position_stddev=%.3f m, yaw_stddev=%.3f rad",
       quality.reason, quality.information, quality.position_stddev, quality.yaw_stddev);
-    return false;
+    return finish(false, std::string("quality_gate: ") + quality.reason);
   }
   if (!CvLikelihoodModel::fuseWeights(
       set, score, laser_weight_factor_, cv_weight_factor_, cv_sad_gain_))
   {
-    return false;
+    return finish(false, "invalid_fusion_weights");
   }
   last_fused_cv_cloud_ = cloud;
   last_cv_fusion_stamp_ = laser_stamp;
@@ -178,6 +196,6 @@ bool AmclNode::applyCvFusion(
       reused ? "true" : "false", lidar_information_valid ? "true" : "false",
       laser_weight_factor_);
   }
-  return true;
+  return finish(true, "accepted");
 }
 }  // namespace nav2_amcl

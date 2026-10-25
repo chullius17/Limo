@@ -1,0 +1,147 @@
+{
+  "method": "production_temporal_evidence",
+  "rule": "Production SemanticGrid.update/render with the selected mapper parameters.",
+  "label_merges": {
+    "road": [
+      1,
+      5
+    ],
+    "boardwalk": [
+      4,
+      6
+    ]
+  },
+  "tf_policy": "Full recorded TF history queried at each sensor timestamp.",
+  "live_queue_and_wait_deadlines_simulated": false,
+  "geometry_policy": "Last valid recorded SLAM map; same sparse-grid projection as mapper.",
+  "temporal_filter": true,
+  "median_filter": false,
+  "median_kernel": 1,
+  "evidence_threshold": 0.5,
+  "session": "/workspace/src/ros2_ws/offline_map_package/experiments/sim/bags/run_01",
+  "bag_duration_s": 324.600106605,
+  "bag_sha256": {
+    "bag_0.db3": "945e34b5d701b624d0fa1919ca158fe9f5948953f6e70198a5e7a3095321f52d"
+  },
+  "recorded_mapper_config": {
+    "cloud_topic": "/limo/cv_package/visual_ptcld/points",
+    "reference_map_topic": "/map",
+    "map_frame": "map",
+    "odom_frame": "odom",
+    "pose_source": "tf",
+    "submap_topic": "/submap_list",
+    "trajectory_id": 0,
+    "resolution": 0.05,
+    "yellow_cost": 60,
+    "white_cost": 30,
+    "boardwalk_cost": 90,
+    "hit_log_odds": 0.85,
+    "miss_log_odds": 0.4,
+    "log_odds_limit": 3.0,
+    "min_evidence": 0.5,
+    "publish_rate_hz": 4.0,
+    "save_directory": "",
+    "save_map_name": "limo_map",
+    "save_median_kernel": 1,
+    "tf_wait_sec": 0.5,
+    "submap_max_age_sec": 2.0,
+    "max_input_points": 100000,
+    "max_cells": 2000000,
+    "max_output_cells": 4000000,
+    "free_confirmations": 1,
+    "use_sim_time": true
+  },
+  "effective_mapper_config": {
+    "cloud_topic": "/limo/cv_package/visual_ptcld/points",
+    "reference_map_topic": "/map",
+    "map_frame": "map",
+    "odom_frame": "odom",
+    "pose_source": "tf",
+    "submap_topic": "/submap_list",
+    "trajectory_id": 0,
+    "resolution": 0.05,
+    "yellow_cost": 60,
+    "white_cost": 30,
+    "boardwalk_cost": 90,
+    "hit_log_odds": 0.625,
+    "miss_log_odds": 0.625,
+    "log_odds_limit": 3.0,
+    "min_evidence": 0.5,
+    "publish_rate_hz": 4.0,
+    "save_directory": "",
+    "save_map_name": "limo_map",
+    "save_median_kernel": 1,
+    "tf_wait_sec": 0.5,
+    "submap_max_age_sec": 2.0,
+    "max_input_points": 100000,
+    "max_cells": 2000000,
+    "max_output_cells": 4000000,
+    "free_confirmations": 1,
+    "use_sim_time": true
+  },
+  "statistics": {
+    "tf_samples_loaded": 213572,
+    "reference_maps_accepted": 164,
+    "duplicate_tf_samples_ignored": 55217,
+    "clouds_recorded": 6467,
+    "clouds_without_valid_tf": 4,
+    "valid_input_points": 7750637,
+    "clouds_integrated": 6463
+  },
+  "first_tf_failures": [
+    {
+      "stamp_ns": 56062000000,
+      "reason": "Lookup would require extrapolation into the past.  Requested time 56.062000 but the earliest data is at time 56.110000, when looking up transform from frame [base_link] to frame [map]"
+    },
+    {
+      "stamp_ns": 56113000000,
+      "reason": "Lookup would require extrapolation into the past.  Requested time 56.113000 but the earliest data is at time 56.210000, when looking up transform from frame [base_link] to frame [map]"
+    },
+    {
+      "stamp_ns": 56162000000,
+      "reason": "Lookup would require extrapolation into the past.  Requested time 56.162000 but the earliest data is at time 56.210000, when looking up transform from frame [base_link] to frame [map]"
+    },
+    {
+      "stamp_ns": 380223000000,
+      "reason": "Lookup would require extrapolation into the future.  Requested time 380.223000 but the latest data is at time 380.214000, when looking up transform from frame [base_link] to frame [map]"
+    }
+  ],
+  "geometry": {
+    "width": 242,
+    "height": 159,
+    "resolution": 0.05000000074505806,
+    "origin": [
+      -6.162698557912084,
+      -3.9707198450730163,
+      0.0
+    ],
+    "frame": "map"
+  },
+  "cell_observations": null,
+  "tied_cell_observations": null,
+  "observed_cells": 38151,
+  "observed_but_unknown_cells": 1046,
+  "semantic_cost_counts": {
+    "-1": 1373,
+    "0": 21142,
+    "30": 1367,
+    "60": 849,
+    "90": 13747
+  },
+  "combined_cost_counts": {
+    "-1": 5,
+    "0": 22053,
+    "30": 1045,
+    "60": 849,
+    "90": 13349,
+    "100": 1177
+  },
+  "parameter_profile": "/workspace/src/ros2_ws/offline_map_package/config/mapping_sim.yaml",
+  "parameter_profile_contents": "# Read by map.launch.py; this is not a ROS --params-file.\n# Simulation: Gazebo clock, mapping and GUI on the PC.\nlaunch:\n  use_sim_time: true\n  start_cv: true\n  cv_config: cv_sim.yaml  # Profile identity is independent of the clock.\n  start_slam: true\n  start_mapper: true\n  start_rviz: true\n  start_gui: true\n  rviz_config: offline_map.rviz  # Relative to limo_rviz/config, or an absolute path.\n  fixed_frame: map\n\nslam_toolbox:\n  odom_frame: odom\n  map_frame: map\n  base_frame: base_link\n  scan_topic: /scan\n  mode: mapping\n  transform_timeout: 0.2\n  tf_buffer_duration: 30.0\n  scan_queue_size: 1\n  throttle_scans: 1\n  minimum_time_interval: 0.1\n  map_update_interval: 2.0\n  resolution: 0.05\n  max_laser_range: 8.0\n\nsemantic_mapper:\n  cloud_topic: /limo/cv_package/visual_ptcld/points\n  # Complete laser layer from SLAM; each update replaces the previous map.\n  reference_map_topic: /map\n  map_frame: map\n  odom_frame: odom\n  # Keep SLAM pose estimation based on laser/odometry: visual classifications may\n  # be too unstable to use as pose constraints.\n  # Optional Cartographer: run it separately, set launch.start_slam=false and\n  # pose_source=cartographer, and provide /map, /submap_list and TF.\n  # Stored visual evidence would then follow submap corrections after loop closure.\n  # Feeding images into SLAM would require a separate integration and validation\n  # of visual stability; this mapper only uses vision to build the semantic map.\n  # submap_topic and trajectory_id are only used with pose_source=cartographer.\n  pose_source: tf\n  submap_topic: /submap_list\n  trajectory_id: 0\n  resolution: 0.05\n  # Fixed costs: exterior/interior road = 0, lidar = 100.\n  yellow_cost: 60\n  white_cost: 30\n  boardwalk_cost: 90\n  hit_log_odds: 0.85\n  miss_log_odds: 0.4\n  log_odds_limit: 3.0\n  min_evidence: 0.5\n  publish_rate_hz: 4.0\n  save_directory: ''  # ros2_maps/semantic in the workspace running the mapper.\n  save_map_name: limo_map\n  save_median_kernel: 1  # No save-time filtering in simulation.\n  tf_wait_sec: 0.5\n  submap_max_age_sec: 2.0\n  max_input_points: 100000\n  max_cells: 2000000\n  max_output_cells: 4000000\n\nmap_save_gui:\n  save_service: /limo/map_package/offline/map_saver/save_map\n  status_topic: /limo/map_package/offline/map_saver/status\n",
+  "experiment_name": "filtered_limit3_hit0p625_miss0p625",
+  "explicit_parameter_overrides": {
+    "log_odds_limit": 3.0,
+    "hit_log_odds": 0.625,
+    "miss_log_odds": 0.625
+  }
+}

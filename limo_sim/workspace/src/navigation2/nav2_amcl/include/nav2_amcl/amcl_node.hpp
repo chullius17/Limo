@@ -30,12 +30,14 @@
 #include <vector>
 
 #include "geometry_msgs/msg/pose_array.hpp"
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "message_filters/subscriber.h"
 #include "nav2_util/lifecycle_node.hpp"
 #include "nav2_amcl/motion_model/motion_model.hpp"
 #include "nav2_amcl/sensors/laser/laser.hpp"
 #include "nav2_amcl/sensors/cv/cv_likelihood_model.hpp"
+#include "nav2_amcl/experiments/cv_diagnostics.hpp"
 #include "nav2_msgs/msg/particle.hpp"
 #include "nav2_msgs/msg/particle_cloud.hpp"
 #include "nav_msgs/srv/set_map.hpp"
@@ -133,6 +135,10 @@ protected:
   bool applyCvFusion(
     pf_sample_set_t * set, const builtin_interfaces::msg::Time & stamp,
     bool lidar_information_valid = true);
+  void publishCvDiagnostics(
+    const builtin_interfaces::msg::Time & stamp, const CvFusionDiagnostics & data);
+  rclcpp_lifecycle::LifecyclePublisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
+    cv_diagnostics_pub_;
   std::mutex cv_mutex_;
   std::unique_ptr<CvLikelihoodModel> cv_likelihood_model_;
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr cv_map_sub_;

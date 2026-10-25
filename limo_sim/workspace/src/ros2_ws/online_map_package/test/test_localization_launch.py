@@ -247,3 +247,78 @@ def test_local_exterior_road_settings_leave_amcl_on_the_original_cv_cloud(
     assert amcl['cv_cloud_topic'] == '/limo/cv_package/visual_ptcld/points'
     assert amcl['cv_enabled'] == 'true'
     assert amcl['cv_weight_factor'] == amcl['laser_weight_factor'] == '1.0'
+
+
+def ideal(monkeypatch, **overrides):
+    module = load_launch('experiments/online_map_ideal_sim.launch.py')
+    context = LaunchContext()
+    context.launch_configurations.update(overrides)
+    for action in module.generate_launch_description().entities:
+        if isinstance(action, DeclareLaunchArgument):
+            action.execute(context)
+    monkeypatch.setattr(module, 'Node', lambda **kwargs: kwargs)
+    monkeypatch.setattr(module, 'GroupAction', lambda actions: actions)
+    return module._launch_ideal(context)
+
+
+def test_ideal_launch_uses_existing_map_and_cv_only_amcl(monkeypatch):
+    actions = ideal(monkeypatch)
+    nodes = {action['name']: action for action in actions
+             if isinstance(action, dict)}
+    assert set(nodes) == {
+        'ideal_map_server', 'lifecycle_manager_ideal_map', 'rviz2', 'amcl_experiment',
+    }
+    server = nodes['ideal_map_server']
+    params = server['parameters'][0]
+    assert params['use_sim_time'] is True
+    assert params['frame_id'] == 'map'
+    assert Path(params['yaml_filename']) == (
+        PACKAGES / 'offline_map_package' / 'experiments' / 'sim'
+        / 'ideal_map' / 'ideal_map.yaml')
+    metadata = yaml.safe_load(Path(params['yaml_filename']).read_text())
+    assert metadata['mode'] == 'raw'
+    assert (Path(params['yaml_filename']).parent / metadata['image']).is_file()
+    assert ('map', '/map') in server['remappings']
+    assert nodes['lifecycle_manager_ideal_map']['parameters'][0]['node_names'] == [
+        'ideal_map_server']
+    cv = next(action[0] for action in actions if isinstance(action, list))
+    cv_args = dict(cv.launch_arguments)
+    assert cv_args['config_file'].endswith('/cv_package/config/cv_sim.yaml')
+    assert cv_args['mode'] == 'backend'
+    assert cv_args['use_sim_time'] == 'true'
+    amcl = next(action for action in actions
+                if isinstance(action, IncludeLaunchDescription))
+    args = dict(amcl.launch_arguments)
+    assert args['map_topic'] == args['cv_map_topic'] == '/map'
+    assert args['laser_weight_factor'] == '0.0'
+    assert args['cv_weight_factor'] == '1.0'
+    assert args['cv_enabled'] == 'true'
+    assert args['cv_occupied_threshold'] == '50'
+    assert args['cv_cloud_topic'] == '/limo/cv_package/visual_ptcld/points'
+    assert args['scan_topic'] == '/scan'
+    assert args['tf_broadcast'] == 'true'
+
+
+def test_ideal_launch_supports_cloud_replay_and_custom_map(monkeypatch, tmp_path):
+    # The map server validates the map contents; launch validates the YAML path.
+    custom_map = tmp_path / 'custom.yaml'
+    custom_map.write_text('image: custom.pgm\n')
+    actions = ideal(
+        monkeypatch, map_yaml=str(custom_map), start_cv='false',
+        start_rviz='false', start_monitor='false', use_sim_time='false')
+    assert not any(isinstance(action, list) for action in actions)
+    nodes = {action['name']: action for action in actions
+             if isinstance(action, dict)}
+    assert set(nodes) == {'ideal_map_server', 'lifecycle_manager_ideal_map'}
+    assert nodes['ideal_map_server']['parameters'][0]['yaml_filename'] == str(custom_map)
+    assert all(node['parameters'][0]['use_sim_time'] is False
+               for node in nodes.values())
+    amcl = next(action for action in actions
+                if isinstance(action, IncludeLaunchDescription))
+    assert dict(amcl.launch_arguments)['use_sim_time'] == 'false'
+    assert dict(amcl.launch_arguments)['laser_weight_factor'] == '0.0'
+
+
+def test_ideal_launch_rejects_missing_map(monkeypatch, tmp_path):
+    with pytest.raises(ValueError, match='Ideal map YAML not found'):
+        ideal(monkeypatch, map_yaml=str(tmp_path / 'missing.yaml'))

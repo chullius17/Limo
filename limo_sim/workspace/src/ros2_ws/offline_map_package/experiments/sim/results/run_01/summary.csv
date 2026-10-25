@@ -1,0 +1,7 @@
+experiment,temporal_filter,hit,miss,hit_plus_miss,positive_update_fraction_threshold,limit,threshold,free_confirmations,clouds_integrated,observed_cells,unknown_observed,unknown_observed_percent,semantic_road_cells,semantic_white_cells,semantic_yellow_cells,semantic_boardwalk_cells
+unfiltered,False,,,,,,,,6463,38151,348,0.9122,21272,2206,708,13617
+filtered_limit3,True,0.85,0.4,1.25,0.32,3.0,0.5,1,6463,38151,70,0.1835,21439,1719,855,14068
+filtered_limit3_hit0p625_miss0p625,True,0.625,0.625,1.25,0.5,3.0,0.5,1,6463,38151,1046,2.7417,21142,1367,849,13747
+filtered_limit3_hit1_miss0p25,True,1.0,0.25,1.25,0.2,3.0,0.5,1,6463,38151,236,0.6186,21412,1735,796,13972
+filtered_limit2,True,0.85,0.4,1.25,0.32,2.0,0.5,1,6463,38151,107,0.2805,21420,1830,826,13968
+filtered_limit1,True,0.85,0.4,1.25,0.32,1.0,0.5,1,6463,38151,216,0.5662,21359,2060,775,13741

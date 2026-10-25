@@ -1,9 +1,11 @@
 // Copyright (c) 2026 Giulio Cataldo
 // Licensed under the Apache License, Version 2.0.
 #include <gtest/gtest.h>
+#include <chrono>
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <thread>
 
 #include "nav2_amcl/amcl_node.hpp"
 #include "tf2_ros/buffer.h"
@@ -36,6 +38,8 @@ public:
   void setLaserWeight(double weight) {laser_weight_factor_ = weight;}
   void setQualityGate(bool enabled) {cv_quality_gate_enabled_ = enabled;}
   void setMinNonRoadVoxels(int minimum) {cv_min_non_road_voxels_ = minimum;}
+  void activateDiagnostics() {cv_diagnostics_pub_->on_activate();}
+  size_t diagnosticSubscribers() const {return cv_diagnostics_pub_->get_subscription_count();}
   void setLaserLimits(double minimum, double maximum)
   {
     laser_min_range_ = minimum;
@@ -136,6 +140,50 @@ TEST_F(CvSync, CompensatesMotionAndDoesNotReuseCloud)
   const double weight = samples[0].weight;
   EXPECT_FALSE(node->applyCvFusion(&set, stamp));
   EXPECT_DOUBLE_EQ(samples[0].weight, weight);
+}
+
+TEST_F(CvSync, DiagnosticsReportActualUsedPointsAndZeroOnRejection)
+{
+  node->activateDiagnostics();
+  auto observer = std::make_shared<rclcpp::Node>("cv_diagnostics_observer");
+  std::vector<diagnostic_msgs::msg::DiagnosticArray> messages;
+  auto subscription = observer->create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+    "/amcl/cv_diagnostics", rclcpp::QoS(100),
+    [&messages](diagnostic_msgs::msg::DiagnosticArray::SharedPtr message) {
+      messages.push_back(*message);
+    });
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(observer);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (node->diagnosticSubscribers() == 0 && std::chrono::steady_clock::now() < deadline) {
+    executor.spin_some();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  ASSERT_GT(node->diagnosticSubscribers(), 0u);
+  node->cvCloudReceived(cloud);
+  node->setMinNonRoadVoxels(2);
+  EXPECT_FALSE(node->applyCvFusion(&set, stamp));
+  node->setMinNonRoadVoxels(1);
+  EXPECT_TRUE(node->applyCvFusion(&set, stamp));
+  while (messages.size() < 2 && std::chrono::steady_clock::now() < deadline) {
+    executor.spin_some();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  ASSERT_EQ(messages.size(), 2u);
+  std::map<std::string, std::string> rejected, accepted;
+  for (const auto & entry : messages[0].status[0].values) {
+    rejected[entry.key] = entry.value;
+  }
+  for (const auto & entry : messages[1].status[0].values) {
+    accepted[entry.key] = entry.value;
+  }
+  EXPECT_EQ(rejected["candidate_points"], "1");
+  EXPECT_EQ(rejected["used_points"], "0");
+  EXPECT_EQ(accepted["used_points"], "1");
+  EXPECT_EQ(accepted["used_road_points"], "0");
+  EXPECT_EQ(accepted["used_non_road_points"], "1");
+  EXPECT_EQ(accepted["evaluations"], "2");
+  EXPECT_EQ(messages[1].header.stamp, stamp);
 }
 
 TEST_F(CvSync, MissingStaleEmptyAndUnavailableTfLeaveLaserWeightsUnchanged)

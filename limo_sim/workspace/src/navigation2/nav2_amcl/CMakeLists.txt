@@ -4,6 +4,7 @@ project(nav2_amcl)
 find_package(ament_cmake REQUIRED)
 find_package(nav2_common REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
@@ -41,6 +42,7 @@ set(library_name ${executable_name}_core)
 add_library(${library_name} SHARED
   src/amcl_node.cpp
   src/amcl_cv.cpp
+  src/experiments/cv_diagnostics.cpp
 )
 
 target_include_directories(${library_name} PRIVATE src/include)
@@ -50,6 +52,7 @@ endif()
 
 set(dependencies
   rclcpp
+  diagnostic_msgs
   rclcpp_lifecycle
   message_filters
   tf2_geometry_msgs

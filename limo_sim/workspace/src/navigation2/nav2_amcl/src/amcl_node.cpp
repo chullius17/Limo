@@ -300,6 +300,9 @@ AmclNode::on_activate(const rclcpp_lifecycle::State & /*state*/)
   pose_pub_->on_activate();
   particlecloud_pub_->on_activate();
   particle_cloud_pub_->on_activate();
+  if (cv_diagnostics_pub_) {
+    cv_diagnostics_pub_->on_activate();
+  }
 
   RCLCPP_WARN(
     get_logger(),
@@ -341,6 +344,9 @@ AmclNode::on_deactivate(const rclcpp_lifecycle::State & /*state*/)
   pose_pub_->on_deactivate();
   particlecloud_pub_->on_deactivate();
   particle_cloud_pub_->on_deactivate();
+  if (cv_diagnostics_pub_) {
+    cv_diagnostics_pub_->on_deactivate();
+  }
 
   return nav2_util::CallbackReturn::SUCCESS;
 }
@@ -360,6 +366,7 @@ AmclNode::on_cleanup(const rclcpp_lifecycle::State & /*state*/)
   laser_scan_sub_.reset();
 
   cv_cloud_sub_.reset();
+  cv_diagnostics_pub_.reset();
   cv_map_sub_.reset();
   {
     std::lock_guard<std::mutex> lock(cv_mutex_);
@@ -1387,6 +1394,8 @@ AmclNode::initPubSub()
     std::bind(&AmclNode::mapReceived, this, std::placeholders::_1));
 
   if (cv_enabled_) {
+    cv_diagnostics_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+      "~/cv_diagnostics", rclcpp::QoS(100));
     CvLikelihoodModel::Parameters parameters;
     parameters.occupied_threshold = cv_occupied_threshold_;
     cv_likelihood_model_ = std::make_unique<CvLikelihoodModel>(parameters);

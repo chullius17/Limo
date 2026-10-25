@@ -77,6 +77,97 @@ initial thresholds on the circuit.
 
 ## Launching
 
+For CV-only localization on the ideal Gazebo circuit map, with Gazebo, robot
+odometry, camera/depth topics and `/scan` already running:
+
+~~~bash
+ros2 launch online_map_package online_map_ideal_sim.launch.py
+~~~
+
+This launch starts one map server on `/map`, the simulation CV pipeline,
+the modified AMCL, RViz and the AMCL experiment window. It locates
+`offline_map_package/experiments/sim/ideal_map/ideal_map.yaml` in the source
+workspace. Override the path with `map_yaml:=/absolute/path/ideal_map.yaml`.
+Use `start_rviz:=false` for a headless run, or `start_cv:=false` when a bag
+already supplies the semantic cloud. The simulation clock is enabled by default.
+Set `start_monitor:=false` to disable the experiment window and its recording.
+
+AMCL reuses `config/mapping_sim.yaml`, with `laser_weight_factor=0` and CV
+enabled. Both its map inputs use `/map`: road cost 0 is free, yellow/boardwalk
+costs 60/90 are occupied for CV at the configured threshold 50, and white cost
+30 remains intermediate. The laser does not contribute a likelihood, but
+`/scan` still triggers updates and odometry supplies motion. Keep SLAM and any
+other `map -> odom` publisher stopped, and initialize the robot pose using
+RViz **2D Pose Estimate**. Gazebo and the robot bringup are launched separately.
+This launch does not start the local controller map or navigation nodes.
+
+## AMCL experiments
+
+Experimental launches are under `launch/experiments/`; the recorder and its data
+model are under `online_map_package/experiments/`. Normal online launch files
+and the production control-map node keep their existing locations.
+
+To open just the recorder while AMCL is already running:
+
+~~~bash
+ros2 launch online_map_package amcl_experiment.launch.py
+~~~
+
+Use `use_sim_time:=false` for the real robot. Alternatively:
+
+~~~bash
+ros2 run online_map_package amcl_experiment
+~~~
+
+The Qt/Matplotlib interface follows the EKF experiment viewer. It shows six
+plots: incoming/candidate/used CV points, road and obstacle points actually used,
+position variances, XY covariance, yaw variance and XY trajectory. The status
+line shows the last rejection reason and standard deviations. Pausing the plots
+does not stop acquisition. The interface is a desktop application and needs
+the same display access as RViz.
+
+The modified AMCL publishes `/amcl/cv_diagnostics` (`DiagnosticArray`) for every
+attempted CV update, without the throttling used by console logs. A point means
+one template centroid after class filtering and voxelization: road and obstacle
+centroids in the same voxel remain distinct. `used_points` is zero if the update
+is rejected, while `candidate_points` and `evaluations` describe any work already
+performed. `evaluations` counts candidate points times particles when the SAD
+score was computed. Reused clouds are marked. No scan/update means no diagnostic
+sample, rather than an artificial zero. This topic is independent of
+`workload_logging_enabled` and does not change fusion weights or rejection rules.
+
+Each recorder invocation creates a unique UTC-named directory in the source
+package, `online_map_package/results/amcl_<timestamp>/`. It writes every sample
+to `cv.csv` and `pose.csv` during acquisition. The latter keeps all 36 covariance
+entries, plus pose and frame. Closing the window, Ctrl+C or SIGTERM saves
+`amcl_experiment.png` for the entire session and `metadata.json` with settings,
+counts, rejection reasons and units. **Salva grafici adesso** refreshes those
+exports while recording continues. Result runs are ignored by Git.
+
+The live view keeps at most 120 seconds / 20,000 samples per stream by default;
+CSVs retain the entire run, and PNG rendering uses a reduced preview over its
+full duration. The plot time is monotonic acquisition time, so resetting the
+simulation clock does not erase the experiment. Original ROS timestamps and
+per-stream reset segments remain in the CSVs. Covariance is AMCL's estimated
+uncertainty, not localization error against ground truth. Pose and CV samples
+are recorded independently at their original publication rates; their ROS
+timestamps can be matched during analysis without interpolating the counts.
+
+Recorder parameters include `pose_topic`, `diagnostics_topic`, `history_seconds`,
+`max_samples`, `refresh_hz` and `results_directory`. Override the output location
+when running without a writable source checkout:
+
+~~~bash
+ros2 run online_map_package amcl_experiment --ros-args \
+  -p results_directory:=/absolute/path/results
+~~~
+
+Build both `nav2_amcl` and `online_map_package` after this change. The recorder
+needs the new diagnostic publisher; restarting only the Python viewer cannot
+add it to an older running AMCL process.
+
+## Standard online launches
+
 After building 'nav2_amcl', 'limo_rviz', 'cv_package', and
 'online_map_package', and sourcing the workspace:
 

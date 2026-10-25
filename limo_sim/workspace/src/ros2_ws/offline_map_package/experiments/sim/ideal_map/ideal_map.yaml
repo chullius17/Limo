@@ -1,0 +1,7 @@
+image: ideal_map.pgm
+mode: raw
+resolution: 0.050000000000000003
+origin: [-6.0500000000000007, -3.9000000000000004, 0]
+negate: 0
+occupied_thresh: 1.0
+free_thresh: 0.0
