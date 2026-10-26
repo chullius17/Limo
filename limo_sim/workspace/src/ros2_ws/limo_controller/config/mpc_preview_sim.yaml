@@ -3,8 +3,11 @@ mpc_preview:
     use_sim_time: true
     debug_topic: /limo/control/mpc_debug
     global_path_topic: /limo/planning/path
+    tube_radius: 0.60  # Meters from the global path to the white boundary; 0 hides it.
+    tube_line_width: 2  # Pixels; draw the contour without covering the costmap.
     costmap_topic: /local_costmap/costmap_raw
-    view_mode: costmap  # MPC grid with lane inflation; sources: raw laser + local-map points.
+    footprint_topic: /local_costmap/published_footprint
+    view_mode: costmap  # Same final grid used by MPC, including Gaussian inflation.
     laser_topic: /scan
     semantic_points_topic: /limo/map_package/online/local_ctrl_map/points
     fixed_frame: odom
@@ -23,12 +26,15 @@ mpc_preview:
     pixels_per_meter: 140.0
     grid_spacing: 0.5
     font_size: 17
-    costmap_as_points: false  # Show the complete inflation field, including low-cost lanes.
+    costmap_as_points: false  # Draw every final costmap cell with its actual cost.
     costmap_colormap: jet  # 0..253 Jet; 254 lethal is black; 255 unknown is gray.
     costmap_point_size: 3
     costmap_point_color: [35, 40, 50]
     laser_color: [210, 50, 40]
     semantic_color: [30, 100, 210]
+    source_cost_colors: true
+    source_class_costs: [0, 0, 60, 30, 90, 0, 90]  # Indexed by PointCloud2.class_id.
+    source_laser_cost: 100  # Source cost scale 0..100; lethal laser points are black.
     line_width: 2
     selected_line_width: 5
     trajectory_alpha: 0.65

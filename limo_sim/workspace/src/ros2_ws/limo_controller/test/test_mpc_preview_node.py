@@ -23,7 +23,9 @@ import pytest
 
 pytest.importorskip('rclpy')
 pytest.importorskip('limo_interfaces.msg')
-from geometry_msgs.msg import Point32, Pose2D, PoseStamped, TransformStamped  # noqa: E402
+from geometry_msgs.msg import (  # noqa: E402
+    Point32, PolygonStamped, Pose2D, PoseStamped, TransformStamped,
+)
 from nav2_msgs.msg import Costmap  # noqa: E402
 from nav_msgs.msg import Path  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -221,6 +223,7 @@ def test_latched_live_map_and_path_survive_an_mpc_pause_and_keep_updating():
         '-p', 'image_topic:=/test_mpc_context/image/compressed',
         '-p', 'global_path_topic:=/test_mpc_context/path',
         '-p', 'costmap_topic:=/test_mpc_context/costmap_raw',
+        '-p', 'footprint_topic:=/test_mpc_context/published_footprint',
         '-p', 'publish_rate:=20.0', '-p', 'stale_timeout:=0.20',
         '-p', 'image_width:=640', '-p', 'image_height:=640',
         '-p', 'pixels_per_meter:=100.0', '-p', 'use_sim_time:=true',
@@ -231,6 +234,8 @@ def test_latched_live_map_and_path_survive_an_mpc_pause_and_keep_updating():
     qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                      durability=DurabilityPolicy.TRANSIENT_LOCAL)
     map_publisher = transport.create_publisher(Costmap, '/test_mpc_context/costmap_raw', qos)
+    footprint_publisher = transport.create_publisher(
+        PolygonStamped, '/test_mpc_context/published_footprint', 1)
     path_publisher = transport.create_publisher(Path, '/test_mpc_context/path', qos)
     broadcaster = StaticTransformBroadcaster(transport)
     odom = TransformStamped()
@@ -242,6 +247,11 @@ def test_latched_live_map_and_path_survive_an_mpc_pause_and_keep_updating():
     base.transform.translation.x, base.transform.translation.y = 1.0, 2.0
     base.transform.rotation.z = base.transform.rotation.w = 2 ** -0.5
     broadcaster.sendTransform([odom, base])
+    footprint = PolygonStamped()
+    footprint.header.frame_id = 'odom'
+    body_polygon = ((-0.171, -0.120), (-0.171, 0.120),
+                    (0.171, 0.120), (0.171, -0.120))
+    footprint.polygon.points = [Point32(x=1.0 - y, y=2.0 + x) for x, y in body_polygon]
     costmap = Costmap()
     costmap.header.frame_id = 'odom'
     meta = costmap.metadata
@@ -291,8 +301,12 @@ def test_latched_live_map_and_path_survive_an_mpc_pause_and_keep_updating():
             preview.options.free_color, preview.options.inflated_color))
         path_color = preview.options.global_path_color
         wait_for_image(lambda _, image: image.getpixel((260, 200)) == path_color
-                       and image.getpixel((383, 238)) == inflation)
+                       and image.getpixel((383, 238)) == inflation
+                       and image.getpixel((310, 303)) == (20, 30, 45),
+                       lambda: footprint_publisher.publish(footprint))
         assert preview.frame is None
+        for actual, expected in zip(preview.footprint, body_polygon):
+            assert actual == pytest.approx(expected, abs=1e-6)
         # Active MPC still uses its own coherent snapshot.
         snapshot = debug_message(sample_frame())
         wait_for_image(lambda msg, image: msg.header.stamp.sec == 1234

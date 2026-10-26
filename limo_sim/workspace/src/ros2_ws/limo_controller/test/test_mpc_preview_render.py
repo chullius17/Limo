@@ -150,6 +150,40 @@ class PreviewRenderTest(unittest.TestCase):
         pixel = tuple(round(v) for v in base_to_pixel(path[-1], options))
         self.assertEqual(image.getpixel(pixel), options.global_path_color)
 
+    def test_white_tube_has_metric_radius_round_caps_and_clear_interior_before_start(self):
+        options = RenderOptions(pixels_per_meter=100.0, tube_radius=0.30)
+        path = ((0.8, 0.0), (1.8, 0.0))
+        image = render_preview(None, options, global_path=path)
+        baseline = render_preview(None, RenderOptions(
+            pixels_per_meter=100.0, tube_radius=0.0), global_path=path)
+        for point in ((1.2, -0.30), (1.2, 0.30), (2.10, 0.0), (0.50, 0.0)):
+            pixel = tuple(round(v) for v in base_to_pixel(point, options))
+            self.assertEqual(image.getpixel(pixel), (255, 255, 255))
+        for point in ((1.2, 0.15), (1.2, 0.35), (2.15, 0.0)):
+            pixel = tuple(round(v) for v in base_to_pixel(point, options))
+            self.assertEqual(image.getpixel(pixel), baseline.getpixel(pixel))
+        self.assertEqual(image.getpixel((480, 360)), options.global_path_color)
+
+    def test_tube_radius_changes_boundaries_and_clear_path_removes_the_tube(self):
+        options = RenderOptions(pixels_per_meter=100.0, tube_radius=0.50)
+        path = ((0.8, 0.0), (1.8, 0.0))
+        image = render_preview(None, options, global_path=path)
+        self.assertEqual(image.getpixel((430, 360)), (255, 255, 255))
+        self.assertNotEqual(image.getpixel((450, 360)), (255, 255, 255))
+        cleared = render_preview(None, options)
+        self.assertNotEqual(cleared.getpixel((430, 360)), (255, 255, 255))
+
+    def test_tube_bends_form_one_boundary_without_internal_overlap_lines(self):
+        options = RenderOptions(pixels_per_meter=100.0, tube_radius=0.30)
+        path = ((0.8, 0.0), (1.8, 0.0), (1.8, 1.0))
+        image = render_preview(None, options, global_path=path)
+        baseline = render_preview(None, RenderOptions(
+            pixels_per_meter=100.0, tube_radius=0.0), global_path=path)
+        # Inside the overlap of the two capsules: preserve the map/grid pixels.
+        pixel = tuple(round(v) for v in base_to_pixel((1.6, 0.2), options))
+        self.assertEqual(image.getpixel(pixel), baseline.getpixel(pixel))
+        self.assertEqual(image.getpixel((430, 270)), (255, 255, 255))
+
     def test_point_view_keeps_low_soft_inscribed_and_lethal_costs_without_filled_bands(self):
         frame, options = sample_frame(), RenderOptions()
         frame.costmap_size = (4, 2)
@@ -177,6 +211,9 @@ class PreviewRenderTest(unittest.TestCase):
             RenderOptions(pixels_per_meter=0).validate()
         with self.assertRaises(ValueError):
             RenderOptions(image_width=10000).validate()
+        for radius in (-0.1, math.nan, math.inf):
+            with self.assertRaises(ValueError):
+                RenderOptions(tube_radius=radius).validate()
 
     def test_source_view_draws_observations_and_omits_the_inflated_master_grid(self):
         frame, options = sample_frame(), RenderOptions()
@@ -189,6 +226,24 @@ class PreviewRenderTest(unittest.TestCase):
         # This cell is occupied in the snapshot, but no sensor endpoint lies here.
         pixel = tuple(round(v) for v in base_to_pixel((1.225, 0.125), options))
         self.assertEqual(image.getpixel(pixel), options.background_color)
+
+    def test_source_jet_costs_come_from_each_points_class_not_from_grid_cells(self):
+        frame = sample_frame()
+        frame.candidates = ()
+        options = RenderOptions(source_cost_colors=True)
+        sources = PreviewSources(
+            laser=((0.65, 0.90),),
+            semantic=((0.73, -0.83, 2), (0.95, -0.72, 3), (1.27, -0.50, 4)))
+        expected = (((0.65, 0.90), (0, 0, 0)),
+                    ((0.73, -0.83), (228, 255, 27)),  # Yellow class: cost 60.
+                    ((0.95, -0.72), (0, 178, 255)),   # Soft class: cost 30.
+                    ((1.27, -0.50), (228, 0, 0)))     # Boardwalk class: cost 90.
+        for grid_cost in (0, 254):
+            frame.costmap_data = bytes([grid_cost]) * 10000
+            image = render_preview(frame, options, sources=sources)
+            for point, color in expected:
+                pixel = tuple(round(v) for v in base_to_pixel(point, options))
+                self.assertEqual(image.getpixel(pixel), color)
 
 
 if __name__ == '__main__':

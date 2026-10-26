@@ -121,8 +121,14 @@ These real/sim profiles are the only built-in controller parameter files.
 ## Local lane inflation
 
 Both control profiles configure `limo_inflation::LocalLaneLayer` under
-`local_costmap.local_costmap.ros__parameters.inflation_layer`. It replaces the
-standard Nav2 inflation layer and runs last, after laser and semantic fusion.
+`local_costmap.local_costmap.ros__parameters.inflation_layer`, currently with
+`enabled: false`. The controller therefore reads only fused raw laser and
+semantic costs, with no local inflation. The source semantic grid is also raw.
+The viewer defaults to the original cloud and laser points, colored by each
+point's own class cost (`view_mode: sources`, `source_cost_colors: true`).
+The tuning below is retained for experiments; set `enabled: true` to restore it.
+The optional layer replaces the standard Nav2 inflation layer and runs last,
+after laser and semantic fusion.
 It reuses the trajectory planner's `computeBorderCost` function, with two
 preferred distance bands and a traversable cost ridge between them. The global
 planner and its configuration remain independent.
@@ -232,22 +238,29 @@ Image output uses reliable delivery to support Foxy's `rqt_image_view`; the
 telemetry subscription remains best effort.
 
 The top-down image is centered on `base_link`, with +x upward and +y leftward.
-The shipped viewer YAML defaults to `view_mode: costmap` and
-`costmap_as_points: false`, showing the actual MPC grid with the lane inflation
-as a colored raster, including before START and during PAUSE.
+The shipped viewer YAML defaults to `view_mode: sources` and
+`source_cost_colors: true`, showing the original laser/cloud point coordinates
+before rasterization, including before START and during PAUSE. Point labels
+are retained through TF, and `source_class_costs` assigns their normal 0..100
+costs: yellow 60, soft 30, boardwalk 90. `source_laser_cost: 100` renders laser
+returns black; other source costs use Jet with a 0..100 point-cost legend.
+These colors never come from a costmap-cell lookup. Boardwalk points at source
+cost 90 appear red here even when the Nav2 lethal threshold makes their
+rasterized cells lethal. Select `view_mode: costmap` to inspect that separate
+0..255 Nav2 conversion; `costmap_as_points: false` shows it as a filled raster.
 `costmap_colormap: jet` maps raw costs 0..253 to blue/cyan/green/yellow/red
 with a fixed numerical color bar; lethal cells (254) are black and unknown
 cells (255) remain gray. `lethal_color` configures the lethal-cell color in
 both raster and cell-center views.
 Set `costmap_colormap: classic` to use the previous configurable orange palette.
-Set `view_mode: sources` to inspect inputs before inflation. It shows every
-valid `/scan` endpoint in red and
+The source view shows every valid `/scan` endpoint and
 every finite semantic obstacle point from
 `/limo/map_package/online/local_ctrl_map/points`: classes 2/3/4/6 in blue.
 Road classes 1/5 are excluded from the viewer before TF projection and drawing.
 The cloud contains both recent
 observations and semantic memory, before grid rasterization or Nav2 inflation.
-Labels are preserved during decoding; no point subsampling is applied.
+Labels are preserved during decoding and rendering; no point subsampling is applied.
+`source_cost_colors: false` restores the old laser-red/CV-blue diagnostic colors.
 The laser range is the sensor's declared range unless `laser_max_range` is set
 to a positive cap. Counts include all decoded points, including distant returns
 outside the current viewport. `pixels_per_meter` controls the displayed extent.
@@ -255,10 +268,10 @@ outside the current viewport. `pixels_per_meter` controls the displayed extent.
 Source timestamps are transformed through `fixed_frame: odom` into the displayed
 robot pose. The source view works before START and without a master costmap;
 stale or TF-unavailable inputs are identified in the status line. This changes
-only diagnostics: local lane inflation and MPC scoring remain active.
+only diagnostics and does not alter MPC scoring or the costmap configuration.
 
 Set `costmap_as_points: true` in costmap mode to draw every nonfree cell as a
-dark point at its center, including soft
+point at its center, colored by its actual raw cost in Jet mode, including soft
 semantic and inflation costs as well as lethal cells. Unknown cells are gray;
 free cells remain blank. The legend reports the number of positive-cost cells.
 `costmap_as_points: false` restores the colored raster in this mode.

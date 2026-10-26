@@ -19,6 +19,7 @@ from io import BytesIO
 import math
 import time
 
+from geometry_msgs.msg import PolygonStamped
 from nav2_msgs.msg import Costmap
 from nav_msgs.msg import Path
 import rclpy
@@ -47,7 +48,8 @@ class MpcPreview(Node):
             'debug_topic': '/limo/control/mpc_debug',
             'global_path_topic': '/limo/planning/path',
             'costmap_topic': '/local_costmap/costmap_raw',
-            'view_mode': 'sources',
+            'footprint_topic': '/local_costmap/published_footprint',
+            'view_mode': 'costmap',
             'laser_topic': '/scan',
             'semantic_points_topic': '/limo/map_package/online/local_ctrl_map/points',
             'fixed_frame': 'odom',
@@ -112,6 +114,9 @@ class MpcPreview(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.costmap_subscription = self.create_subscription(
             Costmap, self.get_parameter('costmap_topic').value, self._costmap, context_qos)
+        self.footprint_subscription = self.create_subscription(
+            PolygonStamped, self.get_parameter('footprint_topic').value,
+            self._footprint, input_qos)
         self.path_subscription = self.create_subscription(
             Path, self.get_parameter('global_path_topic').value, self._path, context_qos)
         self.laser_subscription = self.create_subscription(
@@ -126,6 +131,8 @@ class MpcPreview(Node):
         self.base_frame = self.get_parameter('base_frame').value
         self.costmap = None
         self.costmap_received_at = None
+        self.footprint_message = None
+        self.footprint = ()
         self.global_path = None
         self.laser = None
         self.semantic = None
@@ -154,6 +161,33 @@ class MpcPreview(Node):
     def _path(self, msg):
         """Retain a planned path until it is replaced or explicitly cleared."""
         self.global_path = msg if msg.poses and msg.header.frame_id else None
+
+    def _footprint(self, msg):
+        """Use Nav2's published, padded collision polygon before MPC starts."""
+        if (msg.header.frame_id and len(msg.polygon.points) >= 3
+                and all(math.isfinite(p.x) and math.isfinite(p.y) for p in msg.polygon.points)):
+            self.footprint_message = msg
+
+    def _footprint_in_base(self):
+        """Recover body geometry once at the polygon's timestamp, then retain it."""
+        msg = self.footprint_message
+        if msg is not None:
+            try:
+                transform = (0.0, 0.0, 0.0)
+                if msg.header.frame_id != self.base_frame:
+                    tf = self.tf_buffer.lookup_transform(
+                        self.base_frame, msg.header.frame_id,
+                        Time.from_msg(msg.header.stamp)).transform
+                    transform = (tf.translation.x, tf.translation.y, self._yaw(tf.rotation))
+                x, y, yaw = transform
+                cosine, sine = math.cos(yaw), math.sin(yaw)
+                self.footprint = tuple(
+                    (x + cosine * p.x - sine * p.y, y + sine * p.x + cosine * p.y)
+                    for p in msg.polygon.points)
+                self.footprint_message = None
+            except TransformException:
+                pass  # Retry after TF arrives; keep the last valid body geometry.
+        return self.footprint or (self.frame.footprint if self.frame is not None else ())
 
     def _laser(self, msg):
         """Keep all valid endpoints; distant returns may lie outside the viewport."""
@@ -196,7 +230,7 @@ class MpcPreview(Node):
                 status.append('TF ' + name + ': in attesa')
         sources = PreviewSources(
             laser=tuple((x, y) for x, y, _ in layers['laser']),
-            semantic=tuple((x, y) for x, y, _ in layers['semantic']))
+            semantic=layers['semantic'])  # Preserve each original point's class.
         return sources, status
 
     def _background(self):
@@ -217,7 +251,7 @@ class MpcPreview(Node):
             costmap_origin=(meta.origin.position.x, meta.origin.position.y,
                             self._yaw(meta.origin.orientation)),
             costmap_data=bytes(msg.data),
-            footprint=self.frame.footprint if self.frame is not None else ())
+            footprint=self._footprint_in_base())
 
     def _path_in_view(self, target_frame, robot_pose, stamp):
         """Transform the persistent global reference into the displayed robot frame."""

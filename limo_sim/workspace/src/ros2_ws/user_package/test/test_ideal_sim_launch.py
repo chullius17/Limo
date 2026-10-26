@@ -53,7 +53,8 @@ def test_ideal_map_drives_planning_while_control_keeps_live_sensors(monkeypatch)
     assert all(params[name] == value for name, value in source['local_ctrl_map'].items())
     control = yaml.safe_load(Path(controller['arguments']['controller_params_file']).read_text())
     costmap = control['local_costmap']['local_costmap']['ros__parameters']
-    assert costmap['plugins'] == ['obstacle_layer', 'local_ctrl_map_layer', 'inflation_layer']
+    assert costmap['plugins'] == [
+        'obstacle_layer', 'local_ctrl_map_layer', 'inflation_layer', 'path_distance_layer']
     assert costmap['obstacle_layer']['scan']['topic'] == '/scan'
     assert costmap['local_ctrl_map_layer']['map_topic'] == (
         '/limo/map_package/online/local_costmap')

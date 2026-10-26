@@ -23,3 +23,18 @@ TEST(LocalLaneLayerTest, IsDiscoverableByPluginlib)
   auto layer = loader.createSharedInstance("limo_inflation::LocalLaneLayer");
   ASSERT_NE(layer, nullptr);
 }
+
+TEST(GaussianLayerTest, IsDiscoverableByPluginlib)
+{
+  pluginlib::ClassLoader<nav2_costmap_2d::Layer> loader(
+    "nav2_costmap_2d", "nav2_costmap_2d::Layer");
+  auto layer = loader.createSharedInstance("limo_inflation::GaussianLayer");
+  ASSERT_NE(layer, nullptr);
+}
+
+TEST(PathDistanceLayerTest, IsDiscoverableByPluginlib)
+{
+  pluginlib::ClassLoader<nav2_costmap_2d::Layer> loader(
+    "nav2_costmap_2d", "nav2_costmap_2d::Layer");
+  ASSERT_NE(loader.createSharedInstance("limo_inflation::PathDistanceLayer"), nullptr);
+}

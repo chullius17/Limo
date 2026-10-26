@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 import math
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 
 FAMILIES = ('braking', 'nominal', 'constant_curvature',
@@ -101,12 +101,17 @@ class RenderOptions:
     colors: tuple = field(default_factory=lambda: DEFAULT_COLORS)
     selected_color: tuple = (0, 180, 65)
     global_path_color: tuple = (190, 40, 140)
+    tube_radius: float = 0.30
+    tube_line_width: int = 2
     costmap_as_points: bool = True
     costmap_colormap: str = 'classic'
     costmap_point_size: int = 3
     costmap_point_color: tuple = (35, 40, 50)
     laser_color: tuple = (210, 50, 40)
     semantic_color: tuple = (30, 100, 210)
+    source_cost_colors: bool = False
+    source_class_costs: tuple = (0, 0, 60, 30, 90, 0, 90)
+    source_laser_cost: int = 100
     free_color: tuple = (238, 241, 245)
     inflated_color: tuple = (245, 185, 105)
     critical_color: tuple = (245, 100, 45)
@@ -124,6 +129,9 @@ class RenderOptions:
                 raise ValueError(name + ' must be finite and positive')
         if not 0 <= self.trajectory_alpha <= 1:
             raise ValueError('trajectory_alpha must be between 0 and 1')
+        if (not math.isfinite(self.tube_radius) or not 0 <= self.tube_radius <= 10.0
+                or not 1 <= self.tube_line_width <= 10):
+            raise ValueError('Invalid path tube radius or line width')
         if not (1 <= self.line_width <= 30 and 1 <= self.selected_line_width <= 30
                 and 8 <= self.font_size <= 72):
             raise ValueError('Invalid line width or font size')
@@ -131,6 +139,13 @@ class RenderOptions:
             raise ValueError('Invalid costmap point display settings')
         if self.costmap_colormap not in ('classic', 'jet'):
             raise ValueError('costmap_colormap must be classic or jet')
+        if (not isinstance(self.source_cost_colors, bool)
+                or len(self.source_class_costs) != 7
+                or any(not isinstance(v, int) or not 0 <= v <= 100
+                       for v in self.source_class_costs)
+                or not isinstance(self.source_laser_cost, int)
+                or not 0 <= self.source_laser_cost <= 100):
+            raise ValueError('Point class costs must be integers in [0, 100]')
         colors = self.colors + (self.selected_color, self.global_path_color,
                                 self.costmap_point_color, self.free_color,
                                 self.laser_color, self.semantic_color,
@@ -229,6 +244,11 @@ def jet_color(cost):
                  for center in (3, 2, 1))
 
 
+def point_cost_color(cost, options):
+    """Color a source point's own 0..100 class cost without costmap lookup."""
+    return options.lethal_color if cost >= 100 else jet_color(round(254 * cost / 100))
+
+
 def _costmap(frame, options):
     width, height = _costmap_size(frame)
     source = Image.frombytes('P', (width, height), frame.costmap_data)
@@ -283,11 +303,36 @@ def _costmap_points(frame, options, image=None):
         u, v = round(u0 + ux * x + uy * y), round(v0 + vx * x + vy * y)
         color = (options.unknown_color if unknown else
                  options.lethal_color if frame.costmap_data[index] == 254 else
+                 jet_color(frame.costmap_data[index]) if options.costmap_colormap == 'jet' else
                  options.costmap_point_color)
         draw.rectangle((u - radius, v - radius,
                         u - radius + options.costmap_point_size - 1,
                         v - radius + options.costmap_point_size - 1), fill=color)
     return image
+
+
+@lru_cache(maxsize=2)
+def _tube_outline(points, size, radius, width):
+    """Outline the union of round capsules, including joins and endpoint caps."""
+    mask = Image.new('L', size, 0)
+    draw = ImageDraw.Draw(mask)
+    for start, end in zip(points, points[1:]):
+        draw.line((start, end), fill=255, width=2 * radius + 1)
+    for x, y in points:
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=255)
+    # Taking the boundary of the union avoids drawing false internal edges at
+    # bends, overlapping segments and self-intersections. The interior stays clear.
+    inner = mask
+    # Separable erosion avoids Pillow's expensive square minimum filter.
+    # White padding keeps a clipped tube open at the viewport boundaries.
+    for dx, dy in ((1, 0), (0, 1)):
+        source = inner
+        for distance in range(1, width + 1):
+            for sign in (-1, 1):
+                shifted = Image.new('L', size, 255)
+                shifted.paste(source, (sign * distance * dx, sign * distance * dy))
+                inner = ImageChops.darker(inner, shifted)
+    return ImageChops.subtract(mask, inner)
 
 
 def render_preview(frame, options, status='', background=None, global_path=(), sources=None):
@@ -315,9 +360,15 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
 
     if sources is not None:
         radius = options.costmap_point_size // 2
-        for points, color in ((sources.semantic, options.semantic_color),
-                              (sources.laser, options.laser_color)):
+        for points, default_color, laser in ((sources.semantic, options.semantic_color, False),
+                                              (sources.laser, options.laser_color, True)):
             for point in points:
+                color = default_color
+                if options.source_cost_colors:
+                    cost = (options.source_laser_cost if laser else
+                            options.source_class_costs[point[2]] if len(point) >= 3 else None)
+                    if cost is not None:
+                        color = point_cost_color(cost, options)
                 u, v = (round(value) for value in base_to_pixel(point, options))
                 draw.rectangle((u - radius, v - radius,
                                 u - radius + options.costmap_point_size - 1,
@@ -325,6 +376,10 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
 
     if global_path:
         points = [base_to_pixel(point, options) for point in global_path]
+        if options.tube_radius > 0:
+            radius = max(1, round(options.tube_radius * options.pixels_per_meter))
+            outline = _tube_outline(tuple(points), image.size, radius, options.tube_line_width)
+            image.paste((255, 255, 255), (0, 0), outline)
         if len(points) >= 2:
             draw.line(points, fill=(255, 255, 255), width=options.line_width + 5)
             draw.line(points, fill=options.global_path_color, width=options.line_width + 1)
@@ -365,6 +420,7 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
     if view is not None:
         polygon = [base_to_pixel(point, options) for point in view.footprint]
         if len(polygon) >= 3:
+            draw.line(polygon + [polygon[0]], fill=(255, 255, 255), width=7)
             draw.line(polygon + [polygon[0]], fill=(20, 30, 45), width=3)
 
     origin = base_to_pixel((0, 0), options)
@@ -386,16 +442,20 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
     draw.rectangle((0, 0, options.image_width, 70), fill=options.background_color)
     draw.text((16, 10), title, fill=(20, 30, 45), font=font)
     draw.text((16, 36), detail, fill=(60, 65, 75), font=font)
-    if sources is None and not options.costmap_as_points and options.costmap_colormap == 'jet':
+    source_costs = sources is not None and options.source_cost_colors
+    if source_costs or (sources is None and options.costmap_colormap == 'jet'):
         x, y, width = options.image_width - 270, 82, 240
         draw.rectangle((x - 8, y - 6, x + width + 18, y + 64),
                        fill=options.background_color)
-        draw.text((x, y), 'Jet 0-253 | nero: 254', fill=(30, 35, 45), font=font)
+        top = 99 if source_costs else 253
+        title = 'Jet punti 0-99 | nero:100' if source_costs else 'Jet 0-253 | nero: 254'
+        draw.text((x, y), title, fill=(30, 35, 45), font=font)
         for column in range(width):
-            color = jet_color(round(253 * column / (width - 1)))
+            value = round(top * column / (width - 1))
+            color = point_cost_color(value, options) if source_costs else jet_color(value)
             draw.line((x + column, y + 24, x + column, y + 36), fill=color)
-        for cost in (0, 64, 128, 192, 253):
-            tick = x + (width - 1) * cost / 253
+        for cost in ((0, 25, 50, 75, 99) if source_costs else (0, 64, 128, 192, 253)):
+            tick = x + (width - 1) * cost / top
             draw.text((tick - (0 if cost == 0 else 14), y + 40), str(cost),
                       fill=(30, 35, 45), font=font)
     legend_y = options.image_height - 145
@@ -409,13 +469,17 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
     x, y = 16 + 2 * (options.image_width // 3), legend_y + 37
     draw.line((x, y + 8, x + 24, y + 8), fill=options.selected_color, width=5)
     draw.text((x + 30, y), 'Scelta', fill=(30, 35, 45), font=font)
-    layer_label = ('Laser rosso | CV blu' if sources is not None else
+    layer_label = ('Jet: costo di classe del punto' if source_costs else
+                   'Laser rosso | CV blu' if sources is not None else
                    'Tratteggio: scartata / potata')
     draw.text((16, legend_y + 67), layer_label,
               fill=(60, 65, 75), font=font)
     x, y = options.image_width // 2, legend_y + 67
     draw.line((x, y + 8, x + 24, y + 8), fill=options.global_path_color, width=3)
-    draw.text((x + 30, y), 'Traiettoria globale', fill=(30, 35, 45), font=font)
+    path_label = 'Traiettoria globale'
+    if options.tube_radius > 0:
+        path_label += f' | tubo r={options.tube_radius:g} m'
+    draw.text((x + 30, y), path_label, fill=(30, 35, 45), font=font)
     if frame is not None:
         steering = (f'v0={frame.initial_velocity:.2f} m/s  '
                     f'delta0={math.degrees(frame.initial_steering):.1f} deg')
@@ -427,10 +491,12 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
         draw.text((16, legend_y + 92), steering, fill=(30, 35, 45), font=font)
     if sources is not None:
         map_label = (f'Laser: {len(sources.laser)} | Locali: {len(sources.semantic)} | '
-                     'nessuna inflation nel debug')
+                     + ('costi punti 0-100' if source_costs else 'nessuna inflation nel debug'))
     elif options.costmap_as_points:
         count = _costmap_cells(view.costmap_data)[1] if view is not None else 0
-        map_label = f'{count} celle con costo > 0 | punti scuri=costi MPC, grigi=sconosciuto'
+        map_label = (f'{count} celle con costo > 0 | Jet=costi MPC, nero=letale, grigio=ignoto'
+                     if options.costmap_colormap == 'jet' else
+                     f'{count} celle con costo > 0 | punti scuri=costi MPC, grigi=sconosciuto')
     else:
         map_label = ('Jet: 0-253 | nero=254 letale, grigio=255 sconosciuto'
                      if options.costmap_colormap == 'jet' else

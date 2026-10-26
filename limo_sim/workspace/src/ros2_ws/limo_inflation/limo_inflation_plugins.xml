@@ -17,4 +17,20 @@
       costmap. Run last, after obstacle and semantic layers.
     </description>
   </class>
+  <class
+    name="limo_inflation::GaussianLayer"
+    type="limo_inflation::GaussianLayer"
+    base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      Gaussian inflation with configurable covariance and maximum combination.
+      Run last, after sensor fusion.
+    </description>
+  </class>
+  <class name="limo_inflation::PathDistanceLayer" type="limo_inflation::PathDistanceLayer"
+    base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      Bounded additive distance cost around the global path. Run after obstacle
+      inflation; preserves lethal, inscribed and unknown cells.
+    </description>
+  </class>
 </library>

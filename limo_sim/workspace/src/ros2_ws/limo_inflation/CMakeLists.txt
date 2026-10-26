@@ -7,15 +7,21 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
+find_package(nav2_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
   src/border_follow_layer.cpp
   src/cost_profile.cpp
   src/local_lane_layer.cpp
+  src/gaussian_layer.cpp
+  src/path_distance_layer.cpp
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -25,9 +31,13 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 ament_target_dependencies(${PROJECT_NAME}
   nav2_costmap_2d
+  nav2_msgs
   nav_msgs
   pluginlib
   rclcpp
+  tf2
+  tf2_geometry_msgs
+  tf2_ros
 )
 target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBRARIES})
 
@@ -57,9 +67,19 @@ if(BUILD_TESTING)
     ENV ROS_DOMAIN_ID=191 ROS_LOCALHOST_ONLY=1)
   target_link_libraries(test_local_lane_layer ${PROJECT_NAME})
   ament_target_dependencies(test_local_lane_layer nav2_costmap_2d rclcpp)
+
+  ament_add_gtest(test_gaussian_layer test/test_gaussian_layer.cpp
+    ENV ROS_DOMAIN_ID=191 ROS_LOCALHOST_ONLY=1)
+  target_link_libraries(test_gaussian_layer ${PROJECT_NAME})
+  ament_target_dependencies(test_gaussian_layer nav2_costmap_2d rclcpp)
+
+  ament_add_gtest(test_path_distance_layer test/test_path_distance_layer.cpp
+    ENV ROS_DOMAIN_ID=191 ROS_LOCALHOST_ONLY=1)
+  target_link_libraries(test_path_distance_layer ${PROJECT_NAME})
+  ament_target_dependencies(test_path_distance_layer nav2_costmap_2d rclcpp tf2_ros)
 endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
-ament_export_dependencies(nav2_costmap_2d nav_msgs pluginlib rclcpp)
+ament_export_dependencies(nav2_costmap_2d nav2_msgs nav_msgs pluginlib rclcpp tf2 tf2_geometry_msgs tf2_ros)
 ament_package()
