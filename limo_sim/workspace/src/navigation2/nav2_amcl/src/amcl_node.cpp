@@ -300,6 +300,7 @@ AmclNode::on_activate(const rclcpp_lifecycle::State & /*state*/)
   pose_pub_->on_activate();
   particlecloud_pub_->on_activate();
   particle_cloud_pub_->on_activate();
+  laser_diagnostics_pub_->on_activate();
   if (cv_diagnostics_pub_) {
     cv_diagnostics_pub_->on_activate();
   }
@@ -344,6 +345,7 @@ AmclNode::on_deactivate(const rclcpp_lifecycle::State & /*state*/)
   pose_pub_->on_deactivate();
   particlecloud_pub_->on_deactivate();
   particle_cloud_pub_->on_deactivate();
+  laser_diagnostics_pub_->on_deactivate();
   if (cv_diagnostics_pub_) {
     cv_diagnostics_pub_->on_deactivate();
   }
@@ -367,6 +369,7 @@ AmclNode::on_cleanup(const rclcpp_lifecycle::State & /*state*/)
 
   cv_cloud_sub_.reset();
   cv_diagnostics_pub_.reset();
+  laser_diagnostics_pub_.reset();
   cv_map_sub_.reset();
   {
     std::lock_guard<std::mutex> lock(cv_mutex_);
@@ -854,6 +857,8 @@ bool AmclNode::updateFilter(
   // Keep the odometry bookkeeping while disabling laser likelihood updates,
   // including when no usable CV cloud is available.
   if (laser_weight_factor_ == 0.0 || !hasValidLaserInformation(*laser_scan)) {
+    publishLaserDiagnostics(
+      *laser_scan, nullptr, laser_weight_factor_ == 0.0 ? "disabled" : "no_valid_returns");
     lasers_update_[laser_index] = false;
     pf_odom_pose_ = pose;
     return true;
@@ -880,6 +885,7 @@ bool AmclNode::updateFilter(
     RCLCPP_WARN(
       get_logger(), "Unable to transform min/max laser angles into base frame: %s",
       e.what());
+    publishLaserDiagnostics(*laser_scan, nullptr, "transform_unavailable");
     return false;
   }
   double angle_min = tf2::getYaw(min_q.quaternion);
@@ -920,8 +926,10 @@ bool AmclNode::updateFilter(
       (i * angle_increment);
   }
   if (!lasers_[laser_index]->sensorUpdate(pf_, &ldata)) {
+    publishLaserDiagnostics(*laser_scan, &ldata, "model_update_failed");
     return false;
   }
+  publishLaserDiagnostics(*laser_scan, &ldata, ldata.used_points ? "accepted" : "no_selected_returns");
   lasers_update_[laser_index] = false;
   pf_odom_pose_ = pose;
   return true;
@@ -1372,6 +1380,9 @@ void
 AmclNode::initPubSub()
 {
   RCLCPP_INFO(get_logger(), "initPubSub");
+
+  laser_diagnostics_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+    "~/laser_diagnostics", rclcpp::QoS(100));
 
   particlecloud_pub_ = create_publisher<geometry_msgs::msg::PoseArray>(
     "particlecloud",

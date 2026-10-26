@@ -58,6 +58,7 @@ BeamModel::sensorFunction(LaserData * data, pf_sample_set_t * set)
   self = reinterpret_cast<BeamModel *>(data->laser);
 
   total_weight = 0.0;
+  data->particles = set->sample_count;
 
   // Compute the sample weights
   for (j = 0; j < set->sample_count; j++) {
@@ -73,6 +74,11 @@ BeamModel::sensorFunction(LaserData * data, pf_sample_set_t * set)
     for (i = 0; i < data->range_count; i += step) {
       obs_range = data->ranges[i][0];
       obs_bearing = data->ranges[i][1];
+      if (j == 0) {
+        ++data->candidate_points;
+        ++data->used_points;
+      }
+      ++data->evaluations;
 
       // Compute the range according to the map
       map_range = map_calc_range(
@@ -119,6 +125,8 @@ BeamModel::sensorFunction(LaserData * data, pf_sample_set_t * set)
 bool
 BeamModel::sensorUpdate(pf_t * pf, LaserData * data)
 {
+  data->candidate_points = data->used_points = data->evaluations = 0;
+  data->particles = 0;
   if (max_beams_ < 2) {
     return false;
   }

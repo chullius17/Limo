@@ -32,7 +32,7 @@ local_ctrl_map:
   linear_stationary_threshold: 0.01
   angular_stationary_threshold: 0.02
   cmd_vel_timeout_sec: 0.0
-  voxel_size: 0.10
+  voxel_size: 0.08  # 8 cm voxels for persistent local-map points.
   grid_resolution: 0.02
   # Keep this source grid raw; the controller costmap performs the only inflation.
   inflation_radius: 0.0

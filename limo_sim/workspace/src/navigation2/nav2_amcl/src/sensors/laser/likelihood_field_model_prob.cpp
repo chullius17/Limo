@@ -22,6 +22,7 @@
 
 #include <math.h>
 #include <assert.h>
+#include <vector>
 
 #include "nav2_amcl/sensors/laser/laser.hpp"
 
@@ -64,6 +65,7 @@ LikelihoodFieldModelProb::sensorFunction(LaserData * data, pf_sample_set_t * set
   self = reinterpret_cast<LikelihoodFieldModelProb *>(data->laser);
 
   total_weight = 0.0;
+  data->particles = set->sample_count;
 
   step = ceil((data->range_count) / static_cast<double>(self->max_beams_));
 
@@ -99,6 +101,7 @@ LikelihoodFieldModelProb::sensorFunction(LaserData * data, pf_sample_set_t * set
   bool * obs_mask = new bool[self->max_beams_]();
 
   int beam_ind = 0;
+  std::vector<bool> valid_beams(self->max_beams_, false);
 
   // realloc indicates if we need to reallocate the temp data structure needed to do beamskipping
   bool realloc = false;
@@ -145,6 +148,14 @@ LikelihoodFieldModelProb::sensorFunction(LaserData * data, pf_sample_set_t * set
       }
 
       pz = 0.0;
+      if (j == 0) {
+        valid_beams[beam_ind] = true;
+        ++data->candidate_points;
+        if (!do_beamskip) {
+          ++data->used_points;
+        }
+      }
+      ++data->evaluations;
 
       // Compute the endpoint of the beam
       hit.v[0] = pose.v[0] + obs_range * cos(pose.v[2] + obs_bearing);
@@ -225,6 +236,9 @@ LikelihoodFieldModelProb::sensorFunction(LaserData * data, pf_sample_set_t * set
 
       for (beam_ind = 0; beam_ind < self->max_beams_; beam_ind++) {
         if (error || obs_mask[beam_ind]) {
+          if (j == 0 && valid_beams[beam_ind]) {
+            ++data->used_points;
+          }
           log_p += log(self->temp_obs_[j][beam_ind]);
         }
       }
@@ -243,6 +257,8 @@ LikelihoodFieldModelProb::sensorFunction(LaserData * data, pf_sample_set_t * set
 bool
 LikelihoodFieldModelProb::sensorUpdate(pf_t * pf, LaserData * data)
 {
+  data->candidate_points = data->used_points = data->evaluations = 0;
+  data->particles = 0;
   if (max_beams_ < 2) {
     return false;
   }

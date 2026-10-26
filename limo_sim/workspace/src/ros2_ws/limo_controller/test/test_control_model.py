@@ -53,6 +53,45 @@ def controller(monkeypatch, **overrides):
     return context, config, description
 
 
+@pytest.mark.parametrize('clock,autostart', [('true', 'true'), ('false', 'false')])
+def test_delayed_lifecycle_manager_retains_settings_after_launch_group_exits(
+        monkeypatch, clock, autostart):
+    from launch import LaunchDescription, LaunchService
+    from launch.actions import GroupAction, SetLaunchConfiguration, TimerAction
+    from launch.utilities import normalize_to_list_of_substitutions, perform_substitutions
+    from launch_ros.utilities import evaluate_parameters, normalize_parameters
+
+    path = PACKAGE / 'launch/control.launch.py'
+    spec = importlib.util.spec_from_file_location('scoped_control_launch', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    started = []
+
+    def node(**kwargs):
+        def start(context):
+            started.append((
+                evaluate_parameters(context, normalize_parameters(kwargs['parameters']))[0],
+                [perform_substitutions(context, normalize_to_list_of_substitutions(value))
+                 for value in kwargs['arguments']]))
+        return OpaqueFunction(function=start)
+
+    monkeypatch.setattr(module, 'Node', node)
+    monkeypatch.setattr(module, 'TimerAction',
+                        lambda period, actions: TimerAction(period=0.01, actions=actions))
+    service = LaunchService(argv=[])
+    service.include_launch_description(LaunchDescription([GroupAction(actions=[
+        SetLaunchConfiguration('use_sim_time', clock),
+        SetLaunchConfiguration('autostart', autostart),
+        SetLaunchConfiguration('log_level', 'warn'),
+        OpaqueFunction(function=module.lifecycle_manager_node),
+    ])]))
+    assert service.run() == 0
+    assert started == [({
+        'use_sim_time': clock == 'true', 'autostart': autostart == 'true',
+        'node_names': ('controller_server',),
+    }, ['--ros-args', '--log-level', 'warn'])]
+
+
 @pytest.mark.parametrize('profile,wheelbase,offset,radius', [
     ('real', 0.20, 0.10, 0.462),
     ('sim', 0.24, 0.12, 0.55),
@@ -214,29 +253,31 @@ def test_default_launch_uses_profile_mpc_preview_setting(monkeypatch, profile):
     context, config, description = controller(monkeypatch, robot_model=profile)
     debug = config['controller_server']['ros__parameters']['FollowPath']['MPC']['Debug']
     assert debug['enabled'] is True
-    assert debug['preview_enabled'] is (profile == 'sim')
+    assert isinstance(debug['preview_enabled'], bool)
     preview = next(action for action in description.entities
                    if isinstance(action, dict) and action.get('name') == 'mpc_preview')
-    assert preview['condition'].evaluate(context) is (profile == 'sim')
+    assert preview['condition'].evaluate(context) is debug['preview_enabled']
 
 
 @pytest.mark.parametrize('profile,clock,requested,enabled', [
     ('sim', 'true', 'true', True),
     ('sim', 'false', 'true', True),
-    ('sim', 'false', '', True),
+    ('sim', 'false', '', None),
     ('sim', 'true', 'false', False),
-    ('real', 'true', '', False),
+    ('real', 'true', '', None),
     ('real', 'false', 'false', False),
     ('real', 'false', 'true', True),
     ('real', 'true', 'true', True),
 ])
 def test_mpc_preview_uses_yaml_flag_and_optional_launch_disable(
         monkeypatch, profile, clock, requested, enabled):
-    context, _, description = controller(
+    context, controller_config, description = controller(
         monkeypatch, robot_model=profile, use_sim_time=clock, start_mpc_preview=requested)
     preview = next(action for action in description.entities
                    if isinstance(action, dict) and action.get('name') == 'mpc_preview')
-    assert preview['condition'].evaluate(context) is enabled
+    expected = (controller_config['controller_server']['ros__parameters']['FollowPath']
+                ['MPC']['Debug']['preview_enabled'] if enabled is None else enabled)
+    assert preview['condition'].evaluate(context) is expected
     config = yaml.safe_load(Path(preview['parameters'][0].perform(context)).read_text())
     assert config['mpc_preview']['ros__parameters']['use_sim_time'] is (clock == 'true')
 
@@ -259,10 +300,10 @@ def test_custom_yaml_controls_mpc_preview_activation(
         monkeypatch, robot_model=profile, controller_params_file=str(path))
     preview = next(action for action in description.entities
                    if isinstance(action, dict) and action.get('name') == 'mpc_preview')
-    assert preview['condition'].evaluate(context) is (enabled and preview_enabled is True)
+    assert preview['condition'].evaluate(context) is (preview_enabled is True)
 
 
-def test_yaml_disabled_preview_cannot_be_enabled_by_launch(monkeypatch, tmp_path):
+def test_preview_can_show_live_context_with_mpc_telemetry_disabled(monkeypatch, tmp_path):
     config = yaml.safe_load((PACKAGE / 'config/control_sim.yaml').read_text())
     config['controller_server']['ros__parameters']['FollowPath']['MPC']['Debug']['enabled'] = False
     path = tmp_path / 'control.yaml'
@@ -271,7 +312,7 @@ def test_yaml_disabled_preview_cannot_be_enabled_by_launch(monkeypatch, tmp_path
         monkeypatch, robot_model='sim', controller_params_file=str(path), start_mpc_preview='true')
     preview = next(action for action in description.entities
                    if isinstance(action, dict) and action.get('name') == 'mpc_preview')
-    assert not preview['condition'].evaluate(context)
+    assert preview['condition'].evaluate(context)
 
 
 def test_custom_mpc_preview_file_is_used(monkeypatch, tmp_path):

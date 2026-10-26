@@ -86,7 +86,7 @@ controller_server:
           enabled: true  # MPC telemetry.
           preview_enabled: true  # Start the image renderer; requires telemetry.
           topic: /limo/control/mpc_debug
-          publish_rate: 4.0
+          publish_rate: 10.0  # Match the preview; control still runs at 20 Hz.
           samples_per_family: 6  # Evenly spread across each family's candidates.
           pose_stride: 2  # Keep first/last poses, downsample intermediate poses.
         steering_feedback_min_velocity: 0.05
@@ -183,7 +183,7 @@ local_costmap:
     ros__parameters:
       use_sim_time: true
       update_frequency: 15.0
-      publish_frequency: 4.0
+      publish_frequency: 10.0  # Viewer output only; internal updates remain at 15 Hz.
       global_frame: odom
       robot_base_frame: base_link
       transform_tolerance: 0.20

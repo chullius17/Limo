@@ -34,12 +34,18 @@ public:
   using AmclNode::cvMapReceived;
   using AmclNode::hasValidLaserInformation;
   using AmclNode::updateFilter;
+  using AmclNode::publishLaserDiagnostics;
 
   void setLaserWeight(double weight) {laser_weight_factor_ = weight;}
   void setQualityGate(bool enabled) {cv_quality_gate_enabled_ = enabled;}
   void setMinNonRoadVoxels(int minimum) {cv_min_non_road_voxels_ = minimum;}
   void activateDiagnostics() {cv_diagnostics_pub_->on_activate();}
   size_t diagnosticSubscribers() const {return cv_diagnostics_pub_->get_subscription_count();}
+  void activateLaserDiagnostics() {laser_diagnostics_pub_->on_activate();}
+  size_t laserDiagnosticSubscribers() const
+  {
+    return laser_diagnostics_pub_->get_subscription_count();
+  }
   void setLaserLimits(double minimum, double maximum)
   {
     laser_min_range_ = minimum;
@@ -184,6 +190,60 @@ TEST_F(CvSync, DiagnosticsReportActualUsedPointsAndZeroOnRejection)
   EXPECT_EQ(accepted["used_non_road_points"], "1");
   EXPECT_EQ(accepted["evaluations"], "2");
   EXPECT_EQ(messages[1].header.stamp, stamp);
+}
+
+TEST_F(CvSync, LaserDiagnosticsReportModelCountsAndDisabledUpdates)
+{
+  node->activateLaserDiagnostics();
+  auto observer = std::make_shared<rclcpp::Node>("laser_diagnostics_observer");
+  std::vector<diagnostic_msgs::msg::DiagnosticArray> messages;
+  auto subscription = observer->create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+    "/amcl/laser_diagnostics", rclcpp::QoS(100),
+    [&messages](diagnostic_msgs::msg::DiagnosticArray::SharedPtr message) {
+      messages.push_back(*message);
+    });
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(observer);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (node->laserDiagnosticSubscribers() == 0 && std::chrono::steady_clock::now() < deadline) {
+    executor.spin_some();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  ASSERT_GT(node->laserDiagnosticSubscribers(), 0u);
+  auto scan = std::make_shared<sensor_msgs::msg::LaserScan>();
+  scan->header.stamp = stamp;
+  scan->range_min = 0.1f;
+  scan->range_max = 10.0f;
+  scan->ranges = {2.0f, 3.0f, 4.0f};
+  nav2_amcl::LaserData data;
+  data.candidate_points = 2;
+  data.used_points = 1;
+  data.particles = 2;
+  data.evaluations = 4;
+  node->publishLaserDiagnostics(*scan, &data, "accepted");
+  node->setLaserWeight(0.0);
+  node->prepareScanner();
+  EXPECT_TRUE(node->updateFilter(0, scan, pf_vector_zero()));
+  while (messages.size() < 2 && std::chrono::steady_clock::now() < deadline) {
+    executor.spin_some();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  ASSERT_EQ(messages.size(), 2u);
+  std::map<std::string, std::string> enabled, disabled;
+  for (const auto & entry : messages[0].status[0].values) {
+    enabled[entry.key] = entry.value;
+  }
+  for (const auto & entry : messages[1].status[0].values) {
+    disabled[entry.key] = entry.value;
+  }
+  EXPECT_EQ(enabled["input_points"], "3");
+  EXPECT_EQ(enabled["candidate_points"], "2");
+  EXPECT_EQ(enabled["used_points"], "1");
+  EXPECT_EQ(enabled["evaluations"], "4");
+  EXPECT_EQ(disabled["used_points"], "0");
+  EXPECT_EQ(disabled["laser_weight_factor"], "0");
+  EXPECT_EQ(messages[1].status[0].message, "disabled");
+  EXPECT_EQ(messages[0].header.stamp, stamp);
 }
 
 TEST_F(CvSync, MissingStaleEmptyAndUnavailableTfLeaveLaserWeightsUnchanged)

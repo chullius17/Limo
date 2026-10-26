@@ -77,26 +77,31 @@ initial thresholds on the circuit.
 
 ## Launching
 
-For CV-only localization on the ideal Gazebo circuit map, with Gazebo, robot
+For laser/CV localization on ideal Gazebo circuit maps, with Gazebo, robot
 odometry, camera/depth topics and `/scan` already running:
 
 ~~~bash
 ros2 launch online_map_package online_map_ideal_sim.launch.py
 ~~~
 
-This launch starts one map server on `/map`, the simulation CV pipeline,
+This launch starts a circuit map server on `/map`, a wall map server on
+`/limo/map_package/online/maps/laser_map`, the simulation CV pipeline,
 the modified AMCL, RViz and the AMCL experiment window. It locates
 `offline_map_package/experiments/sim/ideal_map/ideal_map.yaml` in the source
-workspace. Override the path with `map_yaml:=/absolute/path/ideal_map.yaml`.
+workspace, alongside `ideal_laser_map.yaml`. Override the paths with `map_yaml`
+and `laser_map_yaml` respectively. When changing worlds, supply matching maps.
 Use `start_rviz:=false` for a headless run, or `start_cv:=false` when a bag
 already supplies the semantic cloud. The simulation clock is enabled by default.
 Set `start_monitor:=false` to disable the experiment window and its recording.
 
-AMCL reuses `config/mapping_sim.yaml`, with `laser_weight_factor=0` and CV
-enabled. Both its map inputs use `/map`: road cost 0 is free, yellow/boardwalk
+AMCL reuses `config/mapping_sim.yaml`, including laser/CV weights of 1.0.
+The laser compares `/scan` with physical wall occupancy; CV uses `/map`:
+road cost 0 is free, yellow/boardwalk
 costs 60/90 are occupied for CV at the configured threshold 50, and white cost
-30 remains intermediate. The laser does not contribute a likelihood, but
-`/scan` still triggers updates and odometry supplies motion. Keep SLAM and any
+30 remains intermediate. The wall map is exported from Gazebo box collisions by
+`offline_map_package/experiments/sim/create_ideal_laser_map.py`, using 5 cm
+cells, occupied walls, a free interior and unknown exterior, without inflation.
+Enable **Static Laser Map** in RViz to view it. Keep SLAM and any
 other `map -> odom` publisher stopped, and initialize the robot pose using
 RViz **2D Pose Estimate**. Gazebo and the robot bringup are launched separately.
 This launch does not start the local controller map or navigation nodes.
@@ -126,6 +131,17 @@ line shows the last rejection reason and standard deviations. Pausing the plots
 does not stop acquisition. The interface is a desktop application and needs
 the same display access as RViz.
 
+A separate **Punti laser per aggiornamento AMCL** plot appears when the latest
+laser diagnostic reports `laser_weight_factor > 0`. It shows incoming scan rays,
+model candidates after subsampling/range filtering and points actually used,
+including beam skipping when enabled. With zero laser weight the plot is hidden
+and the status says the laser is disabled. Counts are reported by the AMCL laser
+models on `/amcl/laser_diagnostics` (`DiagnosticArray`), independently of CV and
+console logging. These are scan points, not particle-filter pose hypotheses;
+the diagnostic also records the number of hypotheses and beam/particle evaluations.
+No filter update produces no diagnostic sample. Override the debugger's input
+with `laser_diagnostics_topic:=/your/amcl/laser_diagnostics` if AMCL is namespaced.
+
 The modified AMCL publishes `/amcl/cv_diagnostics` (`DiagnosticArray`) for every
 attempted CV update, without the throttling used by console logs. A point means
 one template centroid after class filtering and voxelization: road and obstacle
@@ -138,7 +154,7 @@ sample, rather than an artificial zero. This topic is independent of
 
 Each recorder invocation creates a unique UTC-named directory in the source
 package, `online_map_package/results/amcl_<timestamp>/`. It writes every sample
-to `cv.csv` and `pose.csv` during acquisition. The latter keeps all 36 covariance
+to `cv.csv`, `laser.csv` and `pose.csv` during acquisition. The latter keeps all 36 covariance
 entries, plus pose and frame. Closing the window, Ctrl+C or SIGTERM saves
 `amcl_experiment.png` for the entire session and `metadata.json` with settings,
 counts, rejection reasons and units. **Salva grafici adesso** refreshes those
@@ -307,8 +323,8 @@ about 12 s in the green-only region and 4 s in the yellow region; it does not
 expire while stationary. 'cmd_vel_timeout_sec: 0.0' keeps the last command with
 no timeout. Confidence describes memory, not classifier certainty.
 
-A separate 3 cm class-wise voxel filter avoids duplicates. The
-'maximum_points' limit (600 in the real profile, 300 in simulation) is shared
+A separate class-wise voxel filter avoids duplicates: 8 cm in simulation and
+3 cm in the real profile. The 'maximum_points' limit (300 in both profiles) is shared
 by all persistent classes: lowest-confidence points are removed first; ties
 are distributed spatially. Configure
 parameters in the 'local_ctrl_map' profile section; override the cap with

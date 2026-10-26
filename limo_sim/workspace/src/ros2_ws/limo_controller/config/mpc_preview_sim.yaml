@@ -2,28 +2,37 @@ mpc_preview:
   ros__parameters:
     use_sim_time: true
     debug_topic: /limo/control/mpc_debug
+    global_path_topic: /limo/planning/path
+    costmap_topic: /local_costmap/costmap_raw
+    view_mode: sources  # sources: laser + local-map cloud, before inflation; costmap: MPC grid.
+    laser_topic: /scan
+    semantic_points_topic: /limo/map_package/online/local_ctrl_map/points
+    fixed_frame: odom
+    laser_max_range: 0.0  # All finite returns inside the sensor's declared range.
+    source_stale_timeout: 1.0
+    base_frame: base_link
     image_topic: /limo/control/mpc_preview/image/compressed
-    publish_rate: 4.0
+    publish_rate: 10.0
     stale_timeout: 1.0
+    costmap_stale_timeout: 2.0
     image_format: png  # png or jpeg
-    png_compression: 3
+    png_compression: 1
     jpeg_quality: 85
     image_width: 960
     image_height: 960
     pixels_per_meter: 140.0
     grid_spacing: 0.5
     font_size: 17
-    model_inset_enabled: true
-    model_inset_pixels_per_meter: 600.0
+    costmap_as_points: true
+    costmap_point_size: 3
+    costmap_point_color: [35, 40, 50]
+    laser_color: [210, 50, 40]
+    semantic_color: [30, 100, 210]
     line_width: 2
     selected_line_width: 5
     trajectory_alpha: 0.65
     show_rejected: true  # Dashed: collision/critic rejection.
     show_cost_pruned: false  # Dashed: effort cost already exceeds incumbent.
-    # Display sizes only; wheelbase, axle offset and footprint come from MPC.
-    wheel_length: 0.13
-    wheel_width: 0.05
-    steering_arrow_length: 0.45
     axis_length: 0.45
     colors:
       braking: [220, 75, 65]
@@ -32,6 +41,7 @@ mpc_preview:
       perturbed_nominal: [25, 165, 170]
       broad_exploration: [220, 140, 35]
     selected_color: [0, 180, 65]
+    global_path_color: [190, 40, 140]
     free_color: [238, 241, 245]
     inflated_color: [245, 185, 105]
     critical_color: [245, 100, 45]

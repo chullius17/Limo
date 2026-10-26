@@ -18,7 +18,9 @@ COUNT_FIELDS = [
 CV_FIELDS = ['stamp_s', 'frame_id', 'reason', 'accepted', 'reused'] + COUNT_FIELDS + [
     'cloud_stamp', 'sync_error',
 ]
-STREAM_FIELDS = {'pose': POSE_FIELDS, 'cv': CV_FIELDS}
+LASER_COUNT_FIELDS = ['input_points', 'candidate_points', 'used_points', 'particles', 'evaluations']
+LASER_FIELDS = ['stamp_s', 'frame_id', 'reason', 'laser_weight_factor'] + LASER_COUNT_FIELDS
+STREAM_FIELDS = {'pose': POSE_FIELDS, 'cv': CV_FIELDS, 'laser': LASER_FIELDS}
 
 
 def _stamp(header):
@@ -66,6 +68,27 @@ def cv_records(msg):
                 or not all(math.isfinite(row[key]) for key in (
                     'stamp_s', 'cloud_stamp', 'sync_error'))):
             raise ValueError('Invalid AMCL diagnostic counts')
+        records.append(row)
+    return records
+
+
+def laser_records(msg):
+    """Read model-reported laser usage, including disabled or invalid updates."""
+    records = []
+    for status in msg.status:
+        if status.name != 'amcl/laser_update':
+            continue
+        values = {entry.key: entry.value for entry in status.values}
+        row = {key: int(values[key]) for key in LASER_COUNT_FIELDS}
+        row.update(stamp_s=_stamp(msg.header), frame_id=msg.header.frame_id,
+                   reason=status.message, laser_weight_factor=float(values['laser_weight_factor']))
+        weight = row['laser_weight_factor']
+        if (any(row[key] < 0 for key in LASER_COUNT_FIELDS)
+                or not 0 <= row['used_points'] <= row['candidate_points'] <= row['input_points']
+                or not math.isfinite(weight) or weight < 0
+                or not math.isfinite(row['stamp_s']) or not row['frame_id']
+                or (weight == 0 and any(row[key] for key in LASER_COUNT_FIELDS[1:]))):
+            raise ValueError('Invalid AMCL laser diagnostic counts')
         records.append(row)
     return records
 
@@ -160,6 +183,10 @@ class ExperimentSession:
             'points': (
                 'used_points counts road and obstacle template centroids actually fused; '
                 'rejected updates have zero used_points. evaluations also counts particles.'),
+            'laser_points': (
+                'laser.csv stores actual model counts after beam subsampling/range filtering '
+                'and beam skipping. evaluations counts scored beam/particle pairs, including '
+                'candidates later rejected by beam skipping. Zero laser weight disables usage.'),
             'covariance': (
                 'pose.csv stores the complete 6x6 ROS covariance in x,y,z,roll,pitch,yaw '
                 'order. Position variances are m^2, yaw variance is rad^2. '

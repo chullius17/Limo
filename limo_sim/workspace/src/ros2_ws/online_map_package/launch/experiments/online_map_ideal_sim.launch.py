@@ -1,4 +1,4 @@
-"""Localize with the simulation CV pipeline against the ideal circuit map."""
+"""Localize with CV and laser against ideal circuit and Gazebo wall maps."""
 
 import os
 from pathlib import Path
@@ -17,9 +17,9 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
-def _default_map(share):
+def _default_map(share, filename='ideal_map.yaml'):
     relative = Path(
-        'src/ros2_ws/offline_map_package/experiments/sim/ideal_map/ideal_map.yaml')
+        'src/ros2_ws/offline_map_package/experiments/sim/ideal_map') / filename
     for start in (Path(__file__).resolve(), Path(share).resolve()):
         for root in start.parents:
             candidate = root / relative
@@ -42,21 +42,35 @@ def _launch_ideal(context):
         raise ValueError(
             'Ideal map YAML not found: {}. Set map_yaml:=/path/to/ideal_map.yaml'
             .format(map_yaml))
+    laser_map_yaml = os.path.abspath(os.path.expanduser(
+        LaunchConfiguration('laser_map_yaml').perform(context)))
+    if not os.path.isfile(laser_map_yaml):
+        raise ValueError(
+            'Ideal laser map YAML not found: {}. Set laser_map_yaml:=/path/to/laser.yaml'
+            .format(laser_map_yaml))
     share = get_package_share_directory('online_map_package')
     with open(os.path.join(share, 'config', 'mapping_sim.yaml'),
               encoding='utf-8') as stream:
         profile = yaml.safe_load(stream)
     clock = {'use_sim_time': _flag(context, 'use_sim_time')}
     amcl = dict(profile['amcl'])
-    # The ideal semantic map contains no lidar walls. /scan still clocks AMCL.
+    # Laser sees physical walls; CV compares only the circuit markings.
     amcl.update(
-        **clock, map_topic='/map', cv_map_topic='/map',
-        laser_weight_factor=0.0, cv_enabled=True)
+        **clock, map_topic=profile['map_servers']['laser_topic'],
+        cv_map_topic='/map', cv_enabled=True)
     arguments = {
         name: str(value).lower() if isinstance(value, bool) else str(value)
         for name, value in amcl.items()
     }
     actions = [
+        Node(
+            package='nav2_map_server', executable='map_server',
+            name='ideal_laser_map_server', output='screen', parameters=[{
+                **clock, 'yaml_filename': laser_map_yaml,
+                'frame_id': amcl['global_frame_id'],
+            }], remappings=[
+                ('map', amcl['map_topic']),
+                ('map_metadata', amcl['map_topic'] + '_metadata')]),
         Node(
             package='nav2_map_server', executable='map_server',
             name='ideal_map_server', output='screen', parameters=[{
@@ -66,7 +80,8 @@ def _launch_ideal(context):
         Node(
             package='nav2_lifecycle_manager', executable='lifecycle_manager',
             name='lifecycle_manager_ideal_map', output='screen', parameters=[{
-                **clock, 'autostart': True, 'node_names': ['ideal_map_server'],
+                **clock, 'autostart': True,
+                'node_names': ['ideal_map_server', 'ideal_laser_map_server'],
             }]),
     ]
     if _flag(context, 'start_cv'):
@@ -107,6 +122,9 @@ def _launch_ideal(context):
 def generate_launch_description():
     share = get_package_share_directory('online_map_package')
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'laser_map_yaml', default_value=_default_map(share, 'ideal_laser_map.yaml'),
+            description='Gazebo wall occupancy YAML used for AMCL laser likelihood.'),
         DeclareLaunchArgument(
             'map_yaml', default_value=_default_map(share),
             description='Ideal circuit map YAML; automatically located in the workspace.'),

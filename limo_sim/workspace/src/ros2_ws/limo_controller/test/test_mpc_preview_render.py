@@ -21,7 +21,9 @@ import unittest
 from PIL import Image
 
 from limo_controller.mpc_preview_render import (
-    Candidate, PreviewFrame, RenderOptions, _costmap, base_to_pixel,
+    Candidate, PreviewBackground, PreviewFrame, PreviewSources, RenderOptions,
+    _costmap, _costmap_points,
+    base_to_pixel,
     render_preview, world_to_base,
 )
 
@@ -121,6 +123,50 @@ class PreviewRenderTest(unittest.TestCase):
         self.assertNotEqual(render_preview(None, options, 'Snapshot scaduto').getpixel(pixel),
                             options.selected_color)
 
+    def test_idle_view_keeps_inflation_and_global_path_without_old_candidates(self):
+        frame, options = sample_frame(), RenderOptions(costmap_as_points=False)
+        costs = bytearray(frame.costmap_data)
+        costs[60 * 100 + 60] = 180
+        background = PreviewBackground(
+            robot_pose=frame.robot_pose, costmap_size=frame.costmap_size,
+            costmap_resolution=frame.costmap_resolution,
+            costmap_origin=frame.costmap_origin, costmap_data=bytes(costs))
+        path = ((0.5, -0.8), (1.5, -0.8))
+        image = render_preview(None, options, 'MPC: in attesa', background, path)
+        path_pixel = tuple(round(v) for v in base_to_pixel(path[-1], options))
+        self.assertEqual(image.getpixel(path_pixel), options.global_path_color)
+        inflation_pixel = tuple(round(v) for v in base_to_pixel((0.525, 0.525), options))
+        self.assertEqual(image.getpixel(inflation_pixel),
+                         _costmap(background, options).getpixel(inflation_pixel))
+        self.assertNotEqual(image.getpixel(inflation_pixel), options.free_color)
+        winner_pixel = tuple(round(v) for v in base_to_pixel(
+            frame.candidates[-1].poses[-1], options))
+        self.assertNotEqual(image.getpixel(winner_pixel), options.selected_color)
+
+    def test_global_path_can_be_displayed_before_the_costmap_arrives(self):
+        options = RenderOptions()
+        path = ((0.5, 0.8), (1.5, 0.8))
+        image = render_preview(None, options, global_path=path)
+        pixel = tuple(round(v) for v in base_to_pixel(path[-1], options))
+        self.assertEqual(image.getpixel(pixel), options.global_path_color)
+
+    def test_point_view_keeps_low_soft_inscribed_and_lethal_costs_without_filled_bands(self):
+        frame, options = sample_frame(), RenderOptions()
+        frame.costmap_size = (4, 2)
+        frame.costmap_resolution = 0.20
+        frame.costmap_origin = (1.0, -1.0, math.pi / 2)
+        frame.robot_pose = (0.5, -0.5, math.pi / 2)
+        frame.costmap_data = bytes((1, 60, 180, 252, 253, 254, 255, 0))
+        image = _costmap_points(frame, options)
+        for index, cost in enumerate(frame.costmap_data):
+            x, y = (index % 4 + 0.5) * 0.20, (index // 4 + 0.5) * 0.20
+            local = world_to_base((1.0 - y, -1.0 + x), frame.robot_pose)
+            u, v = (round(value) for value in base_to_pixel(local, options))
+            expected = (options.background_color if cost == 0 else
+                        options.unknown_color if cost == 255 else options.costmap_point_color)
+            self.assertEqual(image.getpixel((u, v)), expected)
+            self.assertEqual(image.getpixel((u + 3, v)), options.background_color)
+
     def test_invalid_costmap_and_display_parameters_are_rejected(self):
         frame = sample_frame()
         frame.costmap_data = b''
@@ -130,6 +176,18 @@ class PreviewRenderTest(unittest.TestCase):
             RenderOptions(pixels_per_meter=0).validate()
         with self.assertRaises(ValueError):
             RenderOptions(image_width=10000).validate()
+
+    def test_source_view_draws_observations_and_omits_the_inflated_master_grid(self):
+        frame, options = sample_frame(), RenderOptions()
+        sources = PreviewSources(laser=((0.6, 0.8),), semantic=((0.8, -0.8),))
+        image = render_preview(frame, options, sources=sources)
+        for points, color in ((sources.laser, options.laser_color),
+                              (sources.semantic, options.semantic_color)):
+            pixel = tuple(round(v) for v in base_to_pixel(points[0], options))
+            self.assertEqual(image.getpixel(pixel), color)
+        # This cell is occupied in the snapshot, but no sensor endpoint lies here.
+        pixel = tuple(round(v) for v in base_to_pixel((1.225, 0.125), options))
+        self.assertEqual(image.getpixel(pixel), options.background_color)
 
 
 if __name__ == '__main__':

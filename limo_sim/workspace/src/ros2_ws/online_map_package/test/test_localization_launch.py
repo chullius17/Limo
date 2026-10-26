@@ -261,12 +261,13 @@ def ideal(monkeypatch, **overrides):
     return module._launch_ideal(context)
 
 
-def test_ideal_launch_uses_existing_map_and_cv_only_amcl(monkeypatch):
+def test_ideal_launch_uses_separate_wall_and_cv_maps(monkeypatch):
     actions = ideal(monkeypatch)
     nodes = {action['name']: action for action in actions
              if isinstance(action, dict)}
     assert set(nodes) == {
-        'ideal_map_server', 'lifecycle_manager_ideal_map', 'rviz2', 'amcl_experiment',
+        'ideal_map_server', 'ideal_laser_map_server',
+        'lifecycle_manager_ideal_map', 'rviz2', 'amcl_experiment',
     }
     server = nodes['ideal_map_server']
     params = server['parameters'][0]
@@ -280,7 +281,13 @@ def test_ideal_launch_uses_existing_map_and_cv_only_amcl(monkeypatch):
     assert (Path(params['yaml_filename']).parent / metadata['image']).is_file()
     assert ('map', '/map') in server['remappings']
     assert nodes['lifecycle_manager_ideal_map']['parameters'][0]['node_names'] == [
-        'ideal_map_server']
+        'ideal_map_server', 'ideal_laser_map_server']
+    laser = nodes['ideal_laser_map_server']
+    assert Path(laser['parameters'][0]['yaml_filename']).name == 'ideal_laser_map.yaml'
+    assert Path(laser['parameters'][0]['yaml_filename']).is_file()
+    assert laser['parameters'][0]['frame_id'] == params['frame_id']
+    assert laser['parameters'][0]['use_sim_time'] is True
+    assert ('map', '/limo/map_package/online/maps/laser_map') in laser['remappings']
     cv = next(action[0] for action in actions if isinstance(action, list))
     cv_args = dict(cv.launch_arguments)
     assert cv_args['config_file'].endswith('/cv_package/config/cv_sim.yaml')
@@ -289,8 +296,9 @@ def test_ideal_launch_uses_existing_map_and_cv_only_amcl(monkeypatch):
     amcl = next(action for action in actions
                 if isinstance(action, IncludeLaunchDescription))
     args = dict(amcl.launch_arguments)
-    assert args['map_topic'] == args['cv_map_topic'] == '/map'
-    assert args['laser_weight_factor'] == '0.0'
+    assert args['map_topic'] == '/limo/map_package/online/maps/laser_map'
+    assert args['cv_map_topic'] == '/map'
+    assert args['laser_weight_factor'] == '1.0'
     assert args['cv_weight_factor'] == '1.0'
     assert args['cv_enabled'] == 'true'
     assert args['cv_occupied_threshold'] == '50'
@@ -303,22 +311,31 @@ def test_ideal_launch_supports_cloud_replay_and_custom_map(monkeypatch, tmp_path
     # The map server validates the map contents; launch validates the YAML path.
     custom_map = tmp_path / 'custom.yaml'
     custom_map.write_text('image: custom.pgm\n')
+    custom_laser = tmp_path / 'walls.yaml'
+    custom_laser.write_text('image: walls.pgm\n')
     actions = ideal(
-        monkeypatch, map_yaml=str(custom_map), start_cv='false',
+        monkeypatch, map_yaml=str(custom_map), laser_map_yaml=str(custom_laser), start_cv='false',
         start_rviz='false', start_monitor='false', use_sim_time='false')
     assert not any(isinstance(action, list) for action in actions)
     nodes = {action['name']: action for action in actions
              if isinstance(action, dict)}
-    assert set(nodes) == {'ideal_map_server', 'lifecycle_manager_ideal_map'}
+    assert set(nodes) == {
+        'ideal_map_server', 'ideal_laser_map_server', 'lifecycle_manager_ideal_map'}
     assert nodes['ideal_map_server']['parameters'][0]['yaml_filename'] == str(custom_map)
+    assert nodes['ideal_laser_map_server']['parameters'][0]['yaml_filename'] == str(custom_laser)
     assert all(node['parameters'][0]['use_sim_time'] is False
                for node in nodes.values())
     amcl = next(action for action in actions
                 if isinstance(action, IncludeLaunchDescription))
     assert dict(amcl.launch_arguments)['use_sim_time'] == 'false'
-    assert dict(amcl.launch_arguments)['laser_weight_factor'] == '0.0'
+    assert dict(amcl.launch_arguments)['laser_weight_factor'] == '1.0'
 
 
 def test_ideal_launch_rejects_missing_map(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match='Ideal map YAML not found'):
         ideal(monkeypatch, map_yaml=str(tmp_path / 'missing.yaml'))
+
+
+def test_ideal_launch_rejects_missing_laser_map(monkeypatch, tmp_path):
+    with pytest.raises(ValueError, match='Ideal laser map YAML not found'):
+        ideal(monkeypatch, laser_map_yaml=str(tmp_path / 'missing.yaml'))

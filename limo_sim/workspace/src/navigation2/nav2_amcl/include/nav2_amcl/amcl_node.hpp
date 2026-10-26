@@ -137,6 +137,11 @@ protected:
     bool lidar_information_valid = true);
   void publishCvDiagnostics(
     const builtin_interfaces::msg::Time & stamp, const CvFusionDiagnostics & data);
+  void publishLaserDiagnostics(
+    const sensor_msgs::msg::LaserScan & scan, const LaserData * data,
+    const std::string & reason);
+  rclcpp_lifecycle::LifecyclePublisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
+    laser_diagnostics_pub_;
   rclcpp_lifecycle::LifecyclePublisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
     cv_diagnostics_pub_;
   std::mutex cv_mutex_;

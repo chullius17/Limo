@@ -15,6 +15,7 @@
 """Render an MPC snapshot without ROS, TF, NumPy or a graphical display."""
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 import math
 
 from PIL import Image, ImageDraw, ImageFont
@@ -63,6 +64,26 @@ class PreviewFrame:
 
 
 @dataclass
+class PreviewBackground:
+    """A published local costmap aligned to the current robot pose."""
+
+    robot_pose: tuple
+    costmap_size: tuple
+    costmap_resolution: float
+    costmap_origin: tuple
+    costmap_data: bytes
+    footprint: tuple = ()
+
+
+@dataclass
+class PreviewSources:
+    """Independent laser and semantic observations, before Nav2 inflation."""
+
+    laser: tuple = ()
+    semantic: tuple = ()
+
+
+@dataclass
 class RenderOptions:
     """Display settings; the robot geometry always comes from the controller."""
 
@@ -75,15 +96,16 @@ class RenderOptions:
     trajectory_alpha: float = 0.65
     show_rejected: bool = True
     show_cost_pruned: bool = False
-    wheel_length: float = 0.13
-    wheel_width: float = 0.05
-    steering_arrow_length: float = 0.45
     axis_length: float = 0.45
     font_size: int = 17
-    model_inset_enabled: bool = True
-    model_inset_pixels_per_meter: float = 600.0
     colors: tuple = field(default_factory=lambda: DEFAULT_COLORS)
     selected_color: tuple = (0, 180, 65)
+    global_path_color: tuple = (190, 40, 140)
+    costmap_as_points: bool = True
+    costmap_point_size: int = 3
+    costmap_point_color: tuple = (35, 40, 50)
+    laser_color: tuple = (210, 50, 40)
+    semantic_color: tuple = (30, 100, 210)
     free_color: tuple = (238, 241, 245)
     inflated_color: tuple = (245, 185, 105)
     critical_color: tuple = (245, 100, 45)
@@ -95,9 +117,7 @@ class RenderOptions:
         """Reject invalid geometry and unbounded image allocations."""
         if not (320 <= self.image_width <= 4096 and 320 <= self.image_height <= 4096):
             raise ValueError('Image dimensions must be between 320 and 4096 pixels')
-        for name in ('pixels_per_meter', 'grid_spacing', 'wheel_length',
-                     'wheel_width', 'steering_arrow_length', 'axis_length',
-                     'model_inset_pixels_per_meter'):
+        for name in ('pixels_per_meter', 'grid_spacing', 'axis_length'):
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(name + ' must be finite and positive')
@@ -106,7 +126,11 @@ class RenderOptions:
         if not (1 <= self.line_width <= 30 and 1 <= self.selected_line_width <= 30
                 and 8 <= self.font_size <= 72):
             raise ValueError('Invalid line width or font size')
-        colors = self.colors + (self.selected_color, self.free_color,
+        if not isinstance(self.costmap_as_points, bool) or not 1 <= self.costmap_point_size <= 15:
+            raise ValueError('Invalid costmap point display settings')
+        colors = self.colors + (self.selected_color, self.global_path_color,
+                                self.costmap_point_color, self.free_color,
+                                self.laser_color, self.semantic_color,
                                 self.inflated_color, self.critical_color,
                                 self.lethal_color, self.unknown_color,
                                 self.background_color)
@@ -152,6 +176,7 @@ def costmap_affine(frame, options):
             pu[1] - p0[1], pv[1] - p0[1], p0[1])
 
 
+@lru_cache(maxsize=16)
 def _font(size):
     try:
         return ImageFont.truetype('DejaVuSans.ttf', size)
@@ -183,12 +208,18 @@ def _dashed_line(draw, points, color, width):
                         start[1] + b * (end[1] - start[1]))), fill=color, width=width)
 
 
-def _costmap(frame, options):
+def _costmap_size(frame):
+    """Validate the full grid shared by raster and cell-center views."""
     width, height = frame.costmap_size
     if (width <= 0 or height <= 0 or len(frame.costmap_data) != width * height
             or not math.isfinite(frame.costmap_resolution)
             or frame.costmap_resolution <= 0):
         raise ValueError('Invalid costmap dimensions, resolution or data')
+    return width, height
+
+
+def _costmap(frame, options):
+    width, height = _costmap_size(frame)
     source = Image.frombytes('P', (width, height), frame.costmap_data)
     palette = []
     for cost in range(256):
@@ -210,52 +241,46 @@ def _costmap(frame, options):
         fillcolor=options.background_color)
 
 
-def _model_inset(frame, options):
-    """Enlarge the same footprint and virtual wheels without changing map scale."""
-    inset = Image.new('RGB', (300, 340), options.background_color)
-    draw = ImageDraw.Draw(inset)
-    font = _font(14)
-    scale = options.model_inset_pixels_per_meter
-
-    def pixel(x, y):
-        return (150 - y * scale, 190 - x * scale)
-
-    draw.rectangle((0, 0, 299, 339), outline=(90, 95, 105), width=2)
-    draw.text((12, 10), 'Modello bicicletta (ingrandito)', fill=(20, 30, 45), font=font)
-    polygon = [pixel(x, y) for x, y in frame.footprint]
-    if len(polygon) >= 3:
-        draw.line(polygon + [polygon[0]], fill=(20, 30, 45), width=3)
-    rear, front = -frame.rear_axle_to_base, frame.wheelbase - frame.rear_axle_to_base
-    draw.line((pixel(rear, 0), pixel(front, 0)), fill=(90, 95, 105), width=3)
-    for x, steering, label in ((rear, 0.0, 'posteriore'),
-                               (front, frame.initial_steering, 'anteriore')):
-        polygon = []
-        for dx, dy in ((-1, -1), (-1, 1), (1, 1), (1, -1)):
-            a, b = dx * options.wheel_length / 2, dy * options.wheel_width / 2
-            polygon.append(pixel(x + a * math.cos(steering) - b * math.sin(steering),
-                                 a * math.sin(steering) + b * math.cos(steering)))
-        draw.polygon(polygon, fill=(30, 30, 35))
-        u, v = pixel(x, 0)
-        draw.ellipse((u - 4, v - 4, u + 4, v + 4), fill=(255, 255, 255))
-        draw.text((u + 30, v - 8), label, fill=(30, 35, 45), font=font)
-    for steering, color, length in (
-            (frame.initial_steering, (220, 130, 0), 0.12),
-            (frame.command_steering, (180, 40, 160), 0.09)):
-        if color == (180, 40, 160) and frame.selected_id < 0:
-            continue
-        _arrow(draw, pixel(front, 0),
-               pixel(front + length * math.cos(steering), length * math.sin(steering)), color)
-    draw.ellipse((146, 186, 154, 194), fill=(195, 35, 35))
-    draw.text((14, 185), 'base_link', fill=(195, 35, 35), font=font)
-    draw.text((12, 317), f'L={frame.wheelbase:.2f} m | asse-base={frame.rear_axle_to_base:.2f} m',
-              fill=(30, 35, 45), font=font)
-    return inset
+@lru_cache(maxsize=4)
+def _costmap_cells(data):
+    """Reuse occupied cell indices until the complete costmap data changes."""
+    cells = tuple((index, cost == 255) for index, cost in enumerate(data) if cost)
+    return cells, sum(not unknown for _, unknown in cells)
 
 
-def render_preview(frame, options, status=''):
-    """Draw one coherent snapshot; a missing/stale frame displays no trajectories."""
+def _costmap_points(frame, options, image=None):
+    """Draw every nonfree master-costmap cell at its center, without downsampling."""
+    width, _ = _costmap_size(frame)
+    if image is None:
+        image = Image.new('RGB', (options.image_width, options.image_height),
+                          options.background_color)
+    draw = ImageDraw.Draw(image)
+    ox, oy, yaw = frame.costmap_origin
+    origin_x, origin_y = world_to_base((ox, oy), frame.robot_pose)
+    angle = yaw - frame.robot_pose[2]
+    cosine, sine = math.cos(angle), math.sin(angle)
+    scale = frame.costmap_resolution * options.pixels_per_meter
+    u0 = options.image_width / 2 - origin_y * options.pixels_per_meter
+    v0 = options.image_height / 2 - origin_x * options.pixels_per_meter
+    ux, uy, vx, vy = -sine * scale, -cosine * scale, -cosine * scale, sine * scale
+    radius = options.costmap_point_size // 2
+    cells, _ = _costmap_cells(frame.costmap_data)
+    for index, unknown in cells:
+        x, y = index % width + 0.5, index // width + 0.5
+        u, v = round(u0 + ux * x + uy * y), round(v0 + vx * x + vy * y)
+        color = options.unknown_color if unknown else options.costmap_point_color
+        draw.rectangle((u - radius, v - radius,
+                        u - radius + options.costmap_point_size - 1,
+                        v - radius + options.costmap_point_size - 1), fill=color)
+    return image
+
+
+def render_preview(frame, options, status='', background=None, global_path=(), sources=None):
+    """Draw live context even when no fresh MPC predictions are available."""
     options.validate()
-    image = (_costmap(frame, options) if frame is not None else
+    view = frame if frame is not None else background
+    image = (_costmap(view, options) if sources is None and view is not None
+             and not options.costmap_as_points else
              Image.new('RGB', (options.image_width, options.image_height),
                        options.background_color))
     draw = ImageDraw.Draw(image)
@@ -268,6 +293,26 @@ def render_preview(frame, options, status=''):
             line = ((coordinate, 0, coordinate, options.image_height) if vertical else
                     (0, coordinate, options.image_width, coordinate))
             draw.line(line, fill=(210, 213, 219), width=1)
+
+    if sources is None and view is not None and options.costmap_as_points:
+        image = _costmap_points(view, options, image)
+        draw = ImageDraw.Draw(image)
+
+    if sources is not None:
+        radius = options.costmap_point_size // 2
+        for points, color in ((sources.semantic, options.semantic_color),
+                              (sources.laser, options.laser_color)):
+            for point in points:
+                u, v = (round(value) for value in base_to_pixel(point, options))
+                draw.rectangle((u - radius, v - radius,
+                                u - radius + options.costmap_point_size - 1,
+                                v - radius + options.costmap_point_size - 1), fill=color)
+
+    if global_path:
+        points = [base_to_pixel(point, options) for point in global_path]
+        if len(points) >= 2:
+            draw.line(points, fill=(255, 255, 255), width=options.line_width + 5)
+            draw.line(points, fill=options.global_path_color, width=options.line_width + 1)
 
     if frame is not None:
         overlay = Image.new('RGBA', image.size, (0, 0, 0, 0))
@@ -302,37 +347,11 @@ def render_preview(frame, options, status=''):
                 end = points[-1]
                 draw.ellipse((end[0] - 4, end[1] - 4, end[0] + 4, end[1] + 4),
                              fill=options.selected_color)
-        polygon = [base_to_pixel(point, options) for point in frame.footprint]
+    if view is not None:
+        polygon = [base_to_pixel(point, options) for point in view.footprint]
         if len(polygon) >= 3:
             draw.line(polygon + [polygon[0]], fill=(20, 30, 45), width=3)
 
-        rear = -frame.rear_axle_to_base
-        front = rear + frame.wheelbase
-        draw.line((base_to_pixel((rear, 0), options), base_to_pixel((front, 0), options)),
-                  fill=(40, 40, 40), width=3)
-        for wheel_x, steering in ((rear, 0.0), (front, frame.initial_steering)):
-            vertices = []
-            for dx, dy in ((-1, -1), (-1, 1), (1, 1), (1, -1)):
-                x, y = dx * options.wheel_length / 2, dy * options.wheel_width / 2
-                vertices.append(base_to_pixel((wheel_x + math.cos(steering) * x
-                                               - math.sin(steering) * y,
-                                               math.sin(steering) * x
-                                               + math.cos(steering) * y), options))
-            draw.polygon(vertices, fill=(30, 30, 35))
-            u, v = base_to_pixel((wheel_x, 0), options)
-            draw.ellipse((u - 3, v - 3, u + 3, v + 3), fill=(255, 255, 255))
-        start = base_to_pixel((front, 0), options)
-        for steering, color, length in (
-                (frame.initial_steering, (220, 130, 0), options.steering_arrow_length),
-                (frame.command_steering, (180, 40, 160), options.steering_arrow_length * 0.8)):
-            if color == (180, 40, 160) and frame.selected_id < 0:
-                continue
-            end = base_to_pixel((front + length * math.cos(steering),
-                                 length * math.sin(steering)), options)
-            _arrow(draw, start, end, color)
-
-    # The main view retains the true metric scale; an optional inset makes
-    # the small footprint and equivalent steering wheel easy to inspect.
     origin = base_to_pixel((0, 0), options)
     _arrow(draw, origin, base_to_pixel((options.axis_length, 0), options), (195, 35, 35), 2)
     _arrow(draw, origin, base_to_pixel((0, options.axis_length), options), (35, 130, 55), 2)
@@ -341,18 +360,18 @@ def render_preview(frame, options, status=''):
               fill=(195, 35, 35), font=font)
     draw.text(base_to_pixel((0, options.axis_length + 0.15), options), '+y',
               fill=(35, 130, 55), font=font)
-    if frame is not None and options.model_inset_enabled and options.image_width >= 640:
-        image.paste(_model_inset(frame, options), (options.image_width - 316, 86))
-
-    title = 'MPC - vista dall\'alto / base_link'
+    title = ('MPC - sorgenti prima dell\'inflation / base_link' if sources is not None else
+             'MPC - vista dall\'alto / base_link')
     detail = status or 'In attesa di uno snapshot MPC'
     if frame is not None:
         detail = (f'{frame.generated_count} candidati | {len(frame.candidates)} esportati | '
                   f'orizzonte {frame.time_steps * frame.model_dt:.2f} s')
+        if status:
+            detail += ' | ' + status
     draw.rectangle((0, 0, options.image_width, 70), fill=options.background_color)
     draw.text((16, 10), title, fill=(20, 30, 45), font=font)
     draw.text((16, 36), detail, fill=(60, 65, 75), font=font)
-    legend_y = options.image_height - 170
+    legend_y = options.image_height - 145
     draw.rectangle((0, legend_y, options.image_width, options.image_height),
                    fill=options.background_color)
     for index, label in enumerate(LABELS):
@@ -363,10 +382,13 @@ def render_preview(frame, options, status=''):
     x, y = 16 + 2 * (options.image_width // 3), legend_y + 37
     draw.line((x, y + 8, x + 24, y + 8), fill=options.selected_color, width=5)
     draw.text((x + 30, y), 'Scelta', fill=(30, 35, 45), font=font)
-    draw.text((16, legend_y + 67), 'Tratteggio: scartata / potata; ruote: modello bicicletta',
+    layer_label = ('Laser rosso | CV blu' if sources is not None else
+                   'Tratteggio: scartata / potata')
+    draw.text((16, legend_y + 67), layer_label,
               fill=(60, 65, 75), font=font)
-    draw.text((16, legend_y + 92), 'Sterzo iniziale: arancio | primo comando: viola',
-              fill=(60, 65, 75), font=font)
+    x, y = options.image_width // 2, legend_y + 67
+    draw.line((x, y + 8, x + 24, y + 8), fill=options.global_path_color, width=3)
+    draw.text((x + 30, y), 'Traiettoria globale', fill=(30, 35, 45), font=font)
     if frame is not None:
         steering = (f'v0={frame.initial_velocity:.2f} m/s  '
                     f'delta0={math.degrees(frame.initial_steering):.1f} deg')
@@ -375,8 +397,15 @@ def render_preview(frame, options, status=''):
                          f'delta1={math.degrees(frame.command_steering):.1f} deg')
         else:
             steering += ' | nessuna traiettoria valida'
-        draw.text((16, legend_y + 118), steering, fill=(30, 35, 45), font=font)
-    draw.text((16, legend_y + 143), f'Griglia: {options.grid_spacing:g} m | '
-              'costmap: chiaro=libero, arancio=inflazione, scuro=ostacolo',
+        draw.text((16, legend_y + 92), steering, fill=(30, 35, 45), font=font)
+    if sources is not None:
+        map_label = (f'Laser: {len(sources.laser)} | Locali: {len(sources.semantic)} | '
+                     'nessuna inflation nel debug')
+    elif options.costmap_as_points:
+        count = _costmap_cells(view.costmap_data)[1] if view is not None else 0
+        map_label = f'{count} celle con costo > 0 | punti scuri=costi MPC, grigi=sconosciuto'
+    else:
+        map_label = 'costmap: chiaro=libero, arancio=inflazione, scuro=ostacolo'
+    draw.text((16, legend_y + 118), f'Griglia: {options.grid_spacing:g} m | ' + map_label,
               fill=(60, 65, 75), font=font)
     return image

@@ -43,6 +43,7 @@ add_library(${library_name} SHARED
   src/amcl_node.cpp
   src/amcl_cv.cpp
   src/experiments/cv_diagnostics.cpp
+  src/experiments/laser_diagnostics.cpp
 )
 
 target_include_directories(${library_name} PRIVATE src/include)
@@ -104,6 +105,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_cv_sync test/test_cv_sync.cpp)
   ament_target_dependencies(test_cv_sync ${dependencies})
   target_link_libraries(test_cv_sync ${library_name})
+  ament_add_gtest(test_laser_counts test/test_laser_counts.cpp)
+  target_link_libraries(test_laser_counts sensors_lib map_lib pf_lib)
   # Foxy's cppcheck 1.90 cannot parse GoogleTest macros. Keep analysis on
   # production code; the tests above are compiled and executed by CTest.
   set(ament_cmake_cppcheck_ADDITIONAL_EXCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/test/*")

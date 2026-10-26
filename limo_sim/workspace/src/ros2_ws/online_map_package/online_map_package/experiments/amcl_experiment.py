@@ -1,4 +1,4 @@
-"""Qt/ROS viewer for actual CV fusion counts and AMCL pose covariance."""
+"""Qt/ROS viewer for actual laser/CV usage and AMCL pose covariance."""
 
 from collections import Counter
 import math
@@ -23,7 +23,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
 from online_map_package.experiments.amcl_records import (
-    ExperimentSession, cv_records, pose_record,
+    ExperimentSession, cv_records, laser_records, pose_record,
 )
 
 
@@ -36,12 +36,13 @@ def default_results_directory():
 
 
 class ExperimentNode(Node):
-    """Journal both AMCL topics without altering localization or robot motion."""
+    """Journal AMCL diagnostics and pose without altering localization."""
 
     def __init__(self, **kwargs):
         super().__init__('amcl_experiment', **kwargs)
         defaults = {
             'pose_topic': '/amcl_pose', 'diagnostics_topic': '/amcl/cv_diagnostics',
+            'laser_diagnostics_topic': '/amcl/laser_diagnostics',
             'results_directory': default_results_directory(),
             'history_seconds': 120.0, 'max_samples': 20000, 'refresh_hz': 5.0,
         }
@@ -67,6 +68,9 @@ class ExperimentNode(Node):
                 self.create_subscription(
                     DiagnosticArray, self.settings['diagnostics_topic'],
                     self.receive_cv, 100),
+                self.create_subscription(
+                    DiagnosticArray, self.settings['laser_diagnostics_topic'],
+                    self.receive_laser, 100),
             ]
         except Exception:
             self.session.close()
@@ -106,9 +110,13 @@ class ExperimentNode(Node):
             return (self.session.snapshot(), dict(self.arrivals),
                     dict(self.session.counts), dict(self.rejected), self.failure)
 
+    def receive_laser(self, message):
+        """Record the laser model's counts independently of CV availability."""
+        self._receive('laser', laser_records, message)
+
 
 class ExperimentWindow(QMainWindow):
-    """Display six live plots and save the complete session on close."""
+    """Display CV/covariance plots and conditional laser counts; export on close."""
 
     def __init__(self, node):
         super().__init__()
@@ -116,14 +124,15 @@ class ExperimentWindow(QMainWindow):
         self.paused = False
         self.finalized = False
         self.displayed = None
-        self.setWindowTitle('Esperimento AMCL — punti CV e covarianza')
-        self.resize(1400, 950)
+        self.setWindowTitle('Esperimento AMCL — punti laser, CV e covarianza')
+        self.resize(1400, 1100)
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
         for text in (
                 'CV: {}    |    Posa: {}'.format(
                     node.settings['diagnostics_topic'], node.settings['pose_topic']),
+                'Laser: {}'.format(node.settings['laser_diagnostics_topic']),
                 'Salvataggio automatico: {}'.format(node.session.directory)):
             label = QLabel(text)
             label.setWordWrap(True)
@@ -142,20 +151,26 @@ class ExperimentWindow(QMainWindow):
         controls.addWidget(save_button)
         controls.addStretch()
         layout.addLayout(controls)
-        self.figure = Figure(constrained_layout=True)
+        self.figure = Figure(figsize=(14, 11), constrained_layout=True)
         self.canvas = FigureCanvasQTAgg(self.figure)
         layout.addWidget(NavigationToolbar2QT(self.canvas, self))
         layout.addWidget(self.canvas, 1)
-        self.axes = self.figure.subplots(3, 2).flatten()
+        grid = self.figure.add_gridspec(4, 2)
+        self.axes = [self.figure.add_subplot(grid[row, col])
+                     for row in range(3) for col in range(2)]
+        self.axes.append(self.figure.add_subplot(grid[3, :]))
         self.input_axis = self.axes[0].twinx()
         self.input_axis.set_ylabel('punti cloud in ingresso', color='#6b7280')
+        self.laser_input_axis = self.axes[6].twinx()
+        self.laser_input_axis.set_ylabel('raggi scan in ingresso', color='#6b7280')
         labels = [
             ('Punti CV per aggiornamento AMCL', 'tempo acquisizione [s]', 'punti'),
-            ('Punti effettivamente usati', 'tempo acquisizione [s]', 'punti'),
+            ('Punti CV effettivamente usati', 'tempo acquisizione [s]', 'punti'),
             ('Varianze della posizione', 'tempo acquisizione [s]', 'varianza [m²]'),
             ('Covarianza XY', 'tempo acquisizione [s]', 'covarianza [m²]'),
             ('Varianza orientamento', 'tempo acquisizione [s]', 'varianza yaw [rad²]'),
             ('Traiettoria AMCL', 'x [m]', 'y [m]'),
+            ('Punti laser per aggiornamento AMCL', 'tempo acquisizione [s]', 'punti'),
         ]
         specs = [
             [('input_points', 'Cloud in ingresso', '#9ca3af'),
@@ -167,6 +182,9 @@ class ExperimentWindow(QMainWindow):
             [('cov_0_1', 'Cov(x,y)', '#7c3aed')],
             [('cov_5_5', 'Var(yaw)', '#059669')],
             [('trajectory', 'Posa stimata', '#2563eb')],
+            [('laser_input_points', 'Raggi in ingresso', '#9ca3af'),
+             ('laser_candidate_points', 'Candidati del modello', '#d97706'),
+             ('laser_used_points', 'Usati dal laser', '#059669')],
         ]
         self.lines = {}
         for axis, label, series in zip(self.axes, labels, specs):
@@ -174,9 +192,13 @@ class ExperimentWindow(QMainWindow):
             axis.grid(True, alpha=0.3)
             for key, title, color in series:
                 target = self.input_axis if key == 'input_points' else axis
+                if key == 'laser_input_points':
+                    target = self.laser_input_axis
                 self.lines[key], = target.plot([], [], label=title, color=color)
             axis.legend(handles=[self.lines[key] for key, _, _ in series], loc='upper right')
         self.axes[5].set_aspect('equal', adjustable='box')
+        self.axes[6].set_visible(False)
+        self.laser_input_axis.set_visible(False)
         footer = QLabel(
             'La covarianza misura l’incertezza stimata da AMCL, non l’errore reale. '
             'La finestra mostra gli ultimi {:.0f} s; i CSV e il PNG finale conservano '
@@ -204,11 +226,23 @@ class ExperimentWindow(QMainWindow):
             if records and rows[-1] is not records[-1]:
                 rows.append(records[-1])
             times = [row['elapsed_s'] for row in rows]
-            keys = (['input_points', 'candidate_points', 'used_points',
-                     'used_road_points', 'used_non_road_points'] if stream == 'cv' else
-                    ['cov_0_0', 'cov_1_1', 'cov_0_1', 'cov_5_5'])
+            keys = {
+                'cv': ['input_points', 'candidate_points', 'used_points',
+                       'used_road_points', 'used_non_road_points'],
+                'pose': ['cov_0_0', 'cov_1_1', 'cov_0_1', 'cov_5_5'],
+                'laser': ['laser_input_points', 'laser_candidate_points', 'laser_used_points'],
+            }[stream]
             for key in keys:
-                self.lines[key].set_data(times, [row[key] for row in rows])
+                field = key[len('laser_'):] if stream == 'laser' else key
+                values = [row[field] if stream != 'laser' or row['laser_weight_factor'] > 0
+                          else float('nan') for row in rows]
+                self.lines[key].set_data(times, values)
+            if stream == 'laser':
+                enabled = bool(records and records[-1]['laser_weight_factor'] > 0)
+                self.axes[6].set_visible(enabled)
+                self.laser_input_axis.set_visible(enabled)
+                weight = records[-1]['laser_weight_factor'] if records else 0
+                self.axes[6].set_title('Punti laser per aggiornamento AMCL — peso {:g}'.format(weight))
             if stream == 'pose':
                 xs, ys, previous = [], [], None
                 for row in rows:
@@ -220,7 +254,7 @@ class ExperimentWindow(QMainWindow):
                     ys.append(row['y'])
                     previous = identity
                 self.lines['trajectory'].set_data(xs, ys)
-        for axis in list(self.axes) + [self.input_axis]:
+        for axis in list(self.axes) + [self.input_axis, self.laser_input_axis]:
             axis.relim()
             axis.autoscale_view()
         self.canvas.draw_idle()
@@ -232,7 +266,7 @@ class ExperimentWindow(QMainWindow):
         streams, arrivals, counts, rejected, failure = self.node.snapshot()
         self.render(streams)
         parts = []
-        for key, label in (('cv', 'CV'), ('pose', 'Posa')):
+        for key, label in (('cv', 'CV'), ('laser', 'Laser'), ('pose', 'Posa')):
             age = time.monotonic() - arrivals[key] if key in arrivals else None
             state = 'in attesa' if age is None else 'ultimo dato {:.1f} s fa'.format(age)
             parts.append('{}: {} campioni, {}'.format(label, counts.get(key, 0), state))
@@ -246,6 +280,13 @@ class ExperimentWindow(QMainWindow):
             parts.append('σx={:.3f} m, σy={:.3f} m, σyaw={:.2f}°'.format(
                 math.sqrt(pose['cov_0_0']), math.sqrt(pose['cov_1_1']),
                 math.degrees(math.sqrt(pose['cov_5_5']))))
+        if streams['laser']:
+            laser = streams['laser'][-1]
+            if laser['laser_weight_factor'] > 0:
+                parts.append('Laser usati {} / candidati {} | {}'.format(
+                    laser['used_points'], laser['candidate_points'], laser['reason']))
+            else:
+                parts.append('Laser disabilitato (peso 0)')
         if rejected:
             parts.append('Campioni invalidi: {}'.format(sum(rejected.values())))
         if failure:

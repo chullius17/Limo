@@ -1,5 +1,58 @@
 # LIMO application launch
 
+## Simulazione: traiettoria sulla mappa ideale e controllo dai sensori
+
+`launch/experiments/limo_app_ideal_sim.launch.py` avvia la mappa ideale del
+circuito su `/map`, la localizzazione AMCL con laser e CV dell'esperimento
+`online_map_ideal_sim`, `trajectory` e `control` con i profili di simulazione.
+Il planner usa la mappa ideale; la costmap locale dell'MPC conserva laser,
+griglia semantica CV con memoria e inflation, come nell'applicazione normale.
+Il launch avvia una sola pipeline CV e il nodo `local_ctrl_map` con
+`mapping_sim.yaml`. Tutti i nodi usano `/clock`; i grafici AMCL non vengono avviati.
+
+Con Gazebo, robot, camera, `/scan` e odometria già attivi, compilare nel workspace ROS:
+
+```bash
+colcon build --packages-select online_map_package user_package --symlink-install
+source install/setup.bash
+ros2 launch user_package limo_app_ideal_sim.launch.py
+```
+
+Questo launch sostituisce l'applicazione simulata e il launch di localizzazione
+ideale: non avviarli insieme. In RViz impostare la posa con **2D Pose Estimate**,
+selezionare il goal con **2D Goal Pose** e avviare l'esecuzione con **START**
+nell'interfaccia di controllo. AMCL confronta la CV con la mappa ideale e
+`/scan` con la mappa statica dei muri perimetrali Gazebo, pubblicata su
+`/limo/map_package/online/maps/laser_map`. Entrambi i pesi sono quelli di
+`mapping_sim.yaml` (1.0). Il laser alimenta anche gli ostacoli locali dell'MPC.
+In RViz abilitare **Static Laser Map** per vedere il bordo di localizzazione.
+Gazebo e il bringup del robot si avviano separatamente.
+
+La mappa viene cercata automaticamente in
+`offline_map_package/experiments/sim/ideal_map/ideal_map.yaml` nel sorgente.
+La mappa laser affiancata è `ideal_laser_map.yaml`: risoluzione 0,05 m,
+muri occupati, interno libero, esterno sconosciuto e nessuna inflation.
+Deriva dalle collisioni di `custom_start/models/walls/model.sdf` e dalle pose
+del mondo `limo_circuit_world.world`, comprese le pose degli include SDF.
+Per rigenerarla dopo una modifica dei muri:
+
+```bash
+python3 src/ros2_ws/offline_map_package/experiments/sim/create_ideal_laser_map.py
+```
+
+Per mappe diverse o una pipeline CV già attiva:
+
+```bash
+ros2 launch user_package limo_app_ideal_sim.launch.py \
+  map_yaml:=/percorso/ideal_map.yaml \
+  laser_map_yaml:=/percorso/laser_map.yaml start_cv:=false
+```
+
+`start_rviz:=false`, `start_control_gui:=false` e `start_mpc_preview:=false`
+disabilitano i rispettivi viewer. `planner_params_file`, `controller_params_file`
+e `mpc_preview_params_file` consentono di usare YAML personalizzati; quelli
+predefiniti sono i profili `sim` esistenti.
+
 ## Esperimenti EKF: confronto delle odometrie
 
 Il launch unico `launch/experiments/ekf_experiment.launch.py` apre una finestra

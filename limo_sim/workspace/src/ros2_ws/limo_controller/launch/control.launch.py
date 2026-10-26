@@ -45,7 +45,7 @@ def controller_node(context, configured_params, log_level):
 
 
 def mpc_preview_node(context, configured_params, preview_params):
-    """Use the selected controller YAML to enable MPC telemetry and its preview."""
+    """Start the live context viewer independently of optional MPC telemetry."""
     with open(configured_params.perform(context), encoding='utf-8') as stream:
         config = yaml.safe_load(stream)
     params = config['controller_server']['ros__parameters']
@@ -63,7 +63,7 @@ def mpc_preview_node(context, configured_params, preview_params):
     return [Node(
         package='limo_controller', executable='mpc_preview', name='mpc_preview',
         output='screen', parameters=[preview_params],
-        condition=IfCondition(str(enabled and preview_enabled).lower()),
+        condition=IfCondition(str(preview_enabled).lower()),
     )]
 
 
@@ -78,6 +78,28 @@ def control_gui_node(context):
     )]
 
 
+def lifecycle_manager_node(context):
+    """Resolve delayed startup settings before an enclosing group exits its scope."""
+    manager = Node(
+        package='nav2_lifecycle_manager',
+        executable='lifecycle_manager',
+        name='lifecycle_manager_limo_controller',
+        output='screen',
+        parameters=[{
+            'use_sim_time': ParameterValue(
+                LaunchConfiguration('use_sim_time'), value_type=bool).evaluate(context),
+            'autostart': ParameterValue(
+                LaunchConfiguration('autostart'), value_type=bool).evaluate(context),
+            'node_names': ['controller_server'],
+        }],
+        arguments=['--ros-args', '--log-level',
+                   LaunchConfiguration('log_level').perform(context)],
+    )
+    # Foxy's lifecycle manager attempts startup once. Allow DDS discovery to
+    # settle, keeping every delayed argument independent of launch-group scope.
+    return [TimerAction(period=3.0, actions=[manager])]
+
+
 def generate_launch_description():
     """Create the controller server and its lifecycle manager."""
     package_share = get_package_share_directory('limo_controller')
@@ -88,7 +110,6 @@ def generate_launch_description():
 
     controller_params_file = LaunchConfiguration('controller_params_file')
     use_sim_time = LaunchConfiguration('use_sim_time')
-    autostart = LaunchConfiguration('autostart')
     log_level = LaunchConfiguration('log_level')
     require_chassis_status = LaunchConfiguration('require_chassis_status')
     preview_params = RewrittenYaml(
@@ -113,19 +134,6 @@ def generate_launch_description():
         name='twist_mux',
         output='screen',
         parameters=[configured_params],
-    )
-
-    lifecycle_manager = Node(
-        package='nav2_lifecycle_manager',
-        executable='lifecycle_manager',
-        name='lifecycle_manager_limo_controller',
-        output='screen',
-        parameters=[{
-            'use_sim_time': ParameterValue(use_sim_time, value_type=bool),
-            'autostart': ParameterValue(autostart, value_type=bool),
-            'node_names': ['controller_server'],
-        }],
-        arguments=['--ros-args', '--log-level', log_level],
     )
 
     path_executor = Node(
@@ -185,7 +193,7 @@ def generate_launch_description():
             'start_mpc_preview', default_value='',
             description=(
                 'Override MPC.Debug.preview_enabled; empty uses the controller YAML. '
-                'Rendering requires MPC.Debug.enabled.'),
+                'MPC.Debug.enabled adds candidate telemetry to the live map/path view.'),
         ),
         DeclareLaunchArgument(
             'mpc_preview_params_file',
@@ -194,11 +202,7 @@ def generate_launch_description():
         ),
         controller_server,
         cmd_vel_mux,
-        # Foxy lifecycle_manager performs startup only once.  When the whole
-        # application starts at the same time as mapping, planning and RViz,
-        # Fast DDS discovery can expose controller_server after that attempt.
-        # Give the server time to advertise its lifecycle services first.
-        TimerAction(period=3.0, actions=[lifecycle_manager]),
+        OpaqueFunction(function=lifecycle_manager_node),
         path_executor,
         control_gui,
         mpc_preview,

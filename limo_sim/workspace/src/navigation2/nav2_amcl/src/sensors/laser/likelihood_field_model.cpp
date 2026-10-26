@@ -54,6 +54,7 @@ LikelihoodFieldModel::sensorFunction(LaserData * data, pf_sample_set_t * set)
   self = reinterpret_cast<LikelihoodFieldModel *>(data->laser);
 
   total_weight = 0.0;
+  data->particles = set->sample_count;
 
   // Compute the sample weights
   for (j = 0; j < set->sample_count; j++) {
@@ -91,6 +92,11 @@ LikelihoodFieldModel::sensorFunction(LaserData * data, pf_sample_set_t * set)
       }
 
       pz = 0.0;
+      if (j == 0) {
+        ++data->candidate_points;
+        ++data->used_points;
+      }
+      ++data->evaluations;
 
       // Compute the endpoint of the beam
       hit.v[0] = pose.v[0] + obs_range * cos(pose.v[2] + obs_bearing);
@@ -135,6 +141,8 @@ LikelihoodFieldModel::sensorFunction(LaserData * data, pf_sample_set_t * set)
 bool
 LikelihoodFieldModel::sensorUpdate(pf_t * pf, LaserData * data)
 {
+  data->candidate_points = data->used_points = data->evaluations = 0;
+  data->particles = 0;
   if (max_beams_ < 2) {
     return false;
   }

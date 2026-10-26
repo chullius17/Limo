@@ -19,6 +19,7 @@
 #define NAV2_AMCL__SENSORS__LASER__LASER_HPP_
 
 #include <string>
+#include <cstdint>
 #include "nav2_amcl/pf/pf.hpp"
 #include "nav2_amcl/pf/pf_pdf.hpp"
 #include "nav2_amcl/map/map.hpp"
@@ -62,6 +63,11 @@ public:
   int range_count;
   double range_max;
   double(*ranges)[2];
+  // Actual model workload, filled during sensorUpdate (before CV/resampling).
+  uint64_t candidate_points{0};
+  uint64_t used_points{0};
+  uint64_t evaluations{0};
+  int particles{0};
 };
 
 
