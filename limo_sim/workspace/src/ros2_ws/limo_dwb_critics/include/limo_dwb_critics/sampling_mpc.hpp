@@ -18,6 +18,11 @@ struct MpcConfig
   int batch_size{768};
   int velocity_samples{8};
   int curvature_samples{15};
+  bool structured_actions{false};
+  bool deduplicate{false};
+  int action_variants{3};
+  double action_noise{0.20};
+  std::vector<double> block_fractions{0.25, 0.50, 0.25};
   double min_velocity{-0.10};
   double max_velocity{0.50};
   double max_yaw_rate{1.10};
@@ -66,7 +71,7 @@ struct MpcRollout
 enum class MpcFamily : std::uint8_t
 {
   Braking = 0, Nominal = 1, ConstantCurvature = 2,
-  PerturbedNominal = 3, BroadExploration = 4
+  PerturbedNominal = 3, BroadExploration = 4, Structured = 5, Monophase = 6
 };
 
 // NaN cost means effort-pruned; infinity means rejected. An observer never
@@ -80,6 +85,8 @@ struct MpcSolution
   double cost{std::numeric_limits<double>::infinity()};
   MpcFamily family{MpcFamily::Braking};
   std::size_t candidate_id{0};
+  std::size_t generated_count{0};  // Candidates retained after duplicate removal.
+  std::size_t duplicate_count{0};
 };
 
 // Finite-sample nonlinear shooting MPC. The caller supplies the environment

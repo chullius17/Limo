@@ -27,6 +27,17 @@ int motionDirection(double velocity)
 
 void MpcConfig::validate() const
 {
+  if (structured_actions) {
+    double sum = 0.0;
+    for (const double fraction : block_fractions) {
+      if (!std::isfinite(fraction) || fraction <= 0.0 || fraction * time_steps < 1.0) {
+        throw std::invalid_argument("Each MPC block must contain at least one model step");
+      }
+      sum += fraction;
+    }
+    if (block_fractions.size() != static_cast<std::size_t>(control_segments) ||
+      std::abs(sum - 1.0) > 1e-9) {throw std::invalid_argument("Invalid MPC block fractions");}
+  }
   for (double value : {dt, max_velocity, max_yaw_rate, acceleration, deceleration,
       yaw_acceleration, steering_rate, wheelbase, min_turning_radius,
       velocity_std, steering_std})
@@ -46,7 +57,10 @@ void MpcConfig::validate() const
     time_steps < 2 || time_steps > 1000 || control_segments < 1 ||
     control_segments > time_steps || velocity_samples < 2 || velocity_samples > 100 ||
     curvature_samples < 3 || curvature_samples > 100 || batch_size > 10000 ||
-    batch_size < 2 + velocity_samples * curvature_samples)
+    !std::isfinite(action_noise) || action_noise < 0.0 || action_noise >= 1.0 ||
+    action_variants < 1 || action_variants > 100 ||
+    (structured_actions ? (batch_size != 2 + 18 * action_variants || min_velocity != 0.0) :
+    batch_size < 2 + velocity_samples * curvature_samples))
   {
     throw std::invalid_argument("Invalid MPC horizon, sample count, limits or weights");
   }
@@ -228,9 +242,44 @@ MpcSolution SamplingMpc::solve(
   reset();
   MpcSolution best;
   std::size_t candidate_id = 0;
+  std::size_t duplicate_count = 0;
+  std::vector<std::vector<MpcControl>> unique_controls;
+  std::vector<std::vector<MpcControl>> unique_targets;
+  if (config_.deduplicate) {
+    unique_controls.reserve(config_.batch_size);
+    unique_targets.reserve(config_.batch_size);
+  }
   const auto consider = [&](const std::vector<MpcControl> & targets, MpcFamily family) {
-      const auto id = candidate_id++;
+      if (config_.deduplicate) {
+        for (const auto & existing : unique_targets) {
+          if (std::equal(existing.begin(), existing.end(), targets.begin(),
+            [](const MpcControl & a, const MpcControl & b) {
+              return a.velocity == b.velocity && a.steering == b.steering;
+            })) {++duplicate_count; return;}
+        }
+      }
       auto prediction = rollout(initial, targets, previous_rate, previous_direction);
+      if (config_.deduplicate) {
+        for (const auto & controls : unique_controls) {
+          bool same = true;
+          for (std::size_t t = 0; t < count; ++t) {
+            const auto & control = prediction.states[t + 1].control;
+            if (control.velocity != controls[t].velocity || control.steering != controls[t].steering) {
+              same = false;
+              break;
+            }
+          }
+          if (same) {++duplicate_count; return;}
+        }
+        std::vector<MpcControl> controls;
+        controls.reserve(count);
+        for (std::size_t t = 1; t < prediction.states.size(); ++t) {
+          controls.push_back(prediction.states[t].control);
+        }
+        unique_controls.push_back(std::move(controls));
+        unique_targets.push_back(targets);
+      }
+      const auto id = candidate_id++;
       const double remaining = best.cost - prediction.effort_cost;
       const auto observe = [&](double total) {
           if (observer) {
@@ -255,6 +304,59 @@ MpcSolution SamplingMpc::solve(
 
   consider(std::vector<MpcControl>(count), MpcFamily::Braking);
   consider(nominal, MpcFamily::Nominal);
+  if (config_.structured_actions) {
+    // Fixed-seed variants preserve the action classes across control cycles.
+    // The two seed candidates above provide braking and shifted warm start.
+    std::mt19937 random(42);
+    std::uniform_real_distribution<double> gain(1.0 - config_.action_noise, 1.0);
+    std::vector<std::vector<MpcControl>> monophase_targets;
+    monophase_targets.reserve(9 * config_.action_variants);
+    for (int longitudinal = -1; longitudinal <= 1; ++longitudinal) {
+      for (int lateral = -1; lateral <= 1; ++lateral) {
+        for (int variant = 0; variant < config_.action_variants; ++variant) {
+          std::vector<MpcControl> targets(count);
+          auto control = initial.control;
+          const double max_angle = std::atan(config_.wheelbase / config_.min_turning_radius);
+          const double strength = (variant + 1.0) / config_.action_variants * gain(random);
+          const double first_angle = std::clamp(initial.control.steering +
+            lateral * max_angle * strength, -max_angle, max_angle);
+          std::size_t begin = 0;
+          double elapsed_fraction = 0.0;
+          double first_acceleration = 0.0;
+          for (int segment = 0; segment < config_.control_segments; ++segment) {
+            elapsed_fraction += config_.block_fractions[segment];
+            const std::size_t end = segment + 1 == config_.control_segments ? count :
+              static_cast<std::size_t>(std::lround(elapsed_fraction * count));
+            const int phase = 3 * segment / config_.control_segments;
+            // Angle references are constant within each block. The vehicle
+            // reaches them through the bounded steering-rate model, then holds.
+            const double angle = phase == 1 ? -first_angle : first_angle;
+            const int a_mode = phase == 0 ? longitudinal : 0;
+            const double a = a_mode * (a_mode < 0 ? config_.deceleration :
+              config_.acceleration) * gain(random);
+            if (segment == 0) {first_acceleration = a;}
+            for (std::size_t t = begin; t < end; ++t) {
+              targets[t] = boundedTarget({control.velocity + a * config_.dt, angle});
+              control = advance(control, targets[t]);
+            }
+            begin = end;
+          }
+          consider(targets, MpcFamily::Structured);
+          // Same first action and perturbation as the block candidate, held
+          // throughout the horizon instead of countersteering in later blocks.
+          std::vector<MpcControl> mono(count);
+          control = initial.control;
+          for (std::size_t t = 0; t < count; ++t) {
+            mono[t] = boundedTarget({control.velocity + first_acceleration * config_.dt,
+                first_angle});
+            control = advance(control, mono[t]);
+          }
+          monophase_targets.push_back(std::move(mono));
+        }
+      }
+    }
+    for (const auto & targets : monophase_targets) {consider(targets, MpcFamily::Monophase);}
+  } else {
   // Deterministic constant-curvature seeds cover the whole operating range.
   // The remaining samples vary their targets across control_segments blocks.
   for (int v = 0; v < config_.velocity_samples; ++v) {
@@ -294,6 +396,9 @@ MpcSolution SamplingMpc::solve(
     }
     consider(targets, sample % 4 == 0 ? MpcFamily::BroadExploration : MpcFamily::PerturbedNominal);
   }
+  }
+  best.generated_count = candidate_id;
+  best.duplicate_count = duplicate_count;
   if (std::isfinite(best.cost)) {
     previous_targets_ = best.rollout.targets;
     previous_steering_rate_ =

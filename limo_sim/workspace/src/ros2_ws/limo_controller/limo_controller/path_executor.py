@@ -15,6 +15,7 @@
 """Execute published paths through Nav2 on explicit GUI requests."""
 
 import copy
+import time
 
 from action_msgs.msg import GoalStatus
 from nav2_msgs.action import FollowPath
@@ -26,7 +27,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from std_msgs.msg import Bool, String
-from std_srvs.srv import SetBool
+from std_srvs.srv import SetBool, Trigger
 
 from limo_controller.chassis_safety import ChassisSafety
 
@@ -43,6 +44,15 @@ class PathExecutor(Node):
         self.declare_parameter('require_chassis_status', False)
         self.declare_parameter('commanded_control_mode', 1)
         self.declare_parameter('chassis_status_timeout', 1.0)
+        self.declare_parameter('require_tube_start', False)
+        self.declare_parameter(
+            'tube_check_service', '/local_costmap/local_costmap/path_distance_layer/check_start')
+        self.require_tube_start = self.get_parameter('require_tube_start').value
+        self.tube_check_client = self.create_client(
+            Trigger, self.get_parameter('tube_check_service').value)
+        self.tube_check_future = None
+        self.tube_check_started = 0.0
+        self.tube_start_approved = None
         self.chassis_safety = ChassisSafety(
             enabled=self.get_parameter('require_chassis_status').value,
             commanded_mode=self.get_parameter('commanded_control_mode').value,
@@ -111,6 +121,7 @@ class PathExecutor(Node):
         # Empty paths invalidate the previous plan. A replacement never starts
         # automatically, even when it arrives during an active control action.
         self.path_generation += 1
+        self._invalidate_tube_check()
         self.control_requested = False
         self.control_paused = False
         self.waiting_for_server = False
@@ -122,6 +133,7 @@ class PathExecutor(Node):
 
     def _set_control_active(self, request, response):
         if not request.data:
+            self._invalidate_tube_check()
             self.safety_stop_reason = None
             self.control_requested = False
             self.control_paused = False
@@ -175,6 +187,7 @@ class PathExecutor(Node):
                 else 'Unable to resume path control; see control status.')
         else:
             self.control_paused = True
+            self._invalidate_tube_check()
             if self.active_control_goal_handle is not None:
                 self.active_control_goal_handle.cancel_goal_async()
             self._publish_control_state('PAUSED: control pause requested')
@@ -225,6 +238,25 @@ class PathExecutor(Node):
                 self._publish_control_state(
                     'WAITING: FollowPath server is not ready; START is queued')
                 return True
+            if self.require_tube_start and self.tube_start_approved != self.path_generation:
+                if self.tube_check_future is not None:
+                    if time.monotonic() - self.tube_check_started > 2.0:
+                        self._invalidate_tube_check()
+                        self._fail('Tube START validation timed out; control was not started')
+                        return False
+                    return True
+                self.waiting_for_server = True
+                if not self.tube_check_client.wait_for_service(timeout_sec=0.0):
+                    self._publish_control_state('WAITING: tube START validation is unavailable')
+                    return True
+                self._publish_control_state('CHECKING: entire footprint must be inside the tube')
+                self.tube_check_started = time.monotonic()
+                self.tube_check_future = self.tube_check_client.call_async(Trigger.Request())
+                generation = self.path_generation
+                self.tube_check_future.add_done_callback(
+                    lambda future: self._tube_check_done(future, generation))
+                return True
+            self.tube_start_approved = None
             self.waiting_for_server = False
             request = self._build_follow_path_goal(
                 self._path_for_execution(self.control_path),
@@ -246,6 +278,34 @@ class PathExecutor(Node):
             self.goal_pending = False
             self._fail(f'Failed to send FollowPath goal: {exc}')
             return False
+
+    def _invalidate_tube_check(self):
+        """Discard a pending approval after stop, pause or reference replacement."""
+        future = self.tube_check_future
+        self.tube_check_future = None
+        self.tube_start_approved = None
+        if future is not None:
+            future.cancel()
+
+    def _tube_check_done(self, future, generation):
+        """Send FollowPath only after the footprint guard accepts this START."""
+        if future is not self.tube_check_future:
+            return
+        self.tube_check_future = None
+        if (generation != self.path_generation or not self.control_requested
+                or self.control_paused):
+            return
+        try:
+            result = future.result()
+            if not result.success:
+                self.safety_stop_reason = result.message
+                self._fail(result.message)
+                return
+        except Exception as exc:
+            self._fail(f'Tube START validation failed: {exc}')
+            return
+        self.tube_start_approved = generation
+        self._send_control_goal()
 
     @staticmethod
     def _path_for_execution(path):

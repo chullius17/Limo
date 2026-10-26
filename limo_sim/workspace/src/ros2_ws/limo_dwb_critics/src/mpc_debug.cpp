@@ -40,7 +40,9 @@ MpcDebugPublisher::MpcDebugPublisher(
   const int seeds = config_.velocity_samples * config_.curvature_samples;
   const int sampled = config_.batch_size - seeds - 2;
   const int broad = (sampled + 3) / 4;
-  totals_ = {1, 1, seeds, sampled - broad, broad};
+  totals_ = config_.structured_actions ? std::array<int, 7>{1, 1, 0, 0, 0,
+    9 * config_.action_variants, 9 * config_.action_variants} :
+    std::array<int, 7>{1, 1, seeds, sampled - broad, broad, 0, 0};
   publisher_ = node_->create_publisher<limo_interfaces::msg::MpcDebug>(
     topic, rclcpp::QoS(1).best_effort());
 }
@@ -155,6 +157,7 @@ void MpcDebugPublisher::finish(const MpcSolution & solution)
   if (!collecting_) {return;}
   collecting_ = false;
   try {
+    frame_.generated_count = solution.generated_count;
     if (std::isfinite(solution.cost)) {
       frame_.selected_id = solution.candidate_id;
       const auto & command = solution.rollout.states.at(1).control;

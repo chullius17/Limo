@@ -22,11 +22,11 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 
 FAMILIES = ('braking', 'nominal', 'constant_curvature',
-            'perturbed_nominal', 'broad_exploration')
+            'perturbed_nominal', 'broad_exploration', 'structured', 'monophase')
 LABELS = ('Frenata', 'Nominale', 'Curvatura costante',
-          'Perturbata', 'Esplorazione ampia')
+          'Perturbata', 'Esplorazione ampia', 'Azioni a blocchi', 'Monofase')
 DEFAULT_COLORS = ((220, 75, 65), (35, 105, 220), (145, 75, 190),
-                  (25, 165, 170), (220, 140, 35))
+                  (25, 165, 170), (220, 140, 35), (230, 60, 180), (70, 185, 195))
 
 
 @dataclass
@@ -152,7 +152,7 @@ class RenderOptions:
                                 self.inflated_color, self.critical_color,
                                 self.lethal_color, self.unknown_color,
                                 self.background_color)
-        if len(self.colors) != 5 or any(
+        if len(self.colors) != len(FAMILIES) or any(
                 len(color) != 3 or any(not 0 <= value <= 255 for value in color)
                 for color in colors):
             raise ValueError('Colors must contain three RGB values in [0, 255]')
@@ -458,7 +458,7 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
             tick = x + (width - 1) * cost / top
             draw.text((tick - (0 if cost == 0 else 14), y + 40), str(cost),
                       fill=(30, 35, 45), font=font)
-    legend_y = options.image_height - 145
+    legend_y = options.image_height - 172
     draw.rectangle((0, legend_y, options.image_width, options.image_height),
                    fill=options.background_color)
     for index, label in enumerate(LABELS):
@@ -466,15 +466,15 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
         y = legend_y + 10 + (index // 3) * 27
         draw.line((x, y + 8, x + 24, y + 8), fill=options.colors[index], width=3)
         draw.text((x + 30, y), label, fill=(30, 35, 45), font=font)
-    x, y = 16 + 2 * (options.image_width // 3), legend_y + 37
+    x, y = 16 + 2 * (options.image_width // 3), legend_y + 64
     draw.line((x, y + 8, x + 24, y + 8), fill=options.selected_color, width=5)
     draw.text((x + 30, y), 'Scelta', fill=(30, 35, 45), font=font)
     layer_label = ('Jet: costo di classe del punto' if source_costs else
                    'Laser rosso | CV blu' if sources is not None else
                    'Tratteggio: scartata / potata')
-    draw.text((16, legend_y + 67), layer_label,
+    draw.text((16, legend_y + 94), layer_label,
               fill=(60, 65, 75), font=font)
-    x, y = options.image_width // 2, legend_y + 67
+    x, y = options.image_width // 2, legend_y + 94
     draw.line((x, y + 8, x + 24, y + 8), fill=options.global_path_color, width=3)
     path_label = 'Traiettoria globale'
     if options.tube_radius > 0:
@@ -488,7 +488,7 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
                          f'delta1={math.degrees(frame.command_steering):.1f} deg')
         else:
             steering += ' | nessuna traiettoria valida'
-        draw.text((16, legend_y + 92), steering, fill=(30, 35, 45), font=font)
+        draw.text((16, legend_y + 119), steering, fill=(30, 35, 45), font=font)
     if sources is not None:
         map_label = (f'Laser: {len(sources.laser)} | Locali: {len(sources.semantic)} | '
                      + ('costi punti 0-100' if source_costs else 'nessuna inflation nel debug'))
@@ -501,6 +501,6 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
         map_label = ('Jet: 0-253 | nero=254 letale, grigio=255 sconosciuto'
                      if options.costmap_colormap == 'jet' else
                      'costmap: chiaro=libero, arancio=inflazione, scuro=ostacolo')
-    draw.text((16, legend_y + 118), f'Griglia: {options.grid_spacing:g} m | ' + map_label,
+    draw.text((16, legend_y + 145), f'Griglia: {options.grid_spacing:g} m | ' + map_label,
               fill=(60, 65, 75), font=font)
     return image

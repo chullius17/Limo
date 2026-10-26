@@ -10,7 +10,7 @@ controller_server:
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.0
     min_theta_velocity_threshold: 0.001
-    failure_tolerance: 0.3
+    failure_tolerance: 0.0  # Stop the action immediately if no feasible command exists.
 
     progress_checker_plugin: "progress_checker"
     # Foxy selects one goal checker with the singular parameter name.
@@ -41,7 +41,7 @@ controller_server:
       publish_cost_grid_pc: false
 
       # Preserve the LIMO velocity limits; geometry below matches Gazebo.
-      min_vel_x: -0.10
+      min_vel_x: 0.0  # Structured actions move forward or stop.
       max_vel_x: 0.50
       min_vel_y: 0.0
       max_vel_y: 0.0
@@ -73,9 +73,8 @@ controller_server:
       # the remaining sequence is shifted and reoptimized at the next cycle.
       MPC:
         StartConnector:
-          # Ignore repulsion, critical costs, footprint collisions and detours
-          # ONLY while following the planner-declared initial Dubins prefix.
-          ignore_obstacles: true
+          # Physical collision checks also apply on the initial connector.
+          ignore_obstacles: false
           topic: /limo/planning/start_connector
           position_tolerance: 0.05
           yaw_tolerance: 0.10
@@ -87,13 +86,23 @@ controller_server:
           preview_enabled: true  # Start the image renderer; requires telemetry.
           topic: /limo/control/mpc_debug
           publish_rate: 10.0  # Match the preview; control still runs at 20 Hz.
-          samples_per_family: 6  # Evenly spread across each family's candidates.
+          samples_per_family: 27  # Evenly spread across each family's candidates.
           pose_stride: 2  # Keep first/last poses, downsample intermediate poses.
         steering_feedback_min_velocity: 0.05
         model_dt: 0.05  # Must equal 1 / controller_frequency.
         time_steps: 80
-        control_segments: 5
-        batch_size: 768
+        control_segments: 3
+        block_fractions: [0.25, 0.50, 0.25]  # Turn/counterturn/return; total horizon remains 4 s.
+        structured_actions: true
+        deduplicate: true  # Score identical realized velocity/steering sequences only once.
+        action_variants: 3
+        action_noise: 0.20  # Fixed-seed fractional variation; no frame-to-frame redraw.
+        Tube:
+          enabled: true  # Full footprint inside at START and at the terminal state.
+        progress_weight: 2.0
+        progress_distance: 1.0  # Desired progress in meters over the horizon.
+        terminal_heading_weight: 1.0
+        batch_size: 56  # Proposal budget; duplicates are removed before environment scoring.
         velocity_samples: 8
         curvature_samples: 15
         wheelbase: 0.24
@@ -106,8 +115,7 @@ controller_server:
         # Immediate command costs are not averaged over the prediction horizon.
         steering_command_weight: 0.2
         steering_rate_change_weight: 0.3  # Penalize rapid reversals of the steering correction.
-        # Keep reverse available for necessary maneuvers, but discourage
-        # backing up and alternating direction to gain a small scoring benefit.
+        # Legacy penalties; structured mode only commands forward motion or stopping.
         reverse_distance_weight: 2.0  # Cost per metre travelled in reverse.
         direction_change_weight: 0.5  # Cost per forward/reverse transition.
 
@@ -140,6 +148,7 @@ controller_server:
       # rejection at every pose. This scale is NOT DWB's raw summed cost.
       MppiObstacle.scale: 3.0
       MppiObstacle.critical_cost: 300.0
+      MppiObstacle.full_footprint_check: true  # Interior + edges, including intermediate poses.
       # Disable ordinary obstacle repulsion below 15 cm; keep critical/collision checks.
       MppiObstacle.near_goal_distance: 0.15
 
@@ -247,11 +256,13 @@ local_costmap:
         path_topic: /limo/planning/path
         max_cost: 70  # Additional cost, capped independently of obstacle inflation.
         distance_for_max_cost: 0.50  # Meters: linear ramp from zero on the path.
+        tube_radius: 0.60  # Shared by START guard, terminal constraint and preview.
         # Nonlethal sums saturate at 252; existing 253/254/255 remain unchanged.
 
 # Simulation has no physical chassis feedback.
 path_executor:
   ros__parameters:
+    require_tube_start: true
     require_chassis_status: false
 
 # Shared velocity arbitration for this runtime profile.

@@ -15,6 +15,7 @@ find_package(rclcpp REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(std_srvs REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
   src/border_follow_layer.cpp
@@ -38,6 +39,7 @@ ament_target_dependencies(${PROJECT_NAME}
   tf2
   tf2_geometry_msgs
   tf2_ros
+  std_srvs
 )
 target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBRARIES})
 
@@ -81,5 +83,5 @@ endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
-ament_export_dependencies(nav2_costmap_2d nav2_msgs nav_msgs pluginlib rclcpp tf2 tf2_geometry_msgs tf2_ros)
+ament_export_dependencies(nav2_costmap_2d nav2_msgs nav_msgs pluginlib rclcpp tf2 tf2_geometry_msgs tf2_ros std_srvs)
 ament_package()

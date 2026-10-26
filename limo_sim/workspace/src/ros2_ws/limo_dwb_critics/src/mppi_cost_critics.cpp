@@ -10,6 +10,7 @@
 #include "nav2_costmap_2d/cost_values.hpp"
 #include "nav2_costmap_2d/footprint.hpp"
 #include "nav2_costmap_2d/footprint_collision_checker.hpp"
+#include "limo_inflation/footprint_cells.hpp"
 #include "pluginlib/class_list_macros.hpp"
 
 namespace limo_dwb_critics
@@ -103,6 +104,10 @@ void MppiObstacleCritic::onInit()
   const auto prefix = dwb_plugin_name_ + "." + name_ + ".";
   critical_cost_ = readNonnegative(nh_, prefix + "critical_cost", critical_cost_);
   near_goal_distance_ = readNonnegative(nh_, prefix + "near_goal_distance", near_goal_distance_);
+  if (!nh_->has_parameter(prefix + "full_footprint_check")) {
+    nh_->declare_parameter(prefix + "full_footprint_check", false);
+  }
+  full_footprint_check_ = nh_->get_parameter(prefix + "full_footprint_check").as_bool();
 }
 
 bool MppiObstacleCritic::prepare(
@@ -110,7 +115,24 @@ bool MppiObstacleCritic::prepare(
   const geometry_msgs::msg::Pose2D & goal, const nav_2d_msgs::msg::Path2D & path)
 {
   near_goal_ = distance(pose, goal) < near_goal_distance_;
-  return dwb_critics::ObstacleFootprintCritic::prepare(pose, velocity, goal, path);
+  const bool ready = dwb_critics::ObstacleFootprintCritic::prepare(pose, velocity, goal, path);
+  if (ready && full_footprint_check_) {
+    collision_footprint_ = costmap_ros_->getRobotFootprint();
+    footprint_radius_ = 0.0;
+    for (const auto & vertex : collision_footprint_) {
+      footprint_radius_ = std::max(footprint_radius_, std::hypot(vertex.x, vertex.y));
+    }
+    const std::size_t stride = costmap_->getSizeInCellsX() + 1;
+    blocked_prefix_.assign(stride * (costmap_->getSizeInCellsY() + 1), 0);
+    for (unsigned int y = 0; y < costmap_->getSizeInCellsY(); ++y) {
+      std::uint32_t row = 0;
+      for (unsigned int x = 0; x < costmap_->getSizeInCellsX(); ++x) {
+        row += costmap_->getCost(x, y) >= nav2_costmap_2d::LETHAL_OBSTACLE;
+        blocked_prefix_[(y + 1) * stride + x + 1] = blocked_prefix_[y * stride + x + 1] + row;
+      }
+    }
+  }
+  return ready;
 }
 
 double MppiObstacleCritic::scoreTrajectory(const dwb_msgs::msg::Trajectory2D & trajectory)
@@ -121,10 +143,41 @@ double MppiObstacleCritic::scoreTrajectory(const dwb_msgs::msg::Trajectory2D & t
   if (ignore_obstacles_) {
     return 0.0;  // Explicitly authorized only on a plan-bound initial Dubins prefix.
   }
+  if (full_footprint_check_ && blocked_prefix_.size() !=
+    (costmap_->getSizeInCellsX() + 1) * (costmap_->getSizeInCellsY() + 1))
+  {throw dwb_core::IllegalTrajectoryException(name_, "Footprint collision data not prepared");}
   double sum = 0.0;
+  std::vector<nav2_costmap_2d::MapLocation> collision_cells;
+  const auto check_footprint = [&](const geometry_msgs::msg::Pose2D & pose) {
+      if (!limo_inflation::footprintCells(*costmap_, pose, collision_footprint_,
+        collision_cells, &blocked_prefix_))
+      {throw dwb_core::IllegalTrajectoryException(name_, "Footprint outside costmap");}
+      for (const auto & cell : collision_cells) {
+        if (costmap_->getCost(cell.x, cell.y) >= nav2_costmap_2d::LETHAL_OBSTACLE) {
+          throw dwb_core::IllegalTrajectoryException(name_, "Full footprint in lethal/unknown cell");
+        }
+      }
+    };
   for (std::size_t t = 0; t < trajectory.poses.size(); ++t) {
     const auto & pose = trajectory.poses[t];
-    scorePose(pose);  // Footprint collision rejection at EVERY pose, including t=0.
+    if (full_footprint_check_) {
+      if (t == 0) {check_footprint(pose);} else {
+        const auto & previous = trajectory.poses[t - 1];
+        const double angle = std::atan2(std::sin(pose.theta - previous.theta),
+          std::cos(pose.theta - previous.theta));
+        const double travel = distance(pose, previous) + footprint_radius_ * std::abs(angle);
+        const int steps = std::max(1, static_cast<int>(std::ceil(
+              travel / (0.5 * costmap_->getResolution()))));
+        for (int step = 1; step <= steps; ++step) {
+          const double f = static_cast<double>(step) / steps;
+          geometry_msgs::msg::Pose2D intermediate;
+          intermediate.x = previous.x + f * (pose.x - previous.x);
+          intermediate.y = previous.y + f * (pose.y - previous.y);
+          intermediate.theta = previous.theta + f * angle;
+          check_footprint(intermediate);
+        }
+      }
+    } else {scorePose(pose);}
     unsigned int x, y;
     if (!costmap_->worldToMap(pose.x, pose.y, x, y)) {
       throw dwb_core::IllegalTrajectoryException(name_, "Prediction leaves costmap");

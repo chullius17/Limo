@@ -23,6 +23,7 @@ find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(limo_interfaces REQUIRED)
 find_package(nav2_msgs REQUIRED)
+find_package(limo_inflation REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
   src/ackermann_kinematics_critic.cpp
@@ -47,6 +48,7 @@ ament_target_dependencies(${PROJECT_NAME}
   rclcpp
   limo_interfaces
   nav2_msgs
+  limo_inflation
 )
 
 pluginlib_export_plugin_description_file(
@@ -78,10 +80,12 @@ if(BUILD_TESTING)
   ament_add_gtest(test_sampling_mpc test/test_sampling_mpc.cpp)
   target_link_libraries(test_sampling_mpc ${PROJECT_NAME})
 
-  ament_add_gtest(test_mpc_controller test/test_mpc_controller.cpp)
+  ament_add_gtest(test_mpc_controller test/test_mpc_controller.cpp
+    ENV ROS_DOMAIN_ID=191 ROS_LOCALHOST_ONLY=1)
   target_link_libraries(test_mpc_controller ${PROJECT_NAME})
 
-  ament_add_gtest(test_mppi_costs test/test_mppi_costs.cpp)
+  ament_add_gtest(test_mppi_costs test/test_mppi_costs.cpp
+    ENV ROS_DOMAIN_ID=191 ROS_LOCALHOST_ONLY=1)
   target_link_libraries(test_mppi_costs ${PROJECT_NAME})
   target_compile_definitions(test_mppi_costs PRIVATE
     LIMO_MPC_PARAMS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../limo_controller/config/control_real.yaml"
@@ -97,5 +101,5 @@ endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
-ament_export_dependencies(dwb_core dwb_critics dwb_msgs nav2_core nav2_costmap_2d pluginlib rclcpp limo_interfaces nav2_msgs)
+ament_export_dependencies(dwb_core dwb_critics dwb_msgs nav2_core nav2_costmap_2d pluginlib rclcpp limo_interfaces nav2_msgs limo_inflation)
 ament_package()

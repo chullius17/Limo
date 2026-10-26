@@ -231,8 +231,11 @@ TEST_F(PathDistanceTest, LatchedPathIsReceivedByReplacementLayerWithoutRepublish
   layer = std::make_shared<limo_inflation::PathDistanceLayer>();
   layer->initialize(map.get(), "path_distance", buffer.get(), node, nullptr, nullptr);
   map->getPlugins()->back() = layer;
-  dispatch();
-  map->updateMap(0.0, 0.0, 0.0);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  do {
+    dispatch();
+    map->updateMap(0.0, 0.0, 0.0);
+  } while (cost(150) != 50 && std::chrono::steady_clock::now() < deadline);
   EXPECT_EQ(cost(125), 0);
   EXPECT_EQ(cost(150), 50);
 }
@@ -309,4 +312,86 @@ TEST_F(PathDistanceTest, ReportsCachedAndRollingWindowUpdateTimes)
               << ", 250x250: median=" << timings[12] << " ms, p95=" << timings[23] << " ms\n";
     EXPECT_EQ(cost(0, 0), 50);
   }
+}
+
+TEST_F(PathDistanceTest, TubeRequiresEntireFilledFootprintAndConsistentReference)
+{
+  std::vector<geometry_msgs::msg::Point> body;
+  for (const auto & xy : std::vector<std::pair<double, double>>{
+      {-0.171, -0.120}, {-0.171, 0.120}, {0.171, 0.120}, {0.171, -0.120}})
+  {
+    geometry_msgs::msg::Point p; p.x = xy.first; p.y = xy.second; body.push_back(p);
+  }
+  map->setFootprint(body);
+  vertical();
+  map->updateMap(0.0, 0.0, 0.0);
+  geometry_msgs::msg::Pose2D pose;
+  pose.x = 0.01;
+  EXPECT_TRUE(layer->containsFootprint(pose));
+  pose.x = 0.50;  // Center fits but the front of the footprint lies outside.
+  EXPECT_FALSE(layer->containsFootprint(pose));
+  pose.x = 0.40;
+  EXPECT_TRUE(layer->containsFootprint(pose));
+  double progress = 0.0, heading = 0.0;
+  EXPECT_TRUE(layer->projectProgress(pose, progress, heading));
+  EXPECT_NEAR(heading, std::acos(-1.0) / 2.0, 1e-9);
+  send({});
+  EXPECT_FALSE(layer->containsFootprint(pose));
+}
+
+TEST_F(PathDistanceTest, TubeChecksInteriorEvenWhenAllVerticesFitInACurvedTube)
+{
+  node->declare_parameter("thin.path_topic", std::string("/test_distance/path"));
+  node->declare_parameter("thin.tube_radius", 0.06);
+  layer = std::make_shared<limo_inflation::PathDistanceLayer>();
+  layer->initialize(map.get(), "thin", buffer.get(), node, nullptr, nullptr);
+  map->getPlugins()->back() = layer;
+  std::vector<geometry_msgs::msg::Point> body;
+  for (const auto & xy : std::vector<std::pair<double, double>>{
+      {-0.2, -0.2}, {-0.2, 0.2}, {0.2, 0.2}, {0.2, -0.2}})
+  {
+    geometry_msgs::msg::Point p; p.x = xy.first; p.y = xy.second; body.push_back(p);
+  }
+  map->setFootprint(body);
+  send({{-0.2, -0.2}, {-0.2, 0.2}, {0.2, 0.2}, {0.2, -0.2}, {-0.2, -0.2}});
+  map->updateMap(0.0, 0.0, 0.0);
+  // Every vertex lies on the reference, but the center is in the tube's hole.
+  EXPECT_FALSE(layer->containsFootprint(geometry_msgs::msg::Pose2D()));
+}
+
+TEST_F(PathDistanceTest, StartServiceRejectsOutsideTubeAndLethalInteriorCells)
+{
+  std::vector<geometry_msgs::msg::Point> body;
+  for (const auto & xy : std::vector<std::pair<double, double>>{
+      {-0.171, -0.120}, {-0.171, 0.120}, {0.171, 0.120}, {0.171, -0.120}})
+  {
+    geometry_msgs::msg::Point p; p.x = xy.first; p.y = xy.second; body.push_back(p);
+  }
+  map->setFootprint(body);
+  node->declare_parameter("robot_base_frame", std::string("base_link"));
+  vertical();
+  map->updateMap(0.0, 0.0, 0.0);
+  geometry_msgs::msg::TransformStamped tf;
+  tf.header.frame_id = "odom"; tf.child_frame_id = "base_link";
+  tf.transform.translation.x = 0.01; tf.transform.rotation.w = 1.0;
+  ASSERT_TRUE(buffer->setTransform(tf, "test", true));
+  auto client = node->create_client<std_srvs::srv::Trigger>("~/path_distance/check_start");
+  ASSERT_TRUE(client->wait_for_service(std::chrono::seconds(2)));
+  const auto check = [&]() {
+      auto future = client->async_send_request(std::make_shared<std_srvs::srv::Trigger::Request>());
+      if (executor->spin_until_future_complete(future, std::chrono::seconds(2)) !=
+        rclcpp::FutureReturnCode::SUCCESS) {throw std::runtime_error("START response missing");}
+      return future.get();
+    };
+  EXPECT_TRUE(check()->success);
+  tf.transform.translation.x = 0.50;
+  ASSERT_TRUE(buffer->setTransform(tf, "test", true));
+  EXPECT_FALSE(check()->success);
+  tf.transform.translation.x = 0.01;
+  ASSERT_TRUE(buffer->setTransform(tf, "test", true));
+  sources->cells = {{125, 125, 254}};
+  map->updateMap(0.0, 0.0, 0.0);
+  const auto collision = check();
+  EXPECT_FALSE(collision->success);
+  EXPECT_NE(collision->message.find("lethal"), std::string::npos);
 }

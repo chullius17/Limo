@@ -49,6 +49,45 @@ void AckermannMPCController::configure(
   config.batch_size = read_int("batch_size", config.batch_size);
   config.velocity_samples = read_int("velocity_samples", config.velocity_samples);
   config.curvature_samples = read_int("curvature_samples", config.curvature_samples);
+  const auto read_bool = [&](const std::string & suffix, bool value) {
+      const auto parameter = name + ".MPC." + suffix;
+      if (!node->has_parameter(parameter)) {node->declare_parameter(parameter, value);}
+      return node->get_parameter(parameter).as_bool();
+    };
+  config.structured_actions = read_bool("structured_actions", false);
+  config.deduplicate = read_bool("deduplicate", false);
+  config.action_variants = read_int("action_variants", 3);
+  config.action_noise = read_double("MPC.action_noise", 0.20);
+  if (!node->has_parameter(name + ".MPC.block_fractions")) {
+    node->declare_parameter(name + ".MPC.block_fractions", config.block_fractions);
+  }
+  config.block_fractions = node->get_parameter(name + ".MPC.block_fractions").as_double_array();
+  tube_required_ = read_bool("Tube.enabled", false);
+  progress_weight_ = read_double("MPC.progress_weight", 2.0);
+  progress_distance_ = read_double("MPC.progress_distance", 1.0);
+  terminal_heading_weight_ = read_double("MPC.terminal_heading_weight", 1.0);
+  if (!std::isfinite(progress_weight_) || progress_weight_ < 0.0 ||
+    !std::isfinite(progress_distance_) || progress_distance_ <= 0.0 ||
+    !std::isfinite(terminal_heading_weight_) || terminal_heading_weight_ < 0.0 ||
+    (config.structured_actions && !tube_required_))
+  {throw std::invalid_argument("Structured MPC requires a tube and valid terminal weights");}
+  if (tube_required_) {
+    bool full_collision_critic = false;
+    for (const auto & critic : critics_) {
+      if (auto obstacle = std::dynamic_pointer_cast<MppiObstacleCritic>(critic)) {
+        full_collision_critic = obstacle->enforcesFullFootprint() && obstacle->getScale() > 0.0;
+      }
+    }
+    if (!full_collision_critic) {
+      throw std::invalid_argument("Tube MPC requires a full-footprint obstacle critic with positive scale");
+    }
+    for (const auto & layer : *costmap_ros->getLayeredCostmap()->getPlugins()) {
+      if (auto candidate = std::dynamic_pointer_cast<limo_inflation::PathDistanceLayer>(layer)) {
+        tube_layer_ = candidate;
+      }
+    }
+    if (!tube_layer_) {throw std::invalid_argument("MPC.Tube requires a PathDistanceLayer");}
+  }
   config.min_velocity = read_double("min_vel_x", config.min_velocity);
   config.max_velocity = read_double("max_vel_x", config.max_velocity);
   config.max_yaw_rate = read_double("max_vel_theta", config.max_yaw_rate);
@@ -110,6 +149,9 @@ void AckermannMPCController::configure(
     node->declare_parameter(connector_parameter + "topic", "/limo/planning/start_connector");
   }
   connector_enabled_ = node->get_parameter(connector_parameter + "ignore_obstacles").as_bool();
+  if (tube_required_ && connector_enabled_) {
+    throw std::invalid_argument("Tube MPC requires StartConnector.ignore_obstacles=false");
+  }
   connector_position_tolerance_ = read_double("MPC.StartConnector.position_tolerance", 0.05);
   connector_yaw_tolerance_ = read_double("MPC.StartConnector.yaw_tolerance", 0.10);
   if (!std::isfinite(connector_position_tolerance_) || connector_position_tolerance_ <= 0.0 ||
@@ -150,7 +192,8 @@ void AckermannMPCController::setPlan(const nav_msgs::msg::Path & path)
   connector_gate_.setPlan(path);
   connector_active_ = false;
   resetPrediction();
-  DWBLocalPlanner::setPlan(connector_gate_.normalPlan());
+  tube_start_pending_ = true;
+  DWBLocalPlanner::setPlan(tube_required_ ? path : connector_gate_.normalPlan());
 }
 
 geometry_msgs::msg::TwistStamped AckermannMPCController::computeVelocityCommands(
@@ -200,6 +243,7 @@ void AckermannMPCController::cleanup()
   connector_gate_ = StartConnectorGate();
   connector_active_ = false;
   debug_publisher_.reset();
+  tube_layer_.reset();
   resetPrediction();
   mpc_.reset();
   DWBLocalPlanner::cleanup();
@@ -250,6 +294,40 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
     throw nav2_core::PlannerException("Non-finite odometry velocity");
   }
   const auto & config = mpc_->config();
+  double start_progress = 0.0, start_heading = 0.0;
+  if (tube_required_) {
+    if (!tube_layer_ || !tube_layer_->matchesPath(complete_plan_)) {
+      resetPrediction();
+      throw nav2_core::PlannerException("Path tube is not ready for this reference");
+    }
+    if (tube_start_pending_) {
+      if (!tube_layer_->containsFootprint(pose)) {
+        resetPrediction();
+        throw nav2_core::PlannerException("START requires the entire footprint inside the tube");
+      }
+      tube_start_pending_ = false;
+    }
+    if (!tube_layer_->projectProgress(pose, start_progress, start_heading)) {
+      throw nav2_core::PlannerException("Tube reference has no valid path segments");
+    }
+  }
+  const auto terminal_cost = [&](const MpcRollout & rollout) {
+      if (!tube_required_) {return 0.0;}
+      const auto & state = rollout.states.back();
+      geometry_msgs::msg::Pose2D terminal;
+      terminal.x = state.x; terminal.y = state.y; terminal.theta = state.yaw;
+      if (!tube_layer_->containsFootprint(terminal)) {
+        throw dwb_core::IllegalTrajectoryException("TerminalTube", "Final footprint outside tube");
+      }
+      double progress = 0.0, heading = 0.0;
+      if (!tube_layer_->projectProgress(terminal, progress, heading,
+        start_progress - 0.05, start_progress + config.max_velocity * config.dt *
+        config.time_steps + tube_layer_->tubeRadius()))
+      {throw dwb_core::IllegalTrajectoryException("TerminalTube", "No forward rejoin segment");}
+      const double angle = std::atan2(std::sin(state.yaw - heading), std::cos(state.yaw - heading));
+      return progress_weight_ * std::max(0.0, progress_distance_ - (progress - start_progress)) +
+        terminal_heading_weight_ * angle * angle;
+    };
   // Foxy's controller loop runs at wall rate. Gazebo /clock may publish at
   // only 10 Hz while control runs at 20 Hz: identical ROS timestamps are not
   // a restart and must not erase the acceleration ramp every other cycle.
@@ -293,7 +371,12 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
   const auto evaluate = [&](const MpcRollout & rollout, double remaining) {
       const auto trajectory = toTrajectory(rollout);
       try {
+        const double terminal = terminal_cost(rollout);
         auto score = scoreTrajectory(trajectory, std::isfinite(remaining) ? remaining : -1.0);
+        dwb_msgs::msg::CriticScore tube;
+        tube.name = "MpcTerminalTube"; tube.scale = 1.0; tube.raw_score = terminal;
+        score.scores.push_back(tube);
+        score.total += terminal;
         tracker.addLegalTrajectory();
         const double environment_cost = score.total;
         dwb_msgs::msg::CriticScore effort;
@@ -346,6 +429,11 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
     // Score the winner fully: debug short-circuiting may omit later critics
     // only for candidates that cannot win.
     auto best = scoreTrajectory(toTrajectory(solution.rollout), -1.0);
+    dwb_msgs::msg::CriticScore tube;
+    tube.name = "MpcTerminalTube"; tube.scale = 1.0;
+    tube.raw_score = terminal_cost(solution.rollout);
+    best.scores.push_back(tube);
+    best.total += tube.raw_score;
     dwb_msgs::msg::CriticScore effort;
     effort.name = "MpcEffort";
     effort.scale = 1.0;

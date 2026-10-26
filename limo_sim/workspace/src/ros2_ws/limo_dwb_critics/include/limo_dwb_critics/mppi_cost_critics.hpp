@@ -2,6 +2,7 @@
 #define LIMO_DWB_CRITICS__MPPI_COST_CRITICS_HPP_
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "dwb_core/trajectory_critic.hpp"
@@ -24,12 +25,17 @@ public:
     const geometry_msgs::msg::Pose2D & goal, const nav_2d_msgs::msg::Path2D & path) override;
   double scoreTrajectory(const dwb_msgs::msg::Trajectory2D & trajectory) override;
   double getScale() const override {return scale_;}
+  bool enforcesFullFootprint() const {return full_footprint_check_;}
 
 protected:
   bool ignore_obstacles_{false};
   double critical_cost_{300.0};
   double near_goal_distance_{0.5};
   bool near_goal_{false};
+  bool full_footprint_check_{false};
+  std::vector<std::uint32_t> blocked_prefix_;
+  std::vector<geometry_msgs::msg::Point> collision_footprint_;
+  double footprint_radius_{0.0};
 };
 
 // Distances in meters and angles in radians, averaged over predicted poses.

@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <limits>
+#include <iostream>
 #include <random>
 #include <stdexcept>
 #include <vector>
@@ -446,4 +447,210 @@ TEST(SamplingMpc, RecedingHorizonTracksAnSReference)
   EXPECT_LT(maximum_error, 0.15);
   EXPECT_TRUE(positive_steering);
   EXPECT_TRUE(negative_steering);
+}
+
+TEST(SamplingMpc, StructuredSearchCoversNineActionsWithThreeRepeatableBlockVariants)
+{
+  MpcConfig config;
+  config.structured_actions = true;
+  config.min_velocity = 0.0;
+  config.control_segments = 3;
+  config.batch_size = 56;
+  SamplingMpc first(config), second(config);
+  MpcState initial;
+  initial.control.velocity = 0.2;
+  std::vector<MpcRollout> candidates;
+  std::vector<int> families(7);
+  const auto objective = [](const MpcRollout & rollout, double) {
+      return 1000.0 + std::pow(rollout.states.back().x - 1.0, 2);
+    };
+  const auto result = first.solve(initial, objective, 1,
+    [&](const MpcRollout & rollout, limo_dwb_critics::MpcFamily family,
+    std::size_t id, double) {
+      EXPECT_EQ(id, candidates.size());
+      candidates.push_back(rollout);
+      ++families[static_cast<std::size_t>(family)];
+    });
+  ASSERT_EQ(candidates.size(), 56u);
+  EXPECT_EQ(families, std::vector<int>({1, 1, 0, 0, 0, 27, 27}));
+  bool countersteer = false;
+  for (std::size_t i = 2; i < 29; ++i) {
+    const int longitudinal = static_cast<int>((i - 2) / 9) - 1;
+    const int lateral = static_cast<int>(((i - 2) / 3) % 3) - 1;
+    const auto & next = candidates[i].states[1].control;
+    EXPECT_GE(next.velocity, 0.0);
+    EXPECT_LE(next.velocity, config.max_velocity);
+    EXPECT_GE((next.velocity - initial.control.velocity) * longitudinal, -1e-12);
+    if (!longitudinal) {EXPECT_DOUBLE_EQ(next.velocity, initial.control.velocity);}
+    EXPECT_GE(next.steering * lateral, -1e-12);
+    bool left = false, right = false;
+    for (const auto & state : candidates[i].states) {
+      EXPECT_GE(state.control.velocity, 0.0);
+      EXPECT_LE(state.control.velocity, config.max_velocity);
+      EXPECT_LE(std::abs(first.yawRate(state.control)), config.max_yaw_rate + 1e-9);
+      left = left || state.control.steering > 0.01;
+      right = right || state.control.steering < -0.01;
+    }
+    countersteer = countersteer || (left && right);
+  }
+  EXPECT_TRUE(countersteer);
+  const auto repeated = second.solve(initial, objective);
+  EXPECT_DOUBLE_EQ(result.cost, repeated.cost);
+  ASSERT_EQ(result.rollout.targets.size(), repeated.rollout.targets.size());
+  for (std::size_t i = 0; i < result.rollout.targets.size(); ++i) {
+    EXPECT_DOUBLE_EQ(result.rollout.targets[i].velocity, repeated.rollout.targets[i].velocity);
+    EXPECT_DOUBLE_EQ(result.rollout.targets[i].steering, repeated.rollout.targets[i].steering);
+  }
+}
+
+TEST(SamplingMpc, StructuredBudgetRequiresForwardOnlyAndClearsFailedWarmStart)
+{
+  MpcConfig config;
+  config.structured_actions = true;
+  config.batch_size = 56;
+  EXPECT_THROW(SamplingMpc model(config), std::invalid_argument);
+  config.min_velocity = 0.0;
+  config.batch_size = 28;
+  EXPECT_THROW(SamplingMpc model(config), std::invalid_argument);
+  config.batch_size = 56;
+  config.control_segments = 3;
+  SamplingMpc model(config);
+  model.solve(MpcState(), [](const MpcRollout &, double) {return 1000.0;});
+  ASSERT_TRUE(model.hasWarmStart());
+  auto result = model.solve(MpcState(), [](const MpcRollout &, double) {
+      return std::numeric_limits<double>::infinity();
+    });
+  EXPECT_FALSE(std::isfinite(result.cost));
+  EXPECT_TRUE(result.rollout.states.empty());
+  EXPECT_FALSE(model.hasWarmStart());
+}
+
+TEST(SamplingMpc, MonophaseVariantsKeepTheSameInitialActionsWithoutPhaseSwitches)
+{
+  MpcConfig config;
+  config.structured_actions = true;
+  config.min_velocity = 0.0;
+  config.max_velocity = 0.4;
+  config.dt = 0.1;
+  config.time_steps = 40;
+  config.control_segments = 3;
+  config.batch_size = 56;
+  config.steering_rate = 0.5;
+  SamplingMpc model(config);
+  MpcState initial;
+  initial.control.velocity = 0.2;
+  std::vector<MpcRollout> blocks, mono;
+  int legacy_arcs = 0;
+  model.solve(initial, [](const MpcRollout &, double) {return 10000.0;}, 1,
+    [&](const MpcRollout & rollout, limo_dwb_critics::MpcFamily family, std::size_t, double) {
+      if (family == limo_dwb_critics::MpcFamily::Structured) {blocks.push_back(rollout);}
+      if (family == limo_dwb_critics::MpcFamily::Monophase) {mono.push_back(rollout);}
+      if (family == limo_dwb_critics::MpcFamily::ConstantCurvature) {++legacy_arcs;}
+    });
+  ASSERT_EQ(blocks.size(), 27u);
+  ASSERT_EQ(mono.size(), 27u);
+  EXPECT_EQ(legacy_arcs, 0);
+  for (std::size_t i = 0; i < mono.size(); ++i) {
+    const int longitudinal = static_cast<int>(i / 9) - 1;
+    const int lateral = static_cast<int>((i / 3) % 3) - 1;
+    const auto & rollout = mono[i];
+    const double angle = rollout.targets.front().steering;
+    // Corresponding multi/monophase samples share the same first-block inputs.
+    for (std::size_t t = 0; t < 10; ++t) {
+      EXPECT_DOUBLE_EQ(rollout.targets[t].velocity, blocks[i].targets[t].velocity);
+      EXPECT_DOUBLE_EQ(rollout.targets[t].steering, blocks[i].targets[t].steering);
+    }
+    for (std::size_t t = 0; t < rollout.targets.size(); ++t) {
+      const auto & target = rollout.targets[t];
+      EXPECT_DOUBLE_EQ(target.steering, target.velocity == 0.0 ? 0.0 : angle);
+      const auto & previous = rollout.states[t].control;
+      const auto & next = rollout.states[t + 1].control;
+      EXPECT_GE(next.velocity, 0.0);
+      EXPECT_LE(next.velocity, config.max_velocity);
+      EXPECT_GE((next.velocity - previous.velocity) * longitudinal, -1e-12);
+      if (!longitudinal) {EXPECT_DOUBLE_EQ(next.velocity, initial.control.velocity);}
+      EXPECT_GE(next.steering * lateral, -1e-12);
+      EXPECT_LE(std::abs(next.steering - previous.steering), config.steering_rate * config.dt + 1e-12);
+      EXPECT_LE(std::abs(model.yawRate(next)), config.max_yaw_rate + 1e-12);
+    }
+  }
+}
+
+TEST(SamplingMpc, DeduplicationRemovesStationaryAndSaturatedDuplicatesWithoutChangingSolution)
+{
+  MpcConfig config;
+  config.structured_actions = true;
+  config.min_velocity = 0.0;
+  config.max_velocity = 0.4;
+  config.control_segments = 3;
+  config.time_steps = 40;
+  config.dt = 0.1;
+  config.batch_size = 56;
+  config.steering_rate = 0.5;
+  for (const double speed : {0.0, 0.2, 0.4}) {
+    MpcState initial;
+    initial.control.velocity = speed;
+    int baseline_calls = 0, unique_calls = 0;
+    SamplingMpc baseline(config);
+    const auto objective = [](const MpcRollout & rollout) {
+        double cost = 1000.0 + std::pow(rollout.states.back().x - 0.8, 2);
+        for (const auto & state : rollout.states) {cost += state.y * state.y;}
+        return cost;
+      };
+    const auto expected = baseline.solve(initial, [&](const MpcRollout & rollout, double) {
+        ++baseline_calls; return objective(rollout);
+      });
+    auto optimized_config = config;
+    optimized_config.deduplicate = true;
+    SamplingMpc optimized(optimized_config);
+    std::size_t observed = 0;
+    const auto actual = optimized.solve(initial, [&](const MpcRollout & rollout, double) {
+        ++unique_calls; return objective(rollout);
+      }, 1, [&](const MpcRollout &, limo_dwb_critics::MpcFamily, std::size_t id, double) {
+        EXPECT_EQ(id, observed++);
+      });
+    EXPECT_EQ(baseline_calls, 56);
+    EXPECT_LT(unique_calls, baseline_calls);
+    EXPECT_EQ(actual.generated_count, observed);
+    EXPECT_EQ(actual.generated_count + actual.duplicate_count, 56u);
+    if (speed == 0.0) {EXPECT_EQ(actual.generated_count, 16u);}
+    EXPECT_DOUBLE_EQ(actual.cost, expected.cost);
+    ASSERT_EQ(actual.rollout.states.size(), expected.rollout.states.size());
+    for (std::size_t t = 0; t < actual.rollout.states.size(); ++t) {
+      EXPECT_DOUBLE_EQ(actual.rollout.states[t].x, expected.rollout.states[t].x);
+      EXPECT_DOUBLE_EQ(actual.rollout.states[t].y, expected.rollout.states[t].y);
+      EXPECT_DOUBLE_EQ(actual.rollout.states[t].yaw, expected.rollout.states[t].yaw);
+      EXPECT_DOUBLE_EQ(actual.rollout.states[t].control.velocity, expected.rollout.states[t].control.velocity);
+      EXPECT_DOUBLE_EQ(actual.rollout.states[t].control.steering, expected.rollout.states[t].control.steering);
+    }
+    std::cout << "MPC dedup, initial v=" << speed << ": " << baseline_calls
+              << " proposals -> " << unique_calls << " unique cost evaluations\n";
+  }
+}
+
+TEST(SamplingMpc, DeduplicationPreservesDifferentFuturesWithIdenticalFirstCommands)
+{
+  MpcConfig config;
+  config.structured_actions = true;
+  config.deduplicate = true;
+  config.min_velocity = 0.0;
+  config.action_noise = 0.0;
+  config.control_segments = 3;
+  config.batch_size = 56;
+  SamplingMpc model(config);
+  std::vector<MpcControl> first_commands;
+  const auto result = model.solve(MpcState(), [](const MpcRollout &, double) {return 1000.0;}, 1,
+    [&](const MpcRollout & rollout, limo_dwb_critics::MpcFamily, std::size_t, double) {
+      first_commands.push_back(rollout.states[1].control);
+    });
+  EXPECT_EQ(result.generated_count, 14u);
+  bool shared_first = false;
+  for (std::size_t i = 0; i < first_commands.size(); ++i) {
+    for (std::size_t j = i + 1; j < first_commands.size(); ++j) {
+      shared_first = shared_first || (first_commands[i].velocity == first_commands[j].velocity &&
+        first_commands[i].steering == first_commands[j].steering);
+    }
+  }
+  EXPECT_TRUE(shared_first);
+  EXPECT_EQ(result.generated_count + result.duplicate_count, 56u);
 }

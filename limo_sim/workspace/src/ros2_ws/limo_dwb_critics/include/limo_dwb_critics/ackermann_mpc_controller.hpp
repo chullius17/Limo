@@ -10,6 +10,7 @@
 #include "limo_dwb_critics/sampling_mpc.hpp"
 #include "limo_dwb_critics/mpc_debug.hpp"
 #include "limo_dwb_critics/start_connector.hpp"
+#include "limo_inflation/path_distance_layer.hpp"
 
 namespace limo_dwb_critics
 {
@@ -58,6 +59,12 @@ private:
   bool have_command_{false};
   MpcControl previous_command_;
   std::unique_ptr<MpcDebugPublisher> debug_publisher_;
+  std::shared_ptr<limo_inflation::PathDistanceLayer> tube_layer_;
+  bool tube_required_{false};
+  bool tube_start_pending_{true};
+  double progress_weight_{2.0};
+  double progress_distance_{1.0};
+  double terminal_heading_weight_{1.0};
 };
 
 }  // namespace limo_dwb_critics

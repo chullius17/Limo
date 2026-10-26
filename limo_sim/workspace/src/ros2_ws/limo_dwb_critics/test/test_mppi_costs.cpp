@@ -42,6 +42,7 @@ class MppiCostsTest : public ::testing::Test
 {
 protected:
   virtual const char * parameterFile() const {return LIMO_MPC_PARAMS_PATH;}
+  virtual bool structuredPipeline() const {return false;}
 
   void SetUp() override
   {
@@ -52,6 +53,24 @@ protected:
     // Nav2's controller_server declares this before configuring its plugin;
     // mirror that lifecycle here so the YAML's frequency override is visible.
     node_->declare_parameter("controller_frequency", rclcpp::ParameterValue(20.0));
+    if (!structuredPipeline()) {
+      // Keep the legacy sampler/critic regression suite independent of the
+      // newly selected runtime strategy. Structured integration is tested below.
+      const bool simulation = std::string(parameterFile()) == LIMO_MPC_SIM_PARAMS_PATH;
+      const auto override = [&](const std::string & name, const rclcpp::ParameterValue & value) {
+          if (!node_->has_parameter(name)) {node_->declare_parameter(name, value);}
+          node_->set_parameter(rclcpp::Parameter(name, value));
+        };
+      override("FollowPath.MPC.structured_actions", rclcpp::ParameterValue(false));
+      override("FollowPath.MPC.deduplicate", rclcpp::ParameterValue(false));
+      override("FollowPath.MPC.Tube.enabled", rclcpp::ParameterValue(false));
+      override("FollowPath.MPC.batch_size", rclcpp::ParameterValue(simulation ? 768 : 128));
+      override("FollowPath.MPC.control_segments", rclcpp::ParameterValue(5));
+      override("FollowPath.MPC.Debug.samples_per_family", rclcpp::ParameterValue(6));
+      override("FollowPath.MPC.StartConnector.ignore_obstacles", rclcpp::ParameterValue(simulation));
+      override("FollowPath.MppiObstacle.full_footprint_check", rclcpp::ParameterValue(false));
+      override("FollowPath.min_vel_x", rclcpp::ParameterValue(simulation ? -0.1 : 0.0));
+    }
     costmap_ = std::make_shared<nav2_costmap_2d::Costmap2DROS>("mpc_test_costmap");
     costmap_->set_parameters({
       rclcpp::Parameter("plugins", std::vector<std::string>{}),
@@ -727,6 +746,186 @@ TEST_F(MppiCostsTest, RealYamlConfiguresAndRunsTheFullDwbControllerPipeline)
     1.3 / node_->get_parameter("controller_frequency").as_double() + 1e-12);
   EXPECT_DOUBLE_EQ(command.twist.linear.y, 0.0);
   EXPECT_LE(std::abs(command.twist.angular.z), command.twist.linear.x / 0.462 + 1e-12);
+  controller.deactivate();
+  controller.cleanup();
+}
+
+class StructuredPipelineTest : public MppiCostsTest
+{
+protected:
+  bool structuredPipeline() const override {return true;}
+  void SetUp() override
+  {
+    MppiCostsTest::SetUp();
+    costmap_->getCostmap()->resizeMap(250, 250, 0.02, -2.5, -2.5);
+    clearMap();
+    tf_ = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
+    costmap_->declare_parameter("path_distance_layer.max_cost", 70);
+    tube_ = std::make_shared<limo_inflation::PathDistanceLayer>();
+    tube_->initialize(costmap_->getLayeredCostmap(), "path_distance_layer", tf_.get(),
+      costmap_, nullptr, nullptr);
+    costmap_->getLayeredCostmap()->addPlugin(tube_);
+    reference_.header.frame_id = "odom";
+    for (int i = -20; i <= 40; ++i) {
+      geometry_msgs::msg::PoseStamped point;
+      point.header = reference_.header;
+      point.pose.position.x = i * 0.05;
+      point.pose.orientation.w = 1.0;
+      reference_.poses.push_back(point);
+    }
+    tube_->setPath(std::make_shared<nav_msgs::msg::Path>(reference_));
+    costmap_->getLayeredCostmap()->updateMap(0.0, 0.0, 0.0);
+  }
+  geometry_msgs::msg::PoseStamped current(double y = 0.0)
+  {
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = "odom";
+    pose.pose.position.y = y;
+    pose.pose.orientation.w = 1.0;
+    return pose;
+  }
+  std::shared_ptr<tf2_ros::Buffer> tf_;
+  std::shared_ptr<limo_inflation::PathDistanceLayer> tube_;
+  nav_msgs::msg::Path reference_;
+};
+
+TEST_F(StructuredPipelineTest, RuntimeProfileRunsStructuredSearchAndRejectsOutsideStart)
+{
+  limo_dwb_critics::AckermannMPCController controller;
+  ASSERT_NO_THROW(controller.configure(node_, "FollowPath", tf_, costmap_));
+  controller.activate();
+  controller.setPlan(reference_);
+  EXPECT_THROW(controller.computeVelocityCommands(current(0.8), geometry_msgs::msg::Twist()),
+    nav2_core::PlannerException);
+  controller.setPlan(reference_);
+  const auto begin = std::chrono::steady_clock::now();
+  const auto command = controller.computeVelocityCommands(current(), geometry_msgs::msg::Twist());
+  const auto ms = std::chrono::duration<double, std::milli>(
+    std::chrono::steady_clock::now() - begin).count();
+  std::cout << "Structured full pipeline, 56 candidates, 40 steps: " << ms << " ms\n";
+  EXPECT_GT(command.twist.linear.x, 0.0);
+  EXPECT_LE(command.twist.linear.x, 0.13 + 1e-9);
+  EXPECT_DOUBLE_EQ(command.twist.linear.y, 0.0);
+  EXPECT_EQ(node_->get_parameter("FollowPath.MPC.batch_size").as_int(), 56);
+  EXPECT_TRUE(node_->get_parameter("FollowPath.MPC.Tube.enabled").as_bool());
+  controller.deactivate();
+  controller.cleanup();
+}
+
+TEST_F(StructuredPipelineTest, FootprintInteriorAndMotionBetweenStatesAreChecked)
+{
+  limo_dwb_critics::MppiObstacleCritic critic;
+  initialize(critic, "MppiObstacle");
+  const auto path = straightPath();
+  setCost(0.075, 0.025, nav2_costmap_2d::LETHAL_OBSTACLE);
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2, 0), path));
+  dwb_msgs::msg::Trajectory2D stopped;
+  stopped.poses = {pose(0, 0), pose(0, 0)};
+  EXPECT_THROW(critic.scoreTrajectory(stopped), dwb_core::IllegalTrajectoryException);
+  clearMap();
+  setCost(0.525, 0.025, nav2_costmap_2d::LETHAL_OBSTACLE);
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2, 0), path));
+  dwb_msgs::msg::Trajectory2D sparse;
+  sparse.poses = {pose(0, 0), pose(1.0, 0)};
+  EXPECT_THROW(critic.scoreTrajectory(sparse), dwb_core::IllegalTrajectoryException);
+  clearMap();
+  setCost(0.075, 0.025, nav2_costmap_2d::NO_INFORMATION);
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2, 0), path));
+  EXPECT_THROW(critic.scoreTrajectory(stopped), dwb_core::IllegalTrajectoryException);
+}
+
+TEST_F(StructuredPipelineTest, NoCollisionFreeCandidateRaisesRatherThanReusingACommand)
+{
+  limo_dwb_critics::AckermannMPCController controller;
+  controller.configure(node_, "FollowPath", tf_, costmap_);
+  controller.activate();
+  controller.setPlan(reference_);
+  ASSERT_NO_THROW(controller.computeVelocityCommands(current(), geometry_msgs::msg::Twist()));
+  setCost(0.075, 0.025, nav2_costmap_2d::LETHAL_OBSTACLE);
+  EXPECT_THROW(controller.computeVelocityCommands(current(), geometry_msgs::msg::Twist()),
+    dwb_core::NoLegalTrajectoriesException);
+  controller.deactivate();
+  controller.cleanup();
+}
+
+TEST_F(StructuredPipelineTest, ForwardBlockActionsCanGoAroundAnObstacleAndReturnToTube)
+{
+  limo_dwb_critics::AckermannMPCController controller;
+  controller.configure(node_, "FollowPath", tf_, costmap_);
+  controller.activate();
+  controller.setPlan(reference_);
+  limo_dwb_critics::MpcConfig plant_config;
+  plant_config.dt = 0.1;
+  plant_config.time_steps = 40;
+  plant_config.max_velocity = 0.4;
+  plant_config.min_velocity = 0.0;
+  plant_config.steering_rate = 0.5;
+  limo_dwb_critics::SamplingMpc plant(plant_config);
+  limo_dwb_critics::MpcState state;
+  double lateral = 0.0;
+  for (int cycle = 0; cycle < 100 && state.x < 1.4; ++cycle) {
+    costmap_->getLayeredCostmap()->updateMap(0.0, 0.0, 0.0);
+    for (double x = 0.80; x <= 1.00; x += 0.02) {
+      for (double y = -0.08; y <= 0.08; y += 0.02) {setCost(x, y, 254);}
+    }
+    auto observed = current(state.y);
+    observed.pose.position.x = state.x;
+    observed.pose.orientation.z = std::sin(state.yaw * 0.5);
+    observed.pose.orientation.w = std::cos(state.yaw * 0.5);
+    geometry_msgs::msg::Twist velocity;
+    velocity.linear.x = state.control.velocity;
+    velocity.angular.z = plant.yawRate(state.control);
+    geometry_msgs::msg::TwistStamped command;
+    ASSERT_NO_THROW(command = controller.computeVelocityCommands(observed, velocity));
+    EXPECT_GE(command.twist.linear.x, 0.0);
+    limo_dwb_critics::MpcControl target;
+    target.velocity = command.twist.linear.x;
+    target.steering = target.velocity > 1e-6 ? std::atan(plant_config.wheelbase *
+      command.twist.angular.z / target.velocity) : 0.0;
+    state = plant.rollout(state, std::vector<limo_dwb_critics::MpcControl>(40, target)).states[1];
+    lateral = std::max(lateral, std::abs(state.y));
+  }
+  EXPECT_GT(state.x, 1.3);
+  EXPECT_GT(lateral, 0.15);
+  geometry_msgs::msg::Pose2D terminal;
+  terminal.x = state.x; terminal.y = state.y; terminal.theta = state.yaw;
+  EXPECT_TRUE(tube_->containsFootprint(terminal));
+  controller.deactivate();
+  controller.cleanup();
+}
+
+TEST_F(StructuredPipelineTest, DebugExportsAllStructuredCandidatesAndTerminalTubeRejections)
+{
+  auto receiver = std::make_shared<rclcpp::Node>("structured_preview_receiver");
+  limo_interfaces::msg::MpcDebug::SharedPtr snapshot;
+  auto subscription = receiver->create_subscription<limo_interfaces::msg::MpcDebug>(
+    "/limo/control/mpc_debug", rclcpp::QoS(1).best_effort(),
+    [&](limo_interfaces::msg::MpcDebug::SharedPtr msg) {snapshot = msg;});
+  limo_dwb_critics::AckermannMPCController controller;
+  controller.configure(node_, "FollowPath", tf_, costmap_);
+  controller.activate();
+  controller.setPlan(reference_);
+  for (int attempt = 0; attempt < 100 && !snapshot; ++attempt) {
+    controller.computeVelocityCommands(current(), geometry_msgs::msg::Twist());
+    rclcpp::spin_some(receiver);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  ASSERT_NE(snapshot, nullptr);
+  EXPECT_GT(snapshot->generated_count, 0u);
+  EXPECT_LT(snapshot->generated_count, 56u);
+  EXPECT_EQ(snapshot->candidates.size(), snapshot->generated_count);
+  std::vector<int> families(7);
+  for (const auto & candidate : snapshot->candidates) {
+    ASSERT_LT(candidate.family, families.size());
+    ++families[candidate.family];
+    if (candidate.score_status == candidate.SCORED) {
+      EXPECT_TRUE(tube_->containsFootprint(candidate.poses.back()));
+    }
+  }
+  EXPECT_EQ(families[0], 1);
+  EXPECT_EQ(families[2] + families[3] + families[4], 0);
+  EXPECT_GT(families[5], 0);
+  EXPECT_GT(families[6], 0);
   controller.deactivate();
   controller.cleanup();
 }

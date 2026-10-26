@@ -60,9 +60,14 @@ def mpc_preview_node(context, configured_params, preview_params):
         if override.lower() not in ('true', 'false'):
             raise ValueError('start_mpc_preview must be true or false')
         preview_enabled = override.lower() == 'true'
+    tube = config.get('local_costmap', {}).get('local_costmap', {}).get(
+        'ros__parameters', {}).get('path_distance_layer', {})
+    preview_parameters = [preview_params]
+    if 'tube_radius' in tube:
+        preview_parameters.append({'tube_radius': float(tube['tube_radius'])})
     return [Node(
         package='limo_controller', executable='mpc_preview', name='mpc_preview',
-        output='screen', parameters=[preview_params],
+        output='screen', parameters=preview_parameters,
         condition=IfCondition(str(preview_enabled).lower()),
     )]
 

@@ -11,7 +11,7 @@ controller_server:
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.0
     min_theta_velocity_threshold: 0.001
-    failure_tolerance: 0.3
+    failure_tolerance: 0.0  # Stop the action immediately if no feasible command exists.
 
     progress_checker_plugin: "progress_checker"
     # Foxy selects one goal checker with the singular parameter name.
@@ -86,14 +86,23 @@ controller_server:
           preview_enabled: true  # Start the image renderer; requires telemetry.
           topic: /limo/control/mpc_debug
           publish_rate: 4.0
-          samples_per_family: 6
+          samples_per_family: 27
           pose_stride: 2
         steering_feedback_min_velocity: 0.05
         model_dt: 0.10  # Must equal 1 / controller_frequency.
         time_steps: 40
-        control_segments: 5
-        # Nano budget: 66 constant-curvature seeds + stop/warm start + 60 samples.
-        batch_size: 128
+        control_segments: 3
+        block_fractions: [0.25, 0.50, 0.25]  # Turn/counterturn/return; total horizon remains 4 s.
+        structured_actions: true
+        deduplicate: true  # Score identical realized velocity/steering sequences only once.
+        action_variants: 3
+        action_noise: 0.20  # Fixed-seed fractional variation; no frame-to-frame redraw.
+        Tube:
+          enabled: true  # Full footprint inside at START and at the terminal state.
+        progress_weight: 2.0
+        progress_distance: 1.0  # Desired progress in meters over the horizon.
+        terminal_heading_weight: 1.0
+        batch_size: 56  # Proposal budget; duplicates are removed before environment scoring.
         velocity_samples: 6
         curvature_samples: 11
         wheelbase: 0.20
@@ -137,6 +146,7 @@ controller_server:
       # rejection at every pose. This scale is NOT DWB's raw summed cost.
       MppiObstacle.scale: 6.0
       MppiObstacle.critical_cost: 300.0
+      MppiObstacle.full_footprint_check: true  # Interior + edges, including intermediate poses.
       # Disable ordinary obstacle repulsion below 15 cm; keep critical/collision checks.
       MppiObstacle.near_goal_distance: 0.15
 
@@ -246,6 +256,7 @@ local_costmap:
         path_topic: /limo/planning/path
         max_cost: 70  # Additional cost, capped independently of obstacle inflation.
         distance_for_max_cost: 0.50  # Meters: linear ramp from zero on the path.
+        tube_radius: 0.60  # Shared by START guard, terminal constraint and preview.
         # Nonlethal sums saturate at 252; existing 253/254/255 remain unchanged.
 
 # Shared velocity arbitration for this runtime profile.
@@ -267,6 +278,7 @@ twist_mux:
 # Never take chassis ownership back automatically from the phone/remote.
 path_executor:
   ros__parameters:
+    require_tube_start: true
     require_chassis_status: true
     commanded_control_mode: 1
     chassis_status_timeout: 1.0

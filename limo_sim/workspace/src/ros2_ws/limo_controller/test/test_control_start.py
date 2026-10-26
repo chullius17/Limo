@@ -294,3 +294,77 @@ def test_resume_rechecks_chassis_even_if_cancellation_is_pending(executor):
     assert not executor.control_requested
     assert handle.cancel_goal_async.call_count == 2
     executor.follow_path_client.send_goal_async.assert_called_once()
+
+
+@pytest.fixture
+def tube_executor(executor):
+    executor.require_tube_start = True
+    executor.tube_check_client = Mock()
+    executor.tube_check_client.wait_for_service.return_value = True
+    executor.tube_check_client.call_async.return_value = Future()
+    return executor
+
+
+def test_tube_start_waits_for_full_footprint_approval_before_sending_action(tube_executor):
+    ready_path(tube_executor)
+    assert start(tube_executor).success
+    assert start(tube_executor).success
+    tube_executor.follow_path_client.send_goal_async.assert_not_called()
+    tube_executor.tube_check_client.call_async.assert_called_once()
+    tube_executor.tube_check_client.call_async.return_value.set_result(
+        SimpleNamespace(success=True, message='Entire footprint inside tube'))
+    tube_executor.follow_path_client.send_goal_async.assert_called_once()
+    assert tube_executor.goal_pending
+
+
+def test_tube_start_rejects_outside_footprint_without_sending_action(tube_executor):
+    ready_path(tube_executor)
+    assert start(tube_executor).success
+    tube_executor.tube_check_client.call_async.return_value.set_result(
+        SimpleNamespace(success=False, message='START blocked: footprint outside tube'))
+    tube_executor.follow_path_client.send_goal_async.assert_not_called()
+    assert not tube_executor.control_requested
+    assert 'outside tube' in tube_executor.control_status_publisher.publish.call_args[0][0].data
+
+
+@pytest.mark.parametrize('operation', ['abort', 'pause', 'replace'])
+def test_pending_tube_approval_is_invalidated_by_stop_or_new_path(tube_executor, operation):
+    ready_path(tube_executor)
+    assert start(tube_executor).success
+    old_future = tube_executor.tube_check_future
+    old_generation = tube_executor.path_generation
+    if operation == 'abort':
+        tube_executor._set_control_active(SetBool.Request(data=False), SetBool.Response())
+    elif operation == 'pause':
+        tube_executor._set_control_enabled(SetBool.Request(data=False), SetBool.Response())
+    else:
+        ready_path(tube_executor)
+    tube_executor._tube_check_done(old_future, old_generation)
+    tube_executor.follow_path_client.send_goal_async.assert_not_called()
+    assert tube_executor.tube_check_future is None
+
+
+def test_tube_guard_timeout_fails_closed(tube_executor):
+    import time
+    ready_path(tube_executor)
+    assert start(tube_executor).success
+    tube_executor.tube_check_started = time.monotonic() - 3.0
+    tube_executor._retry_waiting_control_goal()
+    tube_executor.follow_path_client.send_goal_async.assert_not_called()
+    assert not tube_executor.control_requested
+    assert 'timed out' in tube_executor.control_status_publisher.publish.call_args[0][0].data
+
+
+def test_resume_performs_a_fresh_tube_check(tube_executor):
+    ready_path(tube_executor)
+    assert start(tube_executor).success
+    tube_executor._set_control_enabled(SetBool.Request(data=False), SetBool.Response())
+    fresh = Future()
+    tube_executor.tube_check_client.call_async.return_value = fresh
+    resumed = tube_executor._set_control_enabled(
+        SetBool.Request(data=True), SetBool.Response())
+    assert resumed.success
+    tube_executor.follow_path_client.send_goal_async.assert_not_called()
+    assert tube_executor.tube_check_future is fresh
+    fresh.set_result(SimpleNamespace(success=True, message='Footprint inside tube'))
+    tube_executor.follow_path_client.send_goal_async.assert_called_once()

@@ -241,8 +241,12 @@ def test_nano_budget_preserves_horizon_and_safety_timeouts():
     assert params['controller_frequency'] == 10.0
     assert mpc['model_dt'] * params['controller_frequency'] == 1.0
     assert mpc['model_dt'] * mpc['time_steps'] == 4.0
-    assert mpc['batch_size'] == 128
-    assert mpc['batch_size'] >= 2 + mpc['velocity_samples'] * mpc['curvature_samples']
+    assert mpc['structured_actions'] is True
+    assert mpc['control_segments'] == 3
+    assert mpc['batch_size'] == 2 + 18 * mpc['action_variants'] == 56
+    assert mpc['Tube']['enabled'] is True
+    assert params['FollowPath']['min_vel_x'] == 0.0
+    assert config['path_executor']['ros__parameters']['require_tube_start'] is True
     timeout = config['twist_mux']['ros__parameters']['topics']['autonomy']['timeout']
     assert 3 * mpc['model_dt'] < timeout == 0.5
     assert params['progress_checker']['movement_time_allowance'] == 10.0

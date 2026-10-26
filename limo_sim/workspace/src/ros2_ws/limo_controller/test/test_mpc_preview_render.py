@@ -109,7 +109,7 @@ class PreviewRenderTest(unittest.TestCase):
         frame, options = sample_frame(), RenderOptions(trajectory_alpha=1.0)
         frame.selected_id = -1
         # Use an arbitrary geometric path and change only its family label.
-        for family in range(5):
+        for family in range(len(options.colors)):
             poses = ((0, 0, 0), (0.9, 0.6, 0))
             frame.candidates = (Candidate(10, family, 1, 1.0, poses),)
             pixel = tuple(round(value) for value in base_to_pixel((0.9, 0.6), options))
