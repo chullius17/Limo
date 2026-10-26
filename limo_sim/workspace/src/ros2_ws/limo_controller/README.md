@@ -118,6 +118,96 @@ desktop workload before supervised physical execution.
 
 These real/sim profiles are the only built-in controller parameter files.
 
+## Local lane inflation
+
+Both control profiles configure `limo_inflation::LocalLaneLayer` under
+`local_costmap.local_costmap.ros__parameters.inflation_layer`. It replaces the
+standard Nav2 inflation layer and runs last, after laser and semantic fusion.
+It reuses the trajectory planner's `computeBorderCost` function, with two
+preferred distance bands and a traversable cost ridge between them. The global
+planner and its configuration remain independent.
+
+All tuning stays in `config/control_sim.yaml` and `config/control_real.yaml`:
+
+| Parameter | Sim | Real | Meaning |
+| --- | --- | --- | --- |
+| `obstacle_cost_threshold` | 1 | 1 | Seed threshold in raw Nav2 costs, 1..254 |
+| `robot_width` | 0.220 | 0.220 | Width used for the first preferred distance, m |
+| `safety_margin` | 0.25 | 0.04 | First distance is half the width plus this margin |
+| `second_lane_distance` | 0.80 | 0.29 | Second preferred distance, m |
+| `distance_tolerance` | 0.02 | 0.02 | Half-width of each preferred band, m |
+| `near_max_cost` | 120 | 120 | Near-obstacle cost, 0..252 |
+| `near_cost_sigma` | 0.05 | 0.025 | Gaussian decay width, m; 0 restores the linear ramp |
+| `near_band_start` | 0.15 | 0.10 | Start of the extra near-obstacle turquoise plateau, m |
+| `near_band_width` | 0.10 | 0.0 | Width of the extra plateau, m; 0 disables it |
+| `near_band_ramp` | 0.025 | 0.005 | Linear transition width on either edge, m |
+| `near_band_cost` | 100 | 100 | Cost of the extra plateau, turquoise in Jet |
+| `inter_lane_peak_cost` | 100 | 100 | Peak of the triangular ridge, 0..252 |
+| `inter_lane_plateau_ratio` | 0.90 | 0.90 | Fraction of the inter-well gap held at peak cost |
+| `far_cost_slope` | 10.0 | 50.0 | Cost increase per meter beyond the second band |
+| `far_max_cost` | 8 | 40 | Maximum cost beyond the second band, 0..252 |
+| `high_cost_expansion_radius` | 0.075 | 0.075 | Extra red band around high-cost source cells, m; 0 disables |
+| `high_cost_threshold` | 200 | 200 | Split between lane/red sources and soft repulsion sources |
+| `high_cost_expansion_cost` | 252 | 252 | Cost assigned to the extra band, 0..252 |
+
+The extra red band expands high-cost source cells, including boardwalk and
+lethal laser returns, by 7.5 cm between cell centers. It is a real MPC cost,
+not a display effect. The additional band has cost 252 and does not make
+surrounding cells lethal. The fused grid no longer distinguishes a lethal
+boardwalk cell from a lethal laser return; lower-cost yellow/soft cells do
+not seed this band. Unknown cells remain unchanged. The original two-lane
+profile is combined by maximum and remains active outside this band.
+With `near_cost_sigma > 0`, the near-obstacle ramp and the tail outside the red
+plateau use Gaussian decay. A smaller sigma produces a narrower halo. The
+Gaussian is truncated and normalized to reach zero at the first preferred
+band; well distances and the inter-lane profile are unchanged. The red radius
+and the decay width are independent parameters. With sigma 0 the original
+linear ramp and hard edge of the red plateau are retained.
+`near_band_start` and `near_band_width` add a second turquoise plateau near
+high-cost obstacles. In simulation it extends from 0.15 to 0.25 m, with 2.5 cm
+ramps. It is merged by maximum with the existing near-obstacle and red costs,
+so it never lowers obstacle repulsion. Its outer ramp must end before the
+first well's zero-cost band. The real profile leaves it disabled because its
+closer wells provide less available space.
+
+`inter_lane_plateau_ratio` widens the central turquoise region at cost 100 while
+preserving the zero-cost wells. In simulation the gap from 0.38 to 0.78 m
+has a 0.36 m-wide plateau, from 0.40 to 0.76 m, centered at 0.58 m, with short linear ramps
+at its edges. Ratio 0 restores the original triangular ridge; values must
+be in [0, 1). This modifies the MPC costs, not the Jet color scale.
+
+The thresholds apply to the fused 0..255 costmap, not the source OccupancyGrid's
+0..100 values. Sources at or above `high_cost_threshold` construct the lane/red
+field. Lower-cost sources at or above `obstacle_cost_threshold` construct an
+independent, monotone near-obstacle repulsion field. Yellow points therefore
+cannot replace a boardwalk/laser distance source and erase its turquoise band.
+They add to that band instead; for example, source cost 177 plus lane cost 100
+saturates at 252. Within each source group the distance is to its nearest point;
+individual point kernels are not summed within a group.
+
+For ordinary cells the result is the sum of the high-source field and the soft
+field, capped at 252. Each source's original cost is preserved within its own
+field before summation. Critical (253), lethal (254), and unknown (255) source
+cells remain unchanged. Road at cost 0 and unknown cells do not seed a field.
+Soft points alone generate local repulsion, not the two-lane rings. Both fields
+are rebuilt from fresh observations, so repeated updates do not accumulate
+cost. This needs at most two distance transforms per changed grid, rather than
+a distance computation for every point and MPC sample. The existing
+oriented-footprint collision check still applies.
+
+The master grid is rebuilt over the complete local window before inflation,
+preventing feedback of the previous field or ghosts after obstacle removal.
+The distance field is cached while fused cell data, size and resolution are
+unchanged. Inflation is computed once per changed costmap, not per MPC sample.
+It runs while control is inactive too, once the controller lifecycle is active.
+Restart the controller/application after editing these YAML parameters.
+
+The same nearest-obstacle construction as the planner creates preferred
+distances, not labelled or directional lanes. The local grid remains 5 cm, so
+the configured 4 cm-wide bands are represented only where cell distances allow.
+Published output is `/local_costmap/costmap_raw`; MPC telemetry captures this
+same final grid when evaluating candidates.
+
 ## MPC telemetry and optional image preview
 
 `FollowPath.MPC.Debug.enabled` enables telemetry on `/limo/control/mpc_debug`.
@@ -142,8 +232,16 @@ Image output uses reliable delivery to support Foxy's `rqt_image_view`; the
 telemetry subscription remains best effort.
 
 The top-down image is centered on `base_link`, with +x upward and +y leftward.
-`view_mode: sources` is the default baseline for inspecting inputs before
-designing an inflation plugin. It shows every valid `/scan` endpoint in red and
+The shipped viewer YAML defaults to `view_mode: costmap` and
+`costmap_as_points: false`, showing the actual MPC grid with the lane inflation
+as a colored raster, including before START and during PAUSE.
+`costmap_colormap: jet` maps raw costs 0..253 to blue/cyan/green/yellow/red
+with a fixed numerical color bar; lethal cells (254) are black and unknown
+cells (255) remain gray. `lethal_color` configures the lethal-cell color in
+both raster and cell-center views.
+Set `costmap_colormap: classic` to use the previous configurable orange palette.
+Set `view_mode: sources` to inspect inputs before inflation. It shows every
+valid `/scan` endpoint in red and
 every finite semantic obstacle point from
 `/limo/map_package/online/local_ctrl_map/points`: classes 2/3/4/6 in blue.
 Road classes 1/5 are excluded from the viewer before TF projection and drawing.
@@ -157,10 +255,10 @@ outside the current viewport. `pixels_per_meter` controls the displayed extent.
 Source timestamps are transformed through `fixed_frame: odom` into the displayed
 robot pose. The source view works before START and without a master costmap;
 stale or TF-unavailable inputs are identified in the status line. This changes
-only diagnostics: Nav2's existing inflation and MPC scoring remain active.
+only diagnostics: local lane inflation and MPC scoring remain active.
 
-Set `view_mode: costmap` to compare against the actual master grid read by MPC.
-Every nonfree cell is then drawn as a dark point at its center, including soft
+Set `costmap_as_points: true` in costmap mode to draw every nonfree cell as a
+dark point at its center, including soft
 semantic and inflation costs as well as lethal cells. Unknown cells are gray;
 free cells remain blank. The legend reports the number of positive-cost cells.
 `costmap_as_points: false` restores the colored raster in this mode.

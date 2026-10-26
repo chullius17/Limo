@@ -102,6 +102,7 @@ class RenderOptions:
     selected_color: tuple = (0, 180, 65)
     global_path_color: tuple = (190, 40, 140)
     costmap_as_points: bool = True
+    costmap_colormap: str = 'classic'
     costmap_point_size: int = 3
     costmap_point_color: tuple = (35, 40, 50)
     laser_color: tuple = (210, 50, 40)
@@ -109,7 +110,7 @@ class RenderOptions:
     free_color: tuple = (238, 241, 245)
     inflated_color: tuple = (245, 185, 105)
     critical_color: tuple = (245, 100, 45)
-    lethal_color: tuple = (100, 25, 30)
+    lethal_color: tuple = (0, 0, 0)
     unknown_color: tuple = (110, 115, 125)
     background_color: tuple = (250, 250, 250)
 
@@ -128,6 +129,8 @@ class RenderOptions:
             raise ValueError('Invalid line width or font size')
         if not isinstance(self.costmap_as_points, bool) or not 1 <= self.costmap_point_size <= 15:
             raise ValueError('Invalid costmap point display settings')
+        if self.costmap_colormap not in ('classic', 'jet'):
+            raise ValueError('costmap_colormap must be classic or jet')
         colors = self.colors + (self.selected_color, self.global_path_color,
                                 self.costmap_point_color, self.free_color,
                                 self.laser_color, self.semantic_color,
@@ -218,6 +221,14 @@ def _costmap_size(frame):
     return width, height
 
 
+@lru_cache(maxsize=255)
+def jet_color(cost):
+    """Map raw Nav2 costs 0..254 to a fixed blue/cyan/green/yellow/red scale."""
+    t = cost / 254.0
+    return tuple(round(255 * max(0.0, min(1.0, 1.5 - abs(4 * t - center))))
+                 for center in (3, 2, 1))
+
+
 def _costmap(frame, options):
     width, height = _costmap_size(frame)
     source = Image.frombytes('P', (width, height), frame.costmap_data)
@@ -227,6 +238,8 @@ def _costmap(frame, options):
             color = options.unknown_color
         elif cost == 254:
             color = options.lethal_color
+        elif options.costmap_colormap == 'jet':
+            color = jet_color(cost)
         elif cost == 253:
             color = options.critical_color
         else:
@@ -268,7 +281,9 @@ def _costmap_points(frame, options, image=None):
     for index, unknown in cells:
         x, y = index % width + 0.5, index // width + 0.5
         u, v = round(u0 + ux * x + uy * y), round(v0 + vx * x + vy * y)
-        color = options.unknown_color if unknown else options.costmap_point_color
+        color = (options.unknown_color if unknown else
+                 options.lethal_color if frame.costmap_data[index] == 254 else
+                 options.costmap_point_color)
         draw.rectangle((u - radius, v - radius,
                         u - radius + options.costmap_point_size - 1,
                         v - radius + options.costmap_point_size - 1), fill=color)
@@ -371,6 +386,18 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
     draw.rectangle((0, 0, options.image_width, 70), fill=options.background_color)
     draw.text((16, 10), title, fill=(20, 30, 45), font=font)
     draw.text((16, 36), detail, fill=(60, 65, 75), font=font)
+    if sources is None and not options.costmap_as_points and options.costmap_colormap == 'jet':
+        x, y, width = options.image_width - 270, 82, 240
+        draw.rectangle((x - 8, y - 6, x + width + 18, y + 64),
+                       fill=options.background_color)
+        draw.text((x, y), 'Jet 0-253 | nero: 254', fill=(30, 35, 45), font=font)
+        for column in range(width):
+            color = jet_color(round(253 * column / (width - 1)))
+            draw.line((x + column, y + 24, x + column, y + 36), fill=color)
+        for cost in (0, 64, 128, 192, 253):
+            tick = x + (width - 1) * cost / 253
+            draw.text((tick - (0 if cost == 0 else 14), y + 40), str(cost),
+                      fill=(30, 35, 45), font=font)
     legend_y = options.image_height - 145
     draw.rectangle((0, legend_y, options.image_width, options.image_height),
                    fill=options.background_color)
@@ -405,7 +432,9 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
         count = _costmap_cells(view.costmap_data)[1] if view is not None else 0
         map_label = f'{count} celle con costo > 0 | punti scuri=costi MPC, grigi=sconosciuto'
     else:
-        map_label = 'costmap: chiaro=libero, arancio=inflazione, scuro=ostacolo'
+        map_label = ('Jet: 0-253 | nero=254 letale, grigio=255 sconosciuto'
+                     if options.costmap_colormap == 'jet' else
+                     'costmap: chiaro=libero, arancio=inflazione, scuro=ostacolo')
     draw.text((16, legend_y + 118), f'Griglia: {options.grid_spacing:g} m | ' + map_label,
               fill=(60, 65, 75), font=font)
     return image

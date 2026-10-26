@@ -228,10 +228,29 @@ local_costmap:
         transform_tolerance: 0.05
 
       inflation_layer:
-        plugin: "nav2_costmap_2d::InflationLayer"
+        # Last layer: use the fused laser + semantic costs, before any inflation.
+        plugin: "limo_inflation::LocalLaneLayer"
         enabled: true
-        inflation_radius: 0.30  # Same obstacle-distance field as the Humble profile.
-        cost_scaling_factor: 8.0
+        # Minimum raw seed cost; road=0. High/soft fields are computed independently.
+        obstacle_cost_threshold: 1
+        # Red plateau around boardwalk/high-cost cells (also lethal laser hits).
+        high_cost_expansion_radius: 0.075  # Meters; 0 disables this extra band.
+        high_cost_threshold: 200  # Lane/red sources; lower costs add soft repulsion.
+        high_cost_expansion_cost: 252  # Red in Jet, below lethal 254.
+        robot_width: 0.220
+        safety_margin: 0.25  # First preferred distance: 0.36 m.
+        second_lane_distance: 0.80
+        distance_tolerance: 0.02
+        near_max_cost: 120
+        near_cost_sigma: 0.05  # Gaussian decay width in meters; 0 restores a linear ramp.
+        near_band_start: 0.15  # Extra turquoise band: 15..25 cm from high-cost obstacles.
+        near_band_width: 0.10  # 0 disables the extra band.
+        near_band_ramp: 0.025  # Linear transition at either edge, meters.
+        near_band_cost: 100
+        inter_lane_peak_cost: 100
+        inter_lane_plateau_ratio: 0.90  # Central turquoise band: 36 cm, same center at 0.58 m.
+        far_cost_slope: 10.0
+        far_max_cost: 8
 
 # Simulation has no physical chassis feedback.
 path_executor:

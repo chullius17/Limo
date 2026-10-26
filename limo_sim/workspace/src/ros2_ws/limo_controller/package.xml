@@ -35,6 +35,7 @@
   <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>dwb_critics</exec_depend>
   <exec_depend>limo_dwb_critics</exec_depend>
+  <exec_depend>limo_inflation</exec_depend>
 
   <!-- Python libraries -->
   <exec_depend>python3-pyqt5</exec_depend>

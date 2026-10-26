@@ -15,3 +15,11 @@ TEST(BorderFollowLayerTest, IsDiscoverableByPluginlib)
     "limo_inflation::BorderFollowLayer");
   ASSERT_NE(layer, nullptr);
 }
+
+TEST(LocalLaneLayerTest, IsDiscoverableByPluginlib)
+{
+  pluginlib::ClassLoader<nav2_costmap_2d::Layer> loader(
+    "nav2_costmap_2d", "nav2_costmap_2d::Layer");
+  auto layer = loader.createSharedInstance("limo_inflation::LocalLaneLayer");
+  ASSERT_NE(layer, nullptr);
+}

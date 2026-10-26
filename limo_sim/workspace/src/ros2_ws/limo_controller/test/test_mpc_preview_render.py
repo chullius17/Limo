@@ -163,7 +163,8 @@ class PreviewRenderTest(unittest.TestCase):
             local = world_to_base((1.0 - y, -1.0 + x), frame.robot_pose)
             u, v = (round(value) for value in base_to_pixel(local, options))
             expected = (options.background_color if cost == 0 else
-                        options.unknown_color if cost == 255 else options.costmap_point_color)
+                        options.unknown_color if cost == 255 else
+                        options.lethal_color if cost == 254 else options.costmap_point_color)
             self.assertEqual(image.getpixel((u, v)), expected)
             self.assertEqual(image.getpixel((u + 3, v)), options.background_color)
 

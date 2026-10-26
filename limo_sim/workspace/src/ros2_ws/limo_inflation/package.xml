@@ -4,7 +4,7 @@
 <package format="3">
   <name>limo_inflation</name>
   <version>0.0.0</version>
-  <description>Border-following costmap layer for the LIMO planner.</description>
+  <description>Two-lane costmap layers for LIMO planning and local MPC control.</description>
 
   <maintainer email="giulio.cataldo@studio.unibo.it">Giulio Cataldo</maintainer>
   <license>Apache-2.0</license>

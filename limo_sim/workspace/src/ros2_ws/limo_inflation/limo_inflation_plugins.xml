@@ -8,4 +8,13 @@
       bounded cost field on either side while preserving source-map costs.
     </description>
   </class>
+  <class
+    name="limo_inflation::LocalLaneLayer"
+    type="limo_inflation::LocalLaneLayer"
+    base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      Applies the two-lane border-follow cost profile to the fused local sensor
+      costmap. Run last, after obstacle and semantic layers.
+    </description>
+  </class>
 </library>

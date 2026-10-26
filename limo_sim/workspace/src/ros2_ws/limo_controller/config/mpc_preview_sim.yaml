@@ -4,7 +4,7 @@ mpc_preview:
     debug_topic: /limo/control/mpc_debug
     global_path_topic: /limo/planning/path
     costmap_topic: /local_costmap/costmap_raw
-    view_mode: sources  # sources: laser + local-map cloud, before inflation; costmap: MPC grid.
+    view_mode: costmap  # MPC grid with lane inflation; sources: raw laser + local-map points.
     laser_topic: /scan
     semantic_points_topic: /limo/map_package/online/local_ctrl_map/points
     fixed_frame: odom
@@ -23,7 +23,8 @@ mpc_preview:
     pixels_per_meter: 140.0
     grid_spacing: 0.5
     font_size: 17
-    costmap_as_points: true
+    costmap_as_points: false  # Show the complete inflation field, including low-cost lanes.
+    costmap_colormap: jet  # 0..253 Jet; 254 lethal is black; 255 unknown is gray.
     costmap_point_size: 3
     costmap_point_color: [35, 40, 50]
     laser_color: [210, 50, 40]
@@ -45,6 +46,6 @@ mpc_preview:
     free_color: [238, 241, 245]
     inflated_color: [245, 185, 105]
     critical_color: [245, 100, 45]
-    lethal_color: [100, 25, 30]
+    lethal_color: [0, 0, 0]
     unknown_color: [110, 115, 125]
     background_color: [250, 250, 250]

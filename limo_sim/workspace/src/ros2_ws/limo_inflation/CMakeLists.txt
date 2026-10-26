@@ -15,6 +15,7 @@ find_package(rclcpp REQUIRED)
 add_library(${PROJECT_NAME} SHARED
   src/border_follow_layer.cpp
   src/cost_profile.cpp
+  src/local_lane_layer.cpp
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -51,6 +52,11 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_layer test/test_layer.cpp)
   ament_target_dependencies(test_layer nav2_costmap_2d pluginlib)
+
+  ament_add_gtest(test_local_lane_layer test/test_local_lane_layer.cpp
+    ENV ROS_DOMAIN_ID=191 ROS_LOCALHOST_ONLY=1)
+  target_link_libraries(test_local_lane_layer ${PROJECT_NAME})
+  ament_target_dependencies(test_local_lane_layer nav2_costmap_2d rclcpp)
 endif()
 
 ament_export_include_directories(include)
