@@ -10,6 +10,7 @@
 #include "dwb_core/illegal_trajectory_tracker.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "limo_dwb_critics/mppi_cost_critics.hpp"
+#include "nav_2d_utils/tf_help.hpp"
 
 namespace limo_dwb_critics
 {
@@ -23,6 +24,11 @@ void AckermannMPCController::configure(
   // locking and visualization. Its standard generator is not used by our
   // overridden coreScoringAlgorithm.
   DWBLocalPlanner::configure(node, name, tf, costmap_ros);
+  for (const auto & critic : critics_) {
+    if (auto path = std::dynamic_pointer_cast<MppiPathCritic>(critic)) {
+      path->setTrackedReference(true);
+    }
+  }
   const auto read_double = [&](const std::string & suffix, double value) {
       const auto parameter = name + "." + suffix;
       if (!node->has_parameter(parameter)) {
@@ -86,7 +92,8 @@ void AckermannMPCController::configure(
       }
     }
     if (!full_collision_critic) {
-      throw std::invalid_argument("Tube MPC requires a full-footprint obstacle critic with positive scale");
+      throw std::invalid_argument(
+              "Tube MPC requires a full-footprint obstacle critic with positive scale");
     }
     for (const auto & layer : *costmap_ros->getLayeredCostmap()->getPlugins()) {
       if (auto candidate = std::dynamic_pointer_cast<limo_inflation::PathDistanceLayer>(layer)) {
@@ -200,7 +207,41 @@ void AckermannMPCController::setPlan(const nav_msgs::msg::Path & path)
   connector_active_ = false;
   resetPrediction();
   tube_start_pending_ = true;
-  DWBLocalPlanner::setPlan(tube_required_ ? path : connector_gate_.normalPlan());
+  setTrackingPlan(tube_required_ ? path : connector_gate_.normalPlan());
+}
+
+void AckermannMPCController::setTrackingPlan(const nav_msgs::msg::Path & path)
+{
+  auto plan = nav_2d_utils::pathToPath2D(path);
+  auto points = limo_inflation::pathPosePoints(plan.poses);
+  // Republished identical references must not erase traversal history.
+  if (points != tracking_points_ || plan.header.frame_id != tracking_plan_.header.frame_id) {
+    progress_tracker_.reset();
+  }
+  tracking_plan_ = std::move(plan);
+  tracking_points_ = std::move(points);
+  DWBLocalPlanner::setPlan(path);
+}
+
+nav_2d_msgs::msg::Path2D AckermannMPCController::transformGlobalPlan(
+  const nav_2d_msgs::msg::Pose2DStamped & pose)
+{
+  nav_2d_msgs::msg::Pose2DStamped reference_pose;
+  if (!nav_2d_utils::transformPose(
+      tf_, tracking_plan_.header.frame_id, pose,
+      reference_pose, transform_tolerance_))
+  {throw nav2_core::PlannerException("Cannot transform robot into reference frame");}
+  limo_inflation::PathPoseProjection projection;
+  if (!progress_tracker_.update(tracking_points_, reference_pose.pose, projection)) {
+    throw nav2_core::PlannerException("Reference has no valid path segments");
+  }
+  // DWB's spatial pruning starts at the first nearby pose. Remove completed
+  // branches first, otherwise a loop can make that search find the old lap.
+  global_plan_ = tracking_plan_;
+  global_plan_.poses.erase(
+    global_plan_.poses.begin(),
+    global_plan_.poses.begin() + projection.segment);
+  return DWBLocalPlanner::transformGlobalPlan(pose);
 }
 
 geometry_msgs::msg::TwistStamped AckermannMPCController::computeVelocityCommands(
@@ -219,9 +260,10 @@ geometry_msgs::msg::TwistStamped AckermannMPCController::computeVelocityCommands
       global_pose.pose, connector_position_tolerance_, connector_yaw_tolerance_);
   }
   if (active != connector_active_) {
-    DWBLocalPlanner::setPlan(active ? connector_gate_.prefix() : connector_gate_.normalPlan());
+    setTrackingPlan(active ? connector_gate_.prefix() : connector_gate_.normalPlan());
     connector_active_ = active;
-    RCLCPP_INFO(node_->get_logger(), "%s", active ?
+    RCLCPP_INFO(
+      node_->get_logger(), "%s", active ?
       "Initial Dubins connector: obstacle collision checks DISABLED" :
       "Initial connector finished: normal obstacle collision checks restored");
   }
@@ -247,6 +289,9 @@ void AckermannMPCController::cleanup()
 {
   connector_subscription_.reset();
   complete_plan_ = nav_msgs::msg::Path();
+  tracking_plan_ = nav_2d_msgs::msg::Path2D();
+  tracking_points_.clear();
+  progress_tracker_.reset();
   connector_gate_ = StartConnectorGate();
   connector_active_ = false;
   debug_publisher_.reset();
@@ -314,7 +359,13 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
       }
       tube_start_pending_ = false;
     }
-    if (!tube_layer_->projectProgress(pose, start_progress, start_heading)) {
+    const double tracked = progress_tracker_.progress();
+    const double minimum = progress_tracker_.valid() ? tracked - 0.10 : -1e30;
+    const double maximum = progress_tracker_.valid() ? tracked + 0.10 : 1e30;
+    if (!tube_layer_->projectProgress(
+        pose, start_progress, start_heading,
+        minimum, maximum, tracked))
+    {
       throw nav2_core::PlannerException("Tube reference has no valid path segments");
     }
   }
@@ -327,13 +378,14 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
         throw dwb_core::IllegalTrajectoryException("TerminalTube", "Final footprint outside tube");
       }
       double progress = 0.0, heading = 0.0;
-      if (!tube_layer_->projectProgress(terminal, progress, heading,
-        start_progress - 0.05, start_progress + config.max_velocity * config.dt *
-        config.time_steps + tube_layer_->tubeRadius()))
+      if (!tube_layer_->projectProgress(
+          terminal, progress, heading,
+          start_progress - 0.05, start_progress + config.max_velocity * config.dt *
+          config.time_steps + tube_layer_->tubeRadius(), start_progress))
       {throw dwb_core::IllegalTrajectoryException("TerminalTube", "No forward rejoin segment");}
       const double angle = std::atan2(std::sin(state.yaw - heading), std::cos(state.yaw - heading));
       return progress_weight_ * std::max(0.0, progress_distance_ - (progress - start_progress)) +
-        terminal_heading_weight_ * angle * angle;
+             terminal_heading_weight_ * angle * angle;
     };
   // Foxy's controller loop runs at wall rate. Gazebo /clock may publish at
   // only 10 Hz while control runs at 20 Hz: identical ROS timestamps are not

@@ -32,6 +32,8 @@ public:
   void cleanup() override;
 
 protected:
+  nav_2d_msgs::msg::Path2D transformGlobalPlan(
+    const nav_2d_msgs::msg::Pose2DStamped & pose) override;
   dwb_msgs::msg::TrajectoryScore coreScoringAlgorithm(
     const geometry_msgs::msg::Pose2D & pose,
     const nav_2d_msgs::msg::Twist2D velocity,
@@ -43,6 +45,10 @@ protected:
   double steering_feedback_min_velocity_{0.05};
 
 private:
+  void setTrackingPlan(const nav_msgs::msg::Path & path);
+  nav_2d_msgs::msg::Path2D tracking_plan_;
+  std::vector<limo_inflation::PathPosePoint> tracking_points_;
+  limo_inflation::PathProgressTracker progress_tracker_;
   std::mutex connector_mutex_;
   StartConnectorGate connector_gate_;
   nav_msgs::msg::Path complete_plan_;

@@ -162,7 +162,7 @@ def test_configured_footprint_padding_is_used_before_nav2_publishes(ros_app):
         _, footprint = node.robot_overlay('base_link')
         assert footprint[0] == pytest.approx((-0.171, -0.120))
         assert footprint[2] == pytest.approx((0.171, 0.120))
-        assert node.footprint_source == 'configurazione'
+        assert node.footprint_source == 'configuration'
     finally:
         node.destroy_node()
 
@@ -263,7 +263,7 @@ def test_green_and_blue_arrows_show_yaw_and_remain_distinct_when_coincident(ros_
         assert (tip.x, tip.y) == pytest.approx((5, 10.5))
         labels = [item.toPlainText() for item in view.goal_items
                   if hasattr(item, 'toPlainText')]
-        assert labels == ['Goal pianificato', 'Start pianificato']
+        assert labels == ['Planned goal', 'Planned start']
     finally:
         view.close()
 
@@ -353,11 +353,11 @@ def test_log_panel_receives_full_retained_transcript_without_a_costmap(ros_app):
                      durability=DurabilityPolicy.TRANSIENT_LOCAL)
     publisher = transport.create_publisher(String, '/test/planning_gui/log', qos)
     transcript = (
-        'NUOVA RICERCA #1\nTENTATIVO 1/2\n'
+        'NEW SEARCH #1\nATTEMPT 1/2\n'
         '  Start: x=+1.000 m, y=+0.000 m, yaw=+90.0° [frame=map]\n'
-        '  Arrivo: x=+2.000 m, y=+0.000 m, yaw=+0.0° [frame=map]\n'
-        '  FALLITO: Virtual start or goal is occupied\n'
-        'TENTATIVO 2/2\n  SUCCESSO: percorso con 25 pose.\n')
+        '  Goal: x=+2.000 m, y=+0.000 m, yaw=+0.0° [frame=map]\n'
+        '  FAILED: Virtual start or goal is occupied\n'
+        'ATTEMPT 2/2\n  SUCCESS: path contains 25 poses.\n')
     publisher.publish(String(data=transcript))  # Publish before the GUI joins.
     node = PlanningGuiNode(parameter_overrides=[Parameter(
         'planning_log_topic', value='/test/planning_gui/log')])
@@ -377,11 +377,11 @@ def test_log_panel_receives_full_retained_transcript_without_a_costmap(ros_app):
         assert window.terminal.isReadOnly()
         publisher.publish(String(data=transcript))
         app.processEvents()
-        assert window.terminal.toPlainText().count('TENTATIVO 1/2') == 1
-        current = 'NUOVA RICERCA #2\nTENTATIVO 1/1\n  Calcolo in corso…\n'
+        assert window.terminal.toPlainText().count('ATTEMPT 1/2') == 1
+        current = 'NEW SEARCH #2\nATTEMPT 1/1\n  Planning in progress…\n'
         publisher.publish(String(data=current))
         until(current)
-        assert 'RICERCA #1' not in window.terminal.toPlainText()
+        assert 'SEARCH #1' not in window.terminal.toPlainText()
     finally:
         window.close()
         node.destroy_node()
@@ -408,7 +408,7 @@ def test_late_gui_receives_retained_costmap_and_keeps_log_empty(ros_app):
             time.sleep(0.01)
         assert window.map_view.map_item is not None
         assert 'Frame: map' in window.status.text()
-        assert '3 × 2 celle' in window.status.text()
+        assert '3 × 2 cells' in window.status.text()
         assert node.costmap_topic == '/test/planning_gui/costmap'
         assert window.terminal.isReadOnly()
         assert window.terminal.toPlainText() == ''
@@ -423,10 +423,10 @@ def test_late_gui_receives_retained_costmap_and_keeps_log_empty(ros_app):
             assert image.pixelColor(0, 1).getRgb()[:3] == (245, 245, 245)
         publisher.publish(grid(2, 3))
         deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline and '2 × 3 celle' not in window.status.text():
+        while time.monotonic() < deadline and '2 × 3 cells' not in window.status.text():
             app.processEvents()
             time.sleep(0.01)
-        assert '2 × 3 celle' in window.status.text()
+        assert '2 × 3 cells' in window.status.text()
         assert window.map_view.map_item.pixmap().width() == 2
         polygon = PolygonStamped()
         polygon.header.frame_id = 'base_link'
@@ -455,7 +455,7 @@ def test_late_gui_receives_retained_costmap_and_keeps_log_empty(ros_app):
         window.grid.header.frame_id = 'missing_map'
         window.refresh()
         assert not window.map_view.robot_items
-        assert 'TF non disponibile' in window.robot_status.text()
+        assert 'TF unavailable' in window.robot_status.text()
         assert window.terminal.toPlainText() == ''
     finally:
         window.close()

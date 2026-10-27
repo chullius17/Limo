@@ -45,6 +45,7 @@ protected:
 class MppiPathCritic : public dwb_core::TrajectoryCritic
 {
 public:
+  void setTrackedReference(bool enabled) {tracked_reference_ = enabled;}
   void setStartConnector(bool enabled) {ignore_obstacles_ = enabled;}
   void onInit() override;
   void reset() override {guidance_active_ = false;}
@@ -54,6 +55,7 @@ public:
   double scoreTrajectory(const dwb_msgs::msg::Trajectory2D & trajectory) override;
 
 protected:
+  bool tracked_reference_{false};
   bool ignore_obstacles_{false};
   double goal_weight_{5.0};
   double goal_angle_weight_{3.0};

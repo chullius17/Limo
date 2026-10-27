@@ -280,7 +280,7 @@ class RvizGoalBridge(Node):
         """Publish planning progress independently of any path consumer."""
         self.planning_status_publisher.publish(String(data=status))
         if status.startswith('ERROR:'):
-            self._append_planning_log('ERRORE: ' + status.partition(':')[2].strip())
+            self._append_planning_log('ERROR: ' + status.partition(':')[2].strip())
 
     def _append_planning_log(self, text):
         """Retain the current search transcript for live and late GUI readers."""
@@ -292,10 +292,10 @@ class RvizGoalBridge(Node):
         return 'x={:+.3f} m, y={:+.3f} m, yaw={:+.1f}° [frame={}]'.format(
             pose.pose.position.x, pose.pose.position.y,
             math.degrees(self._quaternion_to_yaw(pose.pose.orientation)),
-            pose.header.frame_id or 'non specificato')
+            pose.header.frame_id or 'unspecified')
 
     def _log_attempt_failure(self, reason):
-        self._append_planning_log('  FALLITO: {}\n'.format(reason))
+        self._append_planning_log('  FAILED: {}\n'.format(reason))
 
     def _goal_callback(self, pose: PoseStamped) -> None:
         """Start a bounded feasibility search for an RViz-selected pose."""
@@ -318,7 +318,7 @@ class RvizGoalBridge(Node):
         self.planning_pair_limit = None
         self.planning_log = ''
         self._append_planning_log(
-            'NUOVA RICERCA #{}\nGoal selezionato: {}\n'.format(
+            'NEW SEARCH #{}\nSelected goal: {}\n'.format(
                 generation, self._format_planning_pose(pose)))
         if self.active_planning_goal_handle is not None:
             self.active_planning_goal_handle.cancel_goal_async()
@@ -667,11 +667,11 @@ class RvizGoalBridge(Node):
         candidate = self.candidates[goal_index]
         candidate.pose.header.stamp = self.get_clock().now().to_msg()
         self._append_planning_log(
-            'TENTATIVO {}/{}\n  Start reale: {}\n  Start: {}\n  Arrivo: {}\n'
-            '  Calcolo in corso…'.format(
+            'ATTEMPT {}/{}\n  Robot start: {}\n  Start: {}\n  Goal: {}\n'
+            '  Planning in progress…'.format(
                 self.planning_attempts, self.planning_pair_limit,
                 self._format_planning_pose(self.real_start)
-                if self.real_start is not None else 'non disponibile',
+                if self.real_start is not None else 'unavailable',
                 self._format_planning_pose(start_candidate.pose),
                 self._format_planning_pose(candidate.pose)))
 
@@ -683,7 +683,7 @@ class RvizGoalBridge(Node):
             try:
                 future = self.explicit_start_client.call_async(request)
             except Exception as exc:  # noqa: B902
-                self._log_attempt_failure('Invio al servizio fallito: {}'.format(exc))
+                self._log_attempt_failure('Failed to send service request: {}'.format(exc))
                 self._send_next_candidate(generation)
                 return
             future.add_done_callback(
@@ -701,7 +701,7 @@ class RvizGoalBridge(Node):
         try:
             future = self.compute_path_client.send_goal_async(request)
         except Exception as exc:  # noqa: B902
-            self._log_attempt_failure('Invio al planner fallito: {}'.format(exc))
+            self._log_attempt_failure('Failed to send planning request: {}'.format(exc))
             self._send_next_candidate(generation)
             return
         future.add_done_callback(
@@ -730,7 +730,7 @@ class RvizGoalBridge(Node):
                 self.get_logger().error(
                     f'Failed to send a planning request: {exc}'
                 )
-                self._log_attempt_failure('Invio al planner fallito: {}'.format(exc))
+                self._log_attempt_failure('Failed to send planning request: {}'.format(exc))
                 self._send_next_candidate(generation)
             return
 
@@ -739,7 +739,7 @@ class RvizGoalBridge(Node):
                 goal_handle.cancel_goal_async()
             return
         if not goal_handle.accepted:
-            self._log_attempt_failure('Richiesta rifiutata dal planner')
+            self._log_attempt_failure('Planner rejected the request')
             self._send_next_candidate(generation)
             return
 
@@ -778,13 +778,13 @@ class RvizGoalBridge(Node):
             self.get_logger().error(
                 f'Failed to receive a planning result: {exc}'
             )
-            self._log_attempt_failure('Ricezione del risultato fallita: {}'.format(exc))
+            self._log_attempt_failure('Failed to receive planning result: {}'.format(exc))
             self._send_next_candidate(generation)
             return
 
         if response.status == GoalStatus.STATUS_SUCCEEDED:
             if not response.result.path.poses:
-                self._log_attempt_failure('Il planner ha restituito un percorso vuoto')
+                self._log_attempt_failure('Planner returned an empty path')
                 self._send_next_candidate(generation)
                 return
             self._publish_success(start_candidate, candidate, response.result.path, 0)
@@ -798,7 +798,7 @@ class RvizGoalBridge(Node):
         detail = getattr(response.result, 'error_msg', '')
         if not detail:
             detail = (
-                'Azione terminata con stato {} ({}); dettaglio non fornito dal planner'
+                'Action ended with status {} ({}); planner provided no details'
                 .format(labels.get(response.status, str(response.status)), response.status))
         self._log_attempt_failure(detail)
         self._send_next_candidate(generation)
@@ -812,20 +812,21 @@ class RvizGoalBridge(Node):
             self._log_connector_diagnostics(response)
             if response.success and response.path.poses:
                 self._publish_success(
-                    start_candidate, candidate, response.path, response.connector_end_index)
+                    start_candidate, candidate, response.path, response.connector_end_index,
+                    planning_start=getattr(response, 'planning_start', None))
                 return
             self.get_logger().debug(f'Explicit-start attempt failed: {response.error}')
             self._log_attempt_failure(response.error or (
-                'Il planner ha restituito un percorso vuoto' if response.success
-                else 'Il planner non ha trovato un percorso'))
+                'Planner returned an empty path' if response.success
+                else 'Planner found no path'))
             if getattr(response, 'start_rejected', False):
                 self.rejected_starts.add(id(start_candidate))
                 self._append_planning_log(
-                    '  Start escluso per questa ricerca: le altre coppie con questo start '
-                    'saranno saltate. SMAC non eseguito per questo tentativo.\n')
+                    '  Start excluded from this search: remaining pairs using this start '
+                    'will be skipped. SMAC was not run for this attempt.\n')
         except Exception as exc:  # noqa: B902
             self.get_logger().warning(f'Explicit-start request failed: {exc}')
-            self._log_attempt_failure('Richiesta al servizio fallita: {}'.format(exc))
+            self._log_attempt_failure('Service request failed: {}'.format(exc))
         self._send_next_candidate(generation)
 
     def _log_connector_diagnostics(self, response):
@@ -833,21 +834,28 @@ class RvizGoalBridge(Node):
         planning_start = getattr(response, 'planning_start', None)
         if planning_start is not None and planning_start.header.frame_id:
             self._append_planning_log(
-                '  Start virtuale quantizzato: ' + self._format_planning_pose(planning_start))
+                '  Quantized virtual start: ' + self._format_planning_pose(planning_start))
         if getattr(response, 'connector_checked', False):
             length = response.connector_length
             self._append_planning_log(
-                '  Lunghezza raccordo: {}\n  Limite raccordo: {:.3f} m'.format(
-                    '{:.3f} m'.format(length) if math.isfinite(length) else 'non finita',
+                '  Connector length: {}\n  Connector limit: {:.3f} m'.format(
+                    '{:.3f} m'.format(length) if math.isfinite(length) else 'non-finite',
                     response.connector_max_length))
             if not response.connector_required:
-                self._append_planning_log('  Raccordo non necessario: start originale.')
+                self._append_planning_log('  Connector not needed: original start.')
+        elif planning_start is not None and planning_start.header.frame_id:
+            self._append_planning_log(
+                '  Connector not required: the path starts at the virtual start.\n')
 
-    def _publish_success(self, start_candidate, candidate, path, connector_end_index):
+    def _publish_success(
+            self, start_candidate, candidate, path, connector_end_index, planning_start=None):
         """Publish metadata before making the complete path available for START."""
         self.start_candidate = start_candidate
-        selected_start = copy.deepcopy(
-            path.poses[connector_end_index] if connector_end_index else start_candidate.pose)
+        if planning_start is not None and planning_start.header.frame_id:
+            selected_start = copy.deepcopy(planning_start)
+        else:
+            selected_start = copy.deepcopy(
+                path.poses[connector_end_index] if connector_end_index else start_candidate.pose)
         # Bind both selected endpoints to this plan, even within one /clock tick.
         selected_start.header.stamp = copy.deepcopy(path.header.stamp)
         self.adjusted_start_publisher.publish(selected_start)
@@ -869,7 +877,7 @@ class RvizGoalBridge(Node):
             f'attempts={self.planning_attempts}.')
         self._publish_planning_state(f'READY: path contains {len(path.poses)} poses')
         self._append_planning_log(
-            '  SUCCESSO: percorso con {} pose.\n  Start effettivo: {}\n'.format(
+            '  SUCCESS: path contains {} poses.\n  Actual start: {}\n'.format(
                 len(path.poses), self._format_planning_pose(selected_start)))
 
     @staticmethod

@@ -224,6 +224,11 @@ the configured 4 cm-wide bands are represented only where cell distances allow.
 Published output is `/local_costmap/costmap_raw`; MPC telemetry captures this
 same final grid when evaluating candidates.
 
+ABORT clears the control request and immediately publishes READY if a path is
+stored, or IDLE otherwise. Cancellation of a pending FollowPath action runs
+internally. A new START is accepted after that action finishes; late results
+from the stopped action preserve READY/IDLE. PAUSE retains the path for RESUME.
+
 ## Confirmed arrival: SUCCESS
 
 After START has been accepted, `path_executor` publishes a latched `SUCCESS`
@@ -265,7 +270,7 @@ Restart the control application after changing these parameters.
 
 `FollowPath.MPC.Debug.enabled` enables telemetry on `/limo/control/mpc_debug`.
 It is explicitly `true` in both `control_sim.yaml` and `control_real.yaml`.
-The control GUI contains only the control buttons and status terminal; it does
+The control GUI contains only the control buttons and current status label; it does
 not subscribe to MPC telemetry or images. Read numerical telemetry in a separate
 terminal with `ros2 topic echo /limo/control/mpc_debug --no-arr`.
 `FollowPath.MPC.Debug.preview_enabled` starts the image renderer: it is `true`

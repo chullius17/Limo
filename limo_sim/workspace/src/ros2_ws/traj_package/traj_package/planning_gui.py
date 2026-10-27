@@ -71,7 +71,7 @@ def png_bytes(image):
     buffer.open(QIODevice.WriteOnly)
     writer = QImageWriter(buffer, b'png')
     if not writer.write(image):
-        raise ValueError('Compressione PNG fallita: {}'.format(writer.errorString()))
+        raise ValueError('PNG compression failed: {}'.format(writer.errorString()))
     buffer.close()
     return bytes(data)
 
@@ -81,10 +81,10 @@ def costmap_image(grid):
     width, height = grid.info.width, grid.info.height
     if (width <= 0 or height <= 0 or len(grid.data) != width * height
             or not math.isfinite(grid.info.resolution) or grid.info.resolution <= 0.0):
-        raise ValueError('Dimensioni o risoluzione della costmap non valide')
+        raise ValueError('Invalid costmap dimensions or resolution')
     values = np.asarray(grid.data, dtype=np.int16).reshape(height, width)
     if np.any((values < -1) | (values > 100)):
-        raise ValueError('Valori della costmap fuori dall’intervallo [-1, 100]')
+        raise ValueError('Costmap values outside the range [-1, 100]')
 
     palette = np.empty((102, 3), dtype=np.uint8)
     palette[0] = (245, 245, 245)  # Free.
@@ -121,7 +121,7 @@ class PlanningGuiNode(Node):
         self.declare_parameter('image_publish_rate', 5.0)
         self.image_publish_rate = self.get_parameter('image_publish_rate').value
         if not math.isfinite(self.image_publish_rate) or not 0.0 < self.image_publish_rate <= 20.0:
-            raise ValueError('image_publish_rate deve essere tra 0 e 20 Hz')
+            raise ValueError('image_publish_rate must be between 0 and 20 Hz')
         self.requested_goal = None
         self.adjusted_goal = None
         self.adjusted_start = None
@@ -135,11 +135,11 @@ class PlanningGuiNode(Node):
         if (len(footprint) < 3 or not math.isfinite(padding) or padding < 0.0
                 or not math.isfinite(self.axis_length) or self.axis_length <= 0.0
                 or any(len(p) != 2 or not all(math.isfinite(v) for v in p) for p in footprint)):
-            raise ValueError('Footprint, padding o lunghezza degli assi non validi')
+            raise ValueError('Invalid footprint, padding or axis length')
         # Match Nav2 padFootprint: extend each signed coordinate by padding.
         self.footprint = tuple(tuple(v + (padding if v > 0 else -padding if v < 0 else 0.0)
                                      for v in point) for point in footprint)
-        self.footprint_source = 'configurazione'
+        self.footprint_source = 'configuration'
         self.footprint_message = None
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -302,9 +302,9 @@ class CostmapView(QGraphicsView):
         self.goal_items.clear()
         # Different lengths preserve both colors when the two poses coincide.
         for pose, color, name, length, width, offset in [
-            (requested, '#00a63c', 'Goal selezionato', 0.65, 4.0, -0.25),
-            (planned, '#1565ff', 'Goal pianificato', 0.45, 2.5, 0.25),
-            (start, '#1565ff', 'Start pianificato', 0.45, 2.5, -0.65),
+            (requested, '#00a63c', 'Selected goal', 0.65, 4.0, -0.25),
+            (planned, '#1565ff', 'Planned goal', 0.45, 2.5, 0.25),
+            (start, '#1565ff', 'Planned start', 0.45, 2.5, -0.65),
         ]:
             if pose is None:
                 continue
@@ -418,19 +418,19 @@ class PlanningWindow(QWidget):
         self.node = node
         self.grid = None
         self.last_image_publish = 0.0
-        self.status = QLabel('In attesa della costmap del planner…')
+        self.status = QLabel('Waiting for the planner costmap…')
         self.status.setWordWrap(True)
-        self.robot_status = QLabel('In attesa della posa di {}'.format(node.base_frame))
+        self.robot_status = QLabel('Waiting for {} pose'.format(node.base_frame))
         self.robot_status.setWordWrap(True)
-        topic = QLabel('Costmap del planner: {}'.format(node.costmap_topic))
+        topic = QLabel('Planner costmap: {}'.format(node.costmap_topic))
         topic.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.map_view = CostmapView()
         legend = QLabel(
-            'Bianco: libero  |  Giallo → rosso: costo crescente  |  '
-            'Viola: ostacolo inscritto  |  Nero: ostacolo  |  Grigio: sconosciuto')
+            'White: free  |  Yellow → red: increasing cost  |  '
+            'Purple: inscribed obstacle  |  Black: obstacle  |  Gray: unknown')
         legend.setWordWrap(True)
         goal_legend = QLabel(
-            'Freccia verde: goal selezionato  |  Frecce blu: goal e start pianificati')
+            'Green arrow: selected goal  |  Blue arrows: planned goal and start')
         goal_legend.setWordWrap(True)
 
         map_panel = QWidget()
@@ -451,7 +451,7 @@ class PlanningWindow(QWidget):
         log_panel = QWidget()
         log_layout = QVBoxLayout(log_panel)
         log_layout.setContentsMargins(0, 0, 0, 0)
-        log_layout.addWidget(QLabel('LOG PLANNING — tentativi e risultati'))
+        log_layout.addWidget(QLabel('PLANNING LOG — attempts and results'))
         log_layout.addWidget(self.terminal)
 
         self.splitter = QSplitter(Qt.Vertical)
@@ -494,12 +494,12 @@ class PlanningWindow(QWidget):
             try:
                 image = costmap_image(grid)
             except ValueError as error:
-                self.status.setText('Costmap non valida: {}'.format(error))
+                self.status.setText('Invalid costmap: {}'.format(error))
             else:
                 self.grid = grid
                 self.map_view.set_image(image)
                 self.status.setText(
-                    'Frame: {}  |  {} × {} celle  |  {:.3f} m/cella  |  {:.2f} × {:.2f} m'
+                    'Frame: {}  |  {} × {} cells  |  {:.3f} m/cell  |  {:.2f} × {:.2f} m'
                     .format(grid.header.frame_id or '—', grid.info.width, grid.info.height,
                             grid.info.resolution, grid.info.width * grid.info.resolution,
                             grid.info.height * grid.info.resolution))
@@ -507,7 +507,7 @@ class PlanningWindow(QWidget):
             overlay = self.node.robot_overlay(self.grid.header.frame_id)
             if overlay is None:
                 self.map_view.clear_robot()
-                self.robot_status.setText('TF non disponibile: {} → {}'.format(
+                self.robot_status.setText('TF unavailable: {} → {}'.format(
                     self.node.base_frame, self.grid.header.frame_id))
             else:
                 pose, footprint = overlay
@@ -515,7 +515,7 @@ class PlanningWindow(QWidget):
                     self.grid, pose, footprint, self.node.base_frame, self.node.axis_length)
                 self.robot_status.setText(
                     '{}: x={:.2f} m, y={:.2f} m, yaw={:.1f}°  |  '
-                    'Footprint: {}  |  Assi: +x rosso, +y verde'.format(
+                    'Footprint: {}  |  Axes: +x red, +y green'.format(
                         self.node.base_frame, pose[0], pose[1], math.degrees(pose[2]),
                         self.node.footprint_source))
             requested = self.node.goal_overlay(

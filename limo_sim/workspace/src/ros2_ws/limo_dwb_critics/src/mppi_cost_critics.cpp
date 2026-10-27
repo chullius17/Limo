@@ -11,6 +11,7 @@
 #include "nav2_costmap_2d/footprint.hpp"
 #include "nav2_costmap_2d/footprint_collision_checker.hpp"
 #include "limo_inflation/footprint_cells.hpp"
+#include "limo_inflation/path_pose_association.hpp"
 #include "pluginlib/class_list_macros.hpp"
 
 namespace limo_dwb_critics
@@ -149,12 +150,15 @@ double MppiObstacleCritic::scoreTrajectory(const dwb_msgs::msg::Trajectory2D & t
   double sum = 0.0;
   std::vector<nav2_costmap_2d::MapLocation> collision_cells;
   const auto check_footprint = [&](const geometry_msgs::msg::Pose2D & pose) {
-      if (!limo_inflation::footprintCells(*costmap_, pose, collision_footprint_,
-        collision_cells, &blocked_prefix_))
+      if (!limo_inflation::footprintCells(
+          *costmap_, pose, collision_footprint_,
+          collision_cells, &blocked_prefix_))
       {throw dwb_core::IllegalTrajectoryException(name_, "Footprint outside costmap");}
       for (const auto & cell : collision_cells) {
         if (costmap_->getCost(cell.x, cell.y) >= nav2_costmap_2d::LETHAL_OBSTACLE) {
-          throw dwb_core::IllegalTrajectoryException(name_, "Full footprint in lethal/unknown cell");
+          throw dwb_core::IllegalTrajectoryException(
+                  name_,
+                  "Full footprint in lethal/unknown cell");
         }
       }
     };
@@ -163,11 +167,13 @@ double MppiObstacleCritic::scoreTrajectory(const dwb_msgs::msg::Trajectory2D & t
     if (full_footprint_check_) {
       if (t == 0) {check_footprint(pose);} else {
         const auto & previous = trajectory.poses[t - 1];
-        const double angle = std::atan2(std::sin(pose.theta - previous.theta),
+        const double angle = std::atan2(
+          std::sin(pose.theta - previous.theta),
           std::cos(pose.theta - previous.theta));
         const double travel = distance(pose, previous) + footprint_radius_ * std::abs(angle);
-        const int steps = std::max(1, static_cast<int>(std::ceil(
-              travel / (0.5 * costmap_->getResolution()))));
+        const int steps = std::max(
+          1, static_cast<int>(std::ceil(
+            travel / (0.5 * costmap_->getResolution()))));
         for (int step = 1; step <= steps; ++step) {
           const double f = static_cast<double>(step) / steps;
           geometry_msgs::msg::Pose2D intermediate;
@@ -248,19 +254,19 @@ bool MppiPathCritic::prepare(
   if (path_.empty()) {
     return false;
   }
-  start_index_ = 0;
-  double nearest = std::numeric_limits<double>::infinity();
   path_lengths_.assign(path_.size(), 0.0);
   for (std::size_t i = 0; i < path_.size(); ++i) {
     if (i > 0) {
       path_lengths_[i] = path_lengths_[i - 1] + distance(path_[i - 1], path_[i]);
     }
-    const double d = distance(pose, path_[i]);
-    if (d < nearest) {
-      nearest = d;
-      start_index_ = i;
-    }
   }
+  // The controller already selected this branch using persistent history.
+  // A second unrestricted search here could skip to a future nearby lap.
+  const std::size_t start_end = tracked_reference_ ?
+    static_cast<std::size_t>(std::upper_bound(
+      path_lengths_.begin(), path_lengths_.end(), 0.50) - path_lengths_.begin()) : path_.size();
+  start_index_ = limo_inflation::closestPathPoseIndex(path_, pose, 0, start_end);
+  const double nearest = distance(pose, path_[start_index_]);
   target_index_ = start_index_;
   while (target_index_ + 1 < path_.size() &&
     path_lengths_[target_index_] - path_lengths_[start_index_] < lookahead_distance_)
@@ -404,20 +410,18 @@ double MppiPathCritic::scoreTrajectory(const dwb_msgs::msg::Trajectory2D & traje
     }
     if (!path_blocked_ && (distance_to_goal_ > align_distance_ || ignore_obstacles_)) {
       traveled += distance(pose, trajectory.poses[t - 1]);
-      double closest = std::numeric_limits<double>::infinity();
       // Monotone, distance-limited association avoids jumping far ahead onto
       // a different branch when a path folds back near the robot.
-      for (std::size_t i = index; i < path_.size(); ++i) {
-        if (i > index && path_lengths_[i] - path_lengths_[start_index_] > traveled + 0.5) {
-          break;
-        }
-        const double d = distance(pose, path_[i]);
-        if (d < closest) {
-          closest = d;
-          index = i;
-        }
+      std::size_t end = index + 1;
+      while (end < path_.size() &&
+        path_lengths_[end] - path_lengths_[start_index_] <= traveled + 0.5)
+      {
+        ++end;
       }
-      const double angle = use_path_orientations_ ? angleError(pose.theta, path_[index].theta) : 0.0;
+      index = limo_inflation::closestPathPoseIndex(path_, pose, index, end);
+      const double closest = distance(pose, path_[index]);
+      const double angle =
+        use_path_orientations_ ? angleError(pose.theta, path_[index].theta) : 0.0;
       align_cost += std::hypot(closest, angle);
     }
   }

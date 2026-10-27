@@ -37,6 +37,9 @@ public:
     radius_ = read("minimum_turning_radius", 0.7);
     step_ = read("start_connector_sample_step", 0.02);
     max_length_ = read("start_connector_max_length", 2.0);
+    nav2_util::declare_parameter_if_not_declared(
+      node, name + ".connect_adjusted_start", rclcpp::ParameterValue(false));
+    connect_adjusted_start_ = node->get_parameter(name + ".connect_adjusted_start").as_bool();
     loader_ = std::make_unique<pluginlib::ClassLoader<nav2_core::GlobalPlanner>>(
       "nav2_core", "nav2_core::GlobalPlanner");
     planner_ = loader_->createSharedInstance("smac_planner/SmacPlanner");
@@ -57,7 +60,8 @@ public:
             *costmap_->getCostmap()->getMutex());
           const auto frame = costmap_->getGlobalFrameID();
           auto * map = costmap_->getCostmap();
-          const auto validate = [&](const geometry_msgs::msg::PoseStamped & pose, bool check_cell) {
+          const auto validate = [&](const geometry_msgs::msg::PoseStamped & pose, bool check_cell,
+          bool require_on_map = true) {
             if (pose.header.frame_id != frame) {
               throw std::runtime_error("Explicit-start poses must use the global costmap frame");
             }
@@ -68,6 +72,7 @@ public:
             {
               throw std::runtime_error("Invalid explicit-start pose coordinates or quaternion");
             }
+            if (!require_on_map) {return;}
             unsigned int x, y;
             if (!map->worldToMap(pose.pose.position.x, pose.pose.position.y, x, y)) {
               throw std::runtime_error("Explicit-start pose is outside the global costmap");
@@ -78,7 +83,7 @@ public:
               throw std::runtime_error("Virtual start or goal is occupied");
             }
           };
-          validate(request->real_start, false);
+          validate(request->real_start, false, connect_adjusted_start_);
           validate(request->start, true);
           auto & virtual_start = response->planning_start;
           virtual_start = request->start;
@@ -96,9 +101,10 @@ public:
             request->real_start.pose.position.y - request->start.pose.position.y);
           const double yaw = tf2::getYaw(request->real_start.pose.orientation) -
           tf2::getYaw(request->start.pose.orientation);
-          response->connector_required = translation > 1e-6 ||
+          const bool adjusted = translation > 1e-6 ||
           std::abs(std::atan2(std::sin(yaw), std::cos(yaw))) > 1e-6;
-          response->connector_checked = true;
+          response->connector_required = adjusted && connect_adjusted_start_;
+          response->connector_checked = !adjusted || response->connector_required;
           nav_msgs::msg::Path connector;
           if (response->connector_required) {
             // Check and sample the prefix BEFORE spending time in SMAC. As
@@ -111,6 +117,8 @@ public:
               response->start_rejected = true;
               throw;
             }
+          }
+          if (adjusted) {
             nav2_costmap_2d::FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *> checker(map);
             const double footprint_cost = checker.footprintCostAtPose(
               virtual_start.pose.position.x, virtual_start.pose.position.y,
@@ -122,10 +130,12 @@ public:
           validate(request->goal, true);
           auto path = planner_->createPlan(request->start, request->goal);
           if (path.poses.empty()) {throw std::runtime_error("SMAC found no path");}
-          if (response->connector_required) {
+          if (adjusted) {
             // Foxy backtrace omits the initial node. Restore its grid/yaw pose
             // at the join, then keep the original collision-checked SMAC suffix.
             path.poses.insert(path.poses.begin(), virtual_start);
+          }
+          if (response->connector_required) {
             response->connector_end_index = connector.poses.size() - 1;
             connector.poses.insert(connector.poses.end(), path.poses.begin() + 1, path.poses.end());
             path = std::move(connector);
@@ -176,6 +186,7 @@ public:
 private:
   std::mutex mutex_;
   bool active_{false};
+  bool connect_adjusted_start_{false};
   double radius_{0.7}, step_{0.02}, max_length_{2.0};
   int angle_bins_{72};
   rclcpp::Clock::SharedPtr clock_;

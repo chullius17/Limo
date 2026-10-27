@@ -57,7 +57,7 @@ def test_success_publishes_path_without_controller(bridge):
 
 
 def test_new_goal_invalidates_path_even_when_planner_is_unavailable(bridge):
-    bridge.planning_log = 'Log della ricerca precedente\n'
+    bridge.planning_log = 'Previous search log\n'
     bridge.rejected_starts.add(123)
     bridge.compute_path_client.wait_for_server = Mock(return_value=False)
     bridge.tf_buffer.can_transform = Mock(return_value=True)
@@ -71,8 +71,8 @@ def test_new_goal_invalidates_path_even_when_planner_is_unavailable(bridge):
     assert bridge.search_generation == 1
     assert bridge.planning_status_publisher.publish.call_args[0][0].data == (
         'ERROR: planner server unavailable')
-    assert 'Log della ricerca precedente' not in bridge.planning_log
-    assert 'NUOVA RICERCA #1' in bridge.planning_log
+    assert 'Previous search log' not in bridge.planning_log
+    assert 'NEW SEARCH #1' in bridge.planning_log
     assert 'planner server unavailable' in bridge.planning_log
     assert not bridge.rejected_starts
 
@@ -175,24 +175,24 @@ def test_attempt_log_records_each_pair_and_failure_until_success(bridge):
         future.result.return_value = response
     bridge.explicit_start_client.call_async = Mock(side_effect=futures)
     bridge._send_next_candidate(bridge.search_generation)
-    assert 'TENTATIVO 1/3' in bridge.planning_log
-    assert 'Calcolo in corso' in bridge.planning_log
+    assert 'ATTEMPT 1/3' in bridge.planning_log
+    assert 'Planning in progress' in bridge.planning_log
     for future in futures:
         future.add_done_callback.call_args[0][0](future)
     transcript = bridge.planning_log
-    assert transcript.count('TENTATIVO ') == 3
+    assert transcript.count('ATTEMPT ') == 3
     assert transcript.count('  Start: ') == 3
-    assert transcript.count('  Arrivo: ') == 3
+    assert transcript.count('  Goal: ') == 3
     assert 'yaw=+90.0° [frame=map]' in transcript
     assert 'x=+2.000 m' in transcript
     assert 'x=+2.100 m' in transcript
     assert 'x=+2.200 m' in transcript
-    assert 'FALLITO: Virtual start or goal is occupied' in transcript
-    assert 'FALLITO: Initial Dubins connector exceeds 2 m' in transcript
-    assert transcript.count('SUCCESSO:') == 1
-    assert 'Start effettivo:' in transcript
-    assert transcript.index('TENTATIVO 1/3') < transcript.index('FALLITO:')
-    assert transcript.index('TENTATIVO 3/3') < transcript.index('SUCCESSO:')
+    assert 'FAILED: Virtual start or goal is occupied' in transcript
+    assert 'FAILED: Initial Dubins connector exceeds 2 m' in transcript
+    assert transcript.count('SUCCESS:') == 1
+    assert 'Actual start:' in transcript
+    assert transcript.index('ATTEMPT 1/3') < transcript.index('FAILED:')
+    assert transcript.index('ATTEMPT 3/3') < transcript.index('SUCCESS:')
     assert bridge.explicit_start_client.call_async.call_count == 3
     bridge.path_publisher.publish.assert_called_once_with(planned)
     assert bridge.planning_log_publisher.publish.call_args[0][0].data == transcript
@@ -211,17 +211,17 @@ def test_exhausted_search_logs_failure_and_final_summary(bridge):
     bridge.explicit_start_client.call_async = Mock(return_value=future)
     bridge._send_next_candidate(bridge.search_generation)
     future.add_done_callback.call_args[0][0](future)
-    assert 'FALLITO: SMAC found no path' in bridge.planning_log
-    assert 'ERRORE: no feasible planning start/goal pair found' in bridge.planning_log
-    assert 'SUCCESSO:' not in bridge.planning_log
+    assert 'FAILED: SMAC found no path' in bridge.planning_log
+    assert 'ERROR: no feasible planning start/goal pair found' in bridge.planning_log
+    assert 'SUCCESS:' not in bridge.planning_log
 
 
 @pytest.mark.parametrize('case,reason', [
-    ('reject', 'Richiesta rifiutata dal planner'),
-    ('send_error', 'Invio al planner fallito: transport error'),
-    ('result_error', 'Ricezione del risultato fallita: transport error'),
-    ('empty', 'Il planner ha restituito un percorso vuoto'),
-    ('abort', 'ABORTED (6); dettaglio non fornito dal planner'),
+    ('reject', 'Planner rejected the request'),
+    ('send_error', 'Failed to send planning request: transport error'),
+    ('result_error', 'Failed to receive planning result: transport error'),
+    ('empty', 'Planner returned an empty path'),
+    ('abort', 'ABORTED (6); planner provided no details'),
 ])
 def test_action_failure_reasons_are_logged_without_inventing_diagnostics(bridge, case, reason):
     bridge._send_next_candidate = Mock()
@@ -239,7 +239,7 @@ def test_action_failure_reasons_are_logged_without_inventing_diagnostics(bridge,
         bridge._goal_response_callback(future, 0, candidate, candidate)
     else:
         bridge._result_callback(future, None, 0, candidate, candidate)
-    assert 'FALLITO: ' in bridge.planning_log
+    assert 'FAILED: ' in bridge.planning_log
     assert reason in bridge.planning_log
     bridge._send_next_candidate.assert_called_once_with(0)
 
@@ -248,9 +248,9 @@ def test_synchronous_service_error_is_logged_as_a_failed_attempt(bridge):
     prepare_logged_search(bridge, 1)
     bridge.explicit_start_client.call_async = Mock(side_effect=RuntimeError('service unavailable'))
     bridge._send_next_candidate(bridge.search_generation)
-    assert 'TENTATIVO 1/1' in bridge.planning_log
-    assert 'FALLITO: Invio al servizio fallito: service unavailable' in bridge.planning_log
-    assert 'ERRORE:' in bridge.planning_log
+    assert 'ATTEMPT 1/1' in bridge.planning_log
+    assert 'FAILED: Failed to send service request: service unavailable' in bridge.planning_log
+    assert 'ERROR:' in bridge.planning_log
 
 
 def test_rejected_connector_skips_same_start_and_refills_attempt_budget(bridge):
@@ -288,14 +288,14 @@ def test_rejected_connector_skips_same_start_and_refills_attempt_budget(bridge):
     assert bridge.candidate_index == 5  # Two cached pairs were skipped, without requests.
     assert id(bridge.start_candidates[0]) in bridge.rejected_starts
     assert id(bridge.start_candidates[1]) not in bridge.rejected_starts
-    assert bridge.planning_log.count('  Start reale: ') == 3
-    assert 'Start virtuale quantizzato: x=+1.025 m' in bridge.planning_log
-    assert 'Lunghezza raccordo: 4.500 m' in bridge.planning_log
-    assert 'Limite raccordo: 2.000 m' in bridge.planning_log
-    assert 'SMAC non eseguito per questo tentativo' in bridge.planning_log
-    assert 'TENTATIVO 3/3' in bridge.planning_log
-    assert 'SUCCESSO:' in bridge.planning_log
-    assert 'TENTATIVO 4/' not in bridge.planning_log
+    assert bridge.planning_log.count('  Robot start: ') == 3
+    assert 'Quantized virtual start: x=+1.025 m' in bridge.planning_log
+    assert 'Connector length: 4.500 m' in bridge.planning_log
+    assert 'Connector limit: 2.000 m' in bridge.planning_log
+    assert 'SMAC was not run for this attempt' in bridge.planning_log
+    assert 'ATTEMPT 3/3' in bridge.planning_log
+    assert 'SUCCESS:' in bridge.planning_log
+    assert 'ATTEMPT 4/' not in bridge.planning_log
 
 
 def test_all_cached_starts_finish_without_sending_more_requests(bridge):
@@ -305,7 +305,7 @@ def test_all_cached_starts_finish_without_sending_more_requests(bridge):
     bridge._send_next_candidate(bridge.search_generation)
     bridge.explicit_start_client.call_async.assert_not_called()
     assert bridge.planning_attempts == 0
-    assert 'ERRORE:' in bridge.planning_log
+    assert 'ERROR:' in bridge.planning_log
 
 
 def test_pair_search_is_lazy_and_keeps_diagonal_order(bridge):
@@ -320,5 +320,38 @@ def test_exact_start_diagnostic_reports_zero_connector_length(bridge):
     bridge._log_connector_diagnostics(SimpleNamespace(
         planning_start=PoseStamped(), connector_checked=True, connector_required=False,
         connector_length=0.0, connector_max_length=2.0))
-    assert 'Lunghezza raccordo: 0.000 m' in bridge.planning_log
-    assert 'Raccordo non necessario: start originale.' in bridge.planning_log
+    assert 'Connector length: 0.000 m' in bridge.planning_log
+    assert 'Connector not needed: original start.' in bridge.planning_log
+
+
+def test_virtual_start_success_uses_quantized_pose_without_a_connector(bridge):
+    prepare_logged_search(bridge, 1)
+    requested_start = copy.deepcopy(bridge.real_start)
+    requested_start.pose.position.y = 0.212
+    bridge.start_candidates[0] = GoalCandidate(requested_start, 0.212, 0.0, 0.212)
+    quantized = copy.deepcopy(requested_start)
+    quantized.pose.position.y = 0.225
+    planned = Path()
+    planned.header.frame_id = 'map'
+    planned.header.stamp.sec = 42
+    planned.poses = [quantized, bridge.candidates[0].pose]
+    response = SimpleNamespace(
+        success=True, path=planned, error='', connector_end_index=0,
+        planning_start=quantized, connector_checked=False, connector_required=False,
+        start_rejected=False, connector_length=0.0, connector_max_length=2.0)
+    future = Mock()
+    future.result.return_value = response
+    bridge.explicit_start_client.call_async = Mock(return_value=future)
+    bridge.adjusted_start_publisher = Mock()
+    bridge.connector_publisher = Mock()
+    bridge._send_next_candidate(bridge.search_generation)
+    future.add_done_callback.call_args[0][0](future)
+    actual_start = bridge.adjusted_start_publisher.publish.call_args[0][0]
+    assert actual_start.pose.position.y == 0.225
+    assert actual_start.header.stamp == planned.header.stamp
+    assert bridge.connector_publisher.publish.call_args[0][0].end_index == 0
+    assert 'Connector not required: the path starts at the virtual start.' in bridge.planning_log
+    assert 'Connector length:' not in bridge.planning_log
+    assert 'Connector limit:' not in bridge.planning_log
+    assert 'SUCCESS:' in bridge.planning_log
+    assert not bridge.rejected_starts

@@ -223,10 +223,7 @@ class PathExecutor(Node):
             self.waiting_for_server = False
             if self.active_control_goal_handle is not None:
                 self.active_control_goal_handle.cancel_goal_async()
-            if self.goal_pending or self.active_control_goal_handle is not None:
-                self._publish_control_state('ABORTING: canceling path control')
-            else:
-                self._publish_available_path()
+            self._publish_available_path()
             response.success = True
             response.message = 'Control abort requested.'
             return response
@@ -441,11 +438,11 @@ class PathExecutor(Node):
         try:
             goal_handle = future.result()
         except Exception as exc:
-            if generation == self.path_generation:
+            if generation == self.path_generation and self.control_requested:
                 self._fail(f'Failed to send FollowPath goal: {exc}')
             return
         if not goal_handle.accepted:
-            if generation == self.path_generation:
+            if generation == self.path_generation and self.control_requested:
                 self._fail('Controller rejected the path')
             return
 
@@ -477,22 +474,26 @@ class PathExecutor(Node):
         try:
             response = future.result()
         except Exception as exc:
-            self._fail(f'Failed to receive FollowPath result: {exc}')
+            if self.control_requested:
+                self._fail(f'Failed to receive FollowPath result: {exc}')
+            else:
+                self._publish_available_path()
+            return
+        if not self.control_requested:
+            # ABORT already returned to READY/IDLE. Late results only release
+            # the old handle; they must not turn a deliberate stop into ERROR.
+            self._publish_available_path()
             return
         if response.status == GoalStatus.STATUS_SUCCEEDED:
             if self.control_paused:
                 self._publish_control_state('PAUSED: control is stopped')
-            elif self.control_requested:
+            else:
                 self.arrival_pending = True
                 self._publish_control_state(
                     'ACTIVE: controller finished; verifying stopped arrival')
-            else:
-                self._publish_available_path()
         elif response.status == GoalStatus.STATUS_CANCELED:
             if self.control_paused:
                 self._publish_control_state('PAUSED: control is stopped')
-            elif not self.control_requested:
-                self._publish_available_path()
             else:
                 # Resume may have arrived while pause cancellation was pending.
                 self._send_control_goal()

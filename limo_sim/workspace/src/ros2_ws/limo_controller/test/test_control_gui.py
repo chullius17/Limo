@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Verify control state and service requests after removing the MPC panel."""
+"""Verify the compact control window and its ROS service requests."""
 
 import os
 import time
@@ -22,7 +22,7 @@ import pytest
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 pytest.importorskip('rclpy')
 pytest.importorskip('PyQt5')
-from PyQt5.QtWidgets import QApplication, QLabel  # noqa: E402
+from PyQt5.QtWidgets import QApplication, QLabel, QTextEdit  # noqa: E402
 import rclpy  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
@@ -59,28 +59,33 @@ def spin_until(app, executor, predicate):
     assert predicate()
 
 
-def test_gui_keeps_control_terminal_without_mpc_panel_or_subscriptions(gui):
+def test_gui_has_only_status_and_controls_without_terminal_or_mpc_panel(gui):
     _, node, window, _ = gui
     labels = [label.text() for label in window.findChildren(QLabel)]
-    assert 'CONTROL TERMINAL' in labels
+    assert 'CONTROL TERMINAL' not in labels
     assert all('MPC' not in label for label in labels)
     assert all('/mpc_' not in subscription.topic_name for subscription in node.subscriptions)
-    assert window.terminal.isVisible()
+    assert not window.findChildren(QTextEdit)
     assert not window.start_button.isEnabled()
 
 
-def test_success_keeps_the_path_and_restores_start_instead_of_pause_or_abort(gui):
+@pytest.mark.parametrize('status, path_ready', [
+    ('READY: path available', True),
+    ('IDLE: waiting for a planned path', False),
+    ('SUCCESS: stopped inside the goal circle', True),
+])
+def test_stopped_states_restore_start_and_clear_pause(gui, status, path_ready):
     _, _, window, _ = gui
     window.control_requested = True
     window.control_active = True
     window.control_paused = True
-    window._set_status('SUCCESS: stopped inside the goal circle')
-    assert window.path_ready
+    window._set_status(status)
+    assert window.path_ready == path_ready
     assert not window.control_requested
     assert not window.control_active
     assert not window.control_paused
     assert window.start_button.text() == 'START CONTROL'
-    assert window.start_button.isEnabled()
+    assert window.start_button.isEnabled() == path_ready
     assert not window.pause_button.isEnabled()
 
 
@@ -111,7 +116,7 @@ def test_gui_receives_ros_state_and_sends_start_pause_resume_abort(gui):
                    and node.pause_resume_client.service_is_ready())
         status.publish(String(data='READY: path available'))
         spin_until(app, executor, window.start_button.isEnabled)
-        assert 'READY: path available' in window.terminal.toPlainText()
+        assert 'READY: path available' in window.state_label.text()
         window.start_button.click()
         spin_until(app, executor, lambda: window.start_button.text() == 'ABORT CONTROL')
         window.pause_button.click()

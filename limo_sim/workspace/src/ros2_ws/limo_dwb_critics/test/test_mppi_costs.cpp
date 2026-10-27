@@ -15,6 +15,7 @@
 #include "limo_dwb_critics/ackermann_mpc_controller.hpp"
 #include "limo_dwb_critics/mppi_cost_critics.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
+#include "nav_2d_utils/conversions.hpp"
 
 namespace
 {
@@ -149,7 +150,93 @@ class InspectableMppiPathCritic : public limo_dwb_critics::MppiPathCritic
 {
 public:
   bool detouring() const {return guidance_active_;}
+  std::size_t startIndex() const {return start_index_;}
 };
+
+TEST_F(MppiCostsTest, PathCriticDisambiguatesNearbyPosesUsingChassisHeading)
+{
+  const double pi = std::acos(-1.0);
+  nav_2d_msgs::msg::Path2D reference;
+  reference.poses = {pose(-1, 0), pose(0, 0), pose(1, 0),
+    pose(1, 0.05, pi), pose(0, 0.05, pi), pose(-1, 0.05, pi)};
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  ASSERT_TRUE(
+    critic.prepare(
+      pose(0, 0.01, pi), nav_2d_msgs::msg::Twist2D(),
+      reference.poses.back(), reference));
+  EXPECT_EQ(critic.startIndex(), 4U);
+  ASSERT_TRUE(
+    critic.prepare(
+      pose(0, 0.04, 0), nav_2d_msgs::msg::Twist2D(),
+      reference.poses.back(), reference));
+  EXPECT_EQ(critic.startIndex(), 1U);
+}
+
+class InspectablePlanController : public limo_dwb_critics::AckermannMPCController
+{
+public:
+  using AckermannMPCController::transformGlobalPlan;
+};
+
+TEST_F(MppiCostsTest, TrackedCriticDoesNotSkipAheadToAFutureLapWithIdenticalYaw)
+{
+  nav_2d_msgs::msg::Path2D reference;
+  reference.poses = {pose(0, 0), pose(1, 0), pose(1, 1), pose(0, 1),
+    pose(0, 0.05), pose(1, 0.05)};
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  critic.setTrackedReference(true);
+  ASSERT_TRUE(
+    critic.prepare(
+      pose(0, 0.04), nav_2d_msgs::msg::Twist2D(),
+      reference.poses.back(), reference));
+  EXPECT_EQ(critic.startIndex(), 0U);
+}
+
+TEST_F(MppiCostsTest, DwbLocalReferenceKeepsTheCompletedLapEvenAfterRepublishing)
+{
+  InspectablePlanController controller;
+  auto tf = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
+  controller.configure(node_, "FollowPath", tf, costmap_);
+  nav_2d_msgs::msg::Path2D reference;
+  reference.header.frame_id = "odom";
+  const double pi = std::acos(-1.0);
+  for (int i = 0; i <= 200; ++i) {
+    const double angle = 2 * pi * i / 200;
+    reference.poses.push_back(pose(0.5 * std::sin(angle), 0.5 * (1 - std::cos(angle)), angle));
+  }
+  for (int i = 1; i <= 30; ++i) {
+    reference.poses.push_back(pose(i * 0.05, 0, 0));
+  }
+  auto path = nav_2d_utils::pathToPath(reference);
+  controller.setPlan(path);
+  nav_2d_msgs::msg::Pose2DStamped robot;
+  robot.header.frame_id = "odom";
+  for (int i = 0; i <= 200; ++i) {
+    robot.pose = reference.poses[i];
+    ASSERT_FALSE(controller.transformGlobalPlan(robot).poses.empty());
+  }
+  ++path.header.stamp.sec;
+  controller.setPlan(path);
+  const auto local = controller.transformGlobalPlan(robot);
+  ASSERT_FALSE(local.poses.empty());
+  EXPECT_GT(local.poses.back().x, 1.0);
+  for (const auto & point : local.poses) {
+    EXPECT_NEAR(point.y, 0.0, 0.01);
+    EXPECT_GT(point.x, -0.03);
+  }
+  reference.poses.back().x += 0.1;
+  controller.setPlan(nav_2d_utils::pathToPath(reference));
+  const auto restarted = controller.transformGlobalPlan(robot);
+  ASSERT_FALSE(restarted.poses.empty());
+  bool contains_loop = false;
+  for (const auto & point : restarted.poses) {
+    contains_loop |= point.y > 0.5;
+  }
+  EXPECT_TRUE(contains_loop);
+  controller.cleanup();
+}
 
 TEST_F(MppiOnlineCostsTest, InitialConnectorBypassesCollisionsAndDetoursOnlyUntilDisabled)
 {

@@ -18,6 +18,7 @@ find_package(dwb_core REQUIRED)
 find_package(dwb_critics REQUIRED)
 find_package(dwb_msgs REQUIRED)
 find_package(nav2_core REQUIRED)
+find_package(nav_2d_utils REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -43,6 +44,7 @@ ament_target_dependencies(${PROJECT_NAME}
   dwb_critics
   dwb_msgs
   nav2_core
+  nav_2d_utils
   nav2_costmap_2d
   pluginlib
   rclcpp
@@ -101,5 +103,5 @@ endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
-ament_export_dependencies(dwb_core dwb_critics dwb_msgs nav2_core nav2_costmap_2d pluginlib rclcpp limo_interfaces nav2_msgs limo_inflation)
+ament_export_dependencies(dwb_core dwb_critics dwb_msgs nav2_core nav_2d_utils nav2_costmap_2d pluginlib rclcpp limo_interfaces nav2_msgs limo_inflation)
 ament_package()

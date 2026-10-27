@@ -132,7 +132,7 @@ class PreviewRenderTest(unittest.TestCase):
             costmap_resolution=frame.costmap_resolution,
             costmap_origin=frame.costmap_origin, costmap_data=bytes(costs))
         path = ((0.5, -0.8), (1.5, -0.8))
-        image = render_preview(None, options, 'MPC: in attesa', background, path)
+        image = render_preview(None, options, 'MPC: waiting', background, path)
         path_pixel = tuple(round(v) for v in base_to_pixel(path[-1], options))
         self.assertEqual(image.getpixel(path_pixel), options.global_path_color)
         inflation_pixel = tuple(round(v) for v in base_to_pixel((0.525, 0.525), options))

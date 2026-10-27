@@ -85,7 +85,8 @@ void PathDistanceLayer::onInitialize()
         std::string base = "base_link";
         node_->get_parameter("robot_base_frame", base);
         if (!tf_) {return;}
-        const auto tf = tf_->lookupTransform(layered_costmap_->getGlobalFrameID(),
+        const auto tf = tf_->lookupTransform(
+          layered_costmap_->getGlobalFrameID(),
           base, tf2::TimePointZero);
         geometry_msgs::msg::Pose2D pose;
         pose.x = tf.transform.translation.x; pose.y = tf.transform.translation.y;
@@ -109,7 +110,8 @@ void PathDistanceLayer::onInitialize()
         response->message = "START blocked: robot transform unavailable";
       }
     });
-  RCLCPP_INFO(node_->get_logger(), "Path distance cost: 0..%d, linear up to %.3f m, topic=%s",
+  RCLCPP_INFO(
+    node_->get_logger(), "Path distance cost: 0..%d, linear up to %.3f m, topic=%s",
     max_cost_, distance_for_max_cost_, topic.c_str());
 }
 
@@ -150,7 +152,8 @@ void PathDistanceLayer::rebuildField(
   if (requested_margin > 4096 ||
     (width + 2.0 * requested_margin) * (height + 2.0 * requested_margin) > 4194304)
   {
-    throw std::invalid_argument("Path distance raster exceeds 4M cells; reduce distance_for_max_cost");
+    throw std::invalid_argument(
+            "Path distance raster exceeds 4M cells; reduce distance_for_max_cost");
   }
   const int margin = static_cast<int>(requested_margin);
   cv::Mat mask(height + 2 * margin, width + 2 * margin, CV_8UC1, cv::Scalar(255));
@@ -173,7 +176,19 @@ void PathDistanceLayer::rebuildField(
     if (!path_points_.empty()) {
       arc += std::hypot(x - path_points_.back()[0], y - path_points_.back()[1]);
     }
-    path_points_.push_back({x, y, arc});
+    const auto & q = pose.pose.orientation;
+    const double norm = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+    // Older geometry-only publishers may leave an all-zero quaternion.
+    double yaw = norm > 1e-12 ? tf2::getYaw(q) + transform[2] :
+      std::numeric_limits<double>::quiet_NaN();
+    path_points_.push_back({x, y, arc, yaw});
+  }
+  for (std::size_t i = 0; i < path_points_.size(); ++i) {
+    auto & point = path_points_[i];
+    if (std::isfinite(point[3])) {continue;}
+    const auto & a = path_points_[i == 0 ? 0 : i - 1];
+    const auto & b = path_points_[i + 1 < path_points_.size() ? i + 1 : i];
+    point[3] = std::atan2(b[1] - a[1], b[0] - a[0]);
   }
   auto previous = pixel(path.poses.front());
   if (path.poses.size() == 1) {intersects = drawSegment(mask, previous, previous);}
@@ -229,7 +244,8 @@ void PathDistanceLayer::updateCosts(
       transform = {tf.transform.translation.x, tf.transform.translation.y,
         tf2::getYaw(tf.transform.rotation)};
     } catch (const tf2::TransformException & error) {
-      RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+      RCLCPP_WARN_THROTTLE(
+        node_->get_logger(), *node_->get_clock(), 2000,
         "Path distance waiting for TF: %s", error.what());
       return;  // Keep obstacle costs, without applying an incorrectly aligned field.
     }
@@ -247,7 +263,9 @@ void PathDistanceLayer::updateCosts(
     for (int x = std::max(0, min_i); x < std::min(static_cast<int>(width_), max_i); ++x) {
       const auto cost = map.getCost(x, y);
       if (cost < nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE) {
-        map.setCost(x, y, static_cast<unsigned char>(std::min(252,
+        map.setCost(
+          x, y, static_cast<unsigned char>(std::min(
+            252,
             cost + static_cast<int>(path_costs_[y * width_ + x]))));
       }
     }
@@ -269,11 +287,15 @@ void PathDistanceLayer::reset()
 bool PathDistanceLayer::matchesPath(const nav_msgs::msg::Path & path)
 {
   std::lock_guard<std::mutex> lock(path_mutex_);
-  if (!tube_field_valid_ || !path_ || path_ != cached_path_ || path_->header.frame_id != path.header.frame_id ||
+  if (!tube_field_valid_ || !path_ || path_ != cached_path_ ||
+    path_->header.frame_id != path.header.frame_id ||
     path_->poses.size() != path.poses.size()) {return false;}
   for (std::size_t i = 0; i < path.poses.size(); ++i) {
+    const auto & a = path_->poses[i].pose.orientation;
+    const auto & b = path.poses[i].pose.orientation;
     if (path_->poses[i].pose.position.x != path.poses[i].pose.position.x ||
-      path_->poses[i].pose.position.y != path.poses[i].pose.position.y) {return false;}
+      path_->poses[i].pose.position.y != path.poses[i].pose.position.y ||
+      a.x != b.x || a.y != b.y || a.z != b.z || a.w != b.w) {return false;}
   }
   return true;
 }
@@ -300,26 +322,18 @@ bool PathDistanceLayer::containsFootprint(const geometry_msgs::msg::Pose2D & pos
   return true;
 }
 
-bool PathDistanceLayer::projectProgress(const geometry_msgs::msg::Pose2D & pose,
-  double & progress, double & heading, double minimum, double maximum) const
+bool PathDistanceLayer::projectProgress(
+  const geometry_msgs::msg::Pose2D & pose,
+  double & progress, double & heading, double minimum, double maximum,
+  double preferred_progress) const
 {
-  double best = std::numeric_limits<double>::infinity();
-  for (std::size_t i = 1; i < path_points_.size(); ++i) {
-    const auto & a = path_points_[i - 1]; const auto & b = path_points_[i];
-    const double length = b[2] - a[2];
-    if (length <= 1e-9 || b[2] < minimum || a[2] > maximum) {continue;}
-    const double dx = b[0] - a[0], dy = b[1] - a[1];
-    const double low = std::clamp((minimum - a[2]) / length, 0.0, 1.0);
-    const double high = std::clamp((maximum - a[2]) / length, 0.0, 1.0);
-    const double f = std::clamp(((pose.x - a[0]) * dx + (pose.y - a[1]) * dy) /
-        (length * length), low, high);
-    const double ex = pose.x - a[0] - f * dx, ey = pose.y - a[1] - f * dy;
-    if (ex * ex + ey * ey < best) {
-      best = ex * ex + ey * ey; progress = a[2] + f * length;
-      heading = std::atan2(dy, dx);
-    }
+  PathPoseProjection projection;
+  if (!projectPathPose(path_points_, pose, projection, minimum, maximum, preferred_progress)) {
+    return false;
   }
-  return std::isfinite(best);
+  progress = projection.progress;
+  heading = projection.heading;
+  return true;
 }
 
 }  // namespace limo_inflation

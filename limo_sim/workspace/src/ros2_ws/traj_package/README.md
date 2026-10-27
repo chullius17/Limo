@@ -15,8 +15,8 @@ The built-in real and simulation global costmaps use `lethal_cost_threshold: 60`
 Semantic yellow lines (60), boardwalk (90) and occupied cells (100) become hard
 obstacles for SMAC and start/goal validation; white markings (30) remain soft
 costs. This is applied by the planner's StaticLayer without rewriting the source
-map used by localization. The initial Dubins connector retains its documented
-collision-unchecked behavior; the SMAC suffix obeys these global obstacles.
+map used by localization. The default path starts at the selected planning pose
+and obeys these global obstacles throughout.
 
 ## Planning GUI
 
@@ -60,7 +60,7 @@ is received live; the accepted goal and path also support retained delivery.
 
 A second blue arrow labeled `Start pianificato` shows `/adjusted_start_pose`,
 the start selected for that validated path. With start adjustment enabled, this
-is the actual quantized virtual start at the end of the Dubins connector. It
+is the actual quantized virtual start where the published path begins. It
 stays at the planning pose while the robot moves, and disappears when the path
 is invalidated. Start topic overrides follow `adjusted_start_topic` in the
 planner/bridge YAML. Both planning endpoints are included in the compressed view.
@@ -107,19 +107,33 @@ explicit start missing from Foxy's `ComputePathToPose` action. With
 starts as well as goals, and tries at most `max_planning_attempts` start/goal
 pairs. Exact starts retain normal obstacle checks.
 
-The wrapper validates and samples the real-to-virtual Dubins connector before
-calling SMAC. The service returns the quantized planning start, whether a
-connector is required, its measured length and configured maximum on both
-successful and failed searches. The planning log shows the measured real start
-for each request and these connector diagnostics, including rejected lengths.
+Both profiles set `GridBased.connect_adjusted_start: false`, also the plugin
+default. A virtual start can be beside the robot and need not be reachable from
+the measured pose. The wrapper quantizes it to SMAC's grid and heading bins,
+validates its footprint and plans from there. Foxy's backtrace omits the initial
+node, so the wrapper restores the quantized start as the path's first pose.
+No real-to-virtual prefix is generated, and `start_connector_max_length` does
+not constrain the virtual start. The measured real pose is diagnostic context.
 
-A typed `start_rejected` flag marks only a non-finite or over-limit Dubins
-length. The bridge excludes that candidate for the rest of the current search,
-skipping all its other goals. Collision, goal and SMAC failures do not poison
-the start cache. Pair generation is lazy and keeps the original diagonal order;
-skipped pairs are replaced by later candidates, up to the configured number of
-actual requests. A new goal resets the exclusions. The 2 m length limit is
-unchanged.
+The service returns the quantized planning start, which is also published on
+`/adjusted_start_pose`. The planning log shows the measured pose, selected start
+and quantized start, and states that no connector is requested. The path starts
+at the virtual pose; execution retains the controller's START and tracking
+checks.
+
+For an explicitly requested robot-to-start connection, set
+`GridBased.connect_adjusted_start: true`. In that optional mode the wrapper
+checks and samples one forward-only Dubins prefix before SMAC, using
+`minimum_turning_radius`, `start_connector_sample_step` (0.02 m) and
+`start_connector_max_length` (2.0 m). The prefix deliberately ignores obstacles;
+its endpoint and SMAC suffix retain collision checks. The service and log then
+include the measured connector length and limit.
+
+Only this optional connector mode can set the typed `start_rejected` flag for
+a non-finite or over-limit Dubins length. The bridge skips that start's other
+goals for the current search. Collision, goal and SMAC failures do not poison
+the cache. Pair generation remains lazy and diagonal, with up to the configured
+number of actual requests. A new goal resets the exclusions.
 
 The service response has new diagnostic fields. Rebuild `limo_interfaces`,
 `limo_smac_planner` and `traj_package`, source the workspace and restart the
@@ -130,29 +144,14 @@ colcon build --symlink-install --packages-select limo_interfaces limo_smac_plann
 source install/setup.bash
 ```
 
-When a virtual start differs in position or orientation, the planner prepends
-one forward-only OMPL Dubins connection from the measured real start to the
-virtual start quantized on SMAC's grid and heading bins. Foxy omits the initial
-node in its backtrace, so the wrapper restores this pose before the first SMAC
-step. `/adjusted_start_pose` shows this actual connector endpoint.
-Its radius is `GridBased.minimum_turning_radius`;
-`GridBased.start_connector_sample_step` is 0.02 m and
-`GridBased.start_connector_max_length` is 2.0 m. The length limit applies to
-the initial connector, independently of SMAC's analytic expansion. Connections
-exceeding it are rejected before SMAC, and the bridge tries a different start. SMAC still checks
-collisions throughout the virtual-start-to-goal suffix. The prefix deliberately
-ignores obstacles, including footprint collisions.
-
 The bridge publishes the complete path and `/limo/planning/start_connector`
-(`limo_interfaces/StartConnector`), which binds the prefix end index to the
-complete path geometry and unique header timestamp. The executor preserves this
-identity while setting individual pose timestamps to zero for latest TF.
-A new goal clears both outputs; stale service results are ignored.
-The controller uses the declared prefix as its temporary reference, without
-obstacle repulsion, critical costs, collision rejection or obstacle detours.
-After advancing along the prefix and reaching its end within 0.05 m and 0.10 rad,
-normal tracking and obstacle checks resume. This initial exception does not
-change the final-goal behavior, which retains footprint collision rejection.
+(`limo_interfaces/StartConnector`). Its `end_index` is zero by default, disabling
+the connector exception. In optional connector mode, metadata binds the prefix
+to the complete path geometry and unique timestamp. The executor preserves
+that identity while using zero pose timestamps for latest TF. A new goal clears
+both outputs; stale service results are ignored. Controller obstacle bypass on
+a declared prefix additionally requires its own `MPC.StartConnector.ignore_obstacles`
+setting; the current controller profiles leave that setting false.
 
 Execution belongs to `limo_controller`: its `path_executor` node receives the
 path and handles START, pause, resume, and cancellation through

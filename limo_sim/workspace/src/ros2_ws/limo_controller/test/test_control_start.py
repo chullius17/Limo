@@ -175,6 +175,52 @@ def test_replacing_an_active_path_cancels_and_requires_another_start(executor):
     assert executor.follow_path_client.send_goal_async.call_count == 2
 
 
+@pytest.mark.parametrize('pending', [False, True])
+@pytest.mark.parametrize('outcome', ['canceled', 'succeeded', 'aborted', 'exception'])
+def test_abort_is_ready_immediately_and_ignores_late_action_results(executor, pending, outcome):
+    from action_msgs.msg import GoalStatus
+    ready_path(executor)
+    assert start(executor).success
+    handle = None if pending else accept_pending_goal(executor)
+
+    response = executor._set_control_active(SetBool.Request(data=False), SetBool.Response())
+    assert response.success
+    assert control_status(executor).startswith('READY:')
+    assert not executor.control_requested
+    assert not start(executor).success  # Previous action is still closing internally.
+    executor.follow_path_client.send_goal_async.assert_called_once()
+
+    if pending:
+        handle = accept_pending_goal(executor)
+    handle.cancel_goal_async.assert_called_once()
+    result = handle.get_result_async.return_value
+    if outcome == 'exception':
+        result.set_exception(RuntimeError('old controller disconnected'))
+    else:
+        result.set_result(SimpleNamespace(status=getattr(GoalStatus, 'STATUS_' + outcome.upper())))
+    assert control_status(executor).startswith('READY:')
+    assert executor.active_control_goal_handle is None
+    assert not executor.control_requested
+    executor.follow_path_client.send_goal_async.return_value = Future()
+    assert start(executor).success
+    assert executor.follow_path_client.send_goal_async.call_count == 2
+
+
+@pytest.mark.parametrize('outcome', ['rejected', 'exception'])
+def test_abort_preserves_ready_when_pending_goal_is_rejected_or_fails(executor, outcome):
+    ready_path(executor)
+    assert start(executor).success
+    pending = executor.follow_path_client.send_goal_async.return_value
+    executor._set_control_active(SetBool.Request(data=False), SetBool.Response())
+    if outcome == 'rejected':
+        pending.set_result(SimpleNamespace(accepted=False))
+    else:
+        pending.set_exception(RuntimeError('request disconnected'))
+    assert control_status(executor).startswith('READY:')
+    assert not executor.goal_pending
+    assert not executor.control_requested
+
+
 def test_unavailable_controller_queues_start_until_server_is_ready(executor):
     ready_path(executor)
     executor.follow_path_client.wait_for_server.return_value = False

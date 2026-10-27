@@ -62,8 +62,10 @@ planner_server:
       # operational radius so every planned primitive remains comfortably
       # inside the steering capability of the physical robot.
       minimum_turning_radius: 0.55
-      # Only the real-to-virtual start prefix is a collision-unchecked Dubins curve.
+      # The virtual start may lie beside the robot; no real-to-virtual connection is required.
+      connect_adjusted_start: false
       explicit_start_service: /compute_path_with_start
+      # Used only when connect_adjusted_start is explicitly enabled.
       start_connector_sample_step: 0.02
       start_connector_max_length: 2.0
 

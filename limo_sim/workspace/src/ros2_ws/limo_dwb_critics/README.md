@@ -35,6 +35,17 @@ controller loop. Repeated Gazebo `/clock` stamps (for example 10 Hz clock
 publication with 20 Hz control) do not erase the command ramp. Backward ROS
 clock jumps still reset the prediction.
 
+Reference association compares position and chassis orientation. Alternatives
+within 0.10 m of the nearest spatial projection compete using
+`distance² + (0.25 * wrapped_yaw_error)²`. Robot progress is retained across
+cycles: the search allows 0.10 m behind the furthest reached arc length and
+at least 0.50 m ahead (or twice the displacement since the last update).
+This excludes earlier laps when a loop returns to the same position and yaw.
+Completed branches are removed before DWB transforms/prunes the local plan;
+tube progress and path critics use the same pose comparison. Prediction
+resets and identical republished paths preserve this history; a changed
+reference or cleanup resets it. Candidate scoring never updates robot history.
+
 Simulation optionally exports `limo_interfaces/MpcDebug` snapshots for the
 compressed-image preview in `limo_controller`. The sampler assigns an explicit
 family and candidate ID at generation time. A bounded observer records

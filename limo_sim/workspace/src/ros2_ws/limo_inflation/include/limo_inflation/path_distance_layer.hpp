@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "geometry_msgs/msg/pose2_d.hpp"
+#include "limo_inflation/path_pose_association.hpp"
 #include "nav2_costmap_2d/layer.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "std_srvs/srv/trigger.hpp"
@@ -28,8 +29,10 @@ public:
   void setPath(nav_msgs::msg::Path::ConstSharedPtr path);
   bool matchesPath(const nav_msgs::msg::Path & path);
   bool containsFootprint(const geometry_msgs::msg::Pose2D & pose);
-  bool projectProgress(const geometry_msgs::msg::Pose2D & pose, double & progress,
-    double & heading, double minimum = -1e30, double maximum = 1e30) const;
+  bool projectProgress(
+    const geometry_msgs::msg::Pose2D & pose, double & progress,
+    double & heading, double minimum = -1e30, double maximum = 1e30,
+    double preferred_progress = 0.0) const;
   double tubeRadius() const {return tube_radius_;}
 
 private:
@@ -51,7 +54,7 @@ private:
   std::vector<std::uint8_t> cached_mask_;
   std::vector<std::uint8_t> path_costs_;
   std::vector<float> path_distances_;
-  std::vector<std::array<double, 3>> path_points_;  // x, y, cumulative arc length.
+  std::vector<PathPosePoint> path_points_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr start_service_;
 };
 

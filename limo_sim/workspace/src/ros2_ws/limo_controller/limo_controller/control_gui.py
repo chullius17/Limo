@@ -22,12 +22,11 @@ import time
 from action_msgs.msg import GoalStatus, GoalStatusArray
 from geometry_msgs.msg import Twist
 import rclpy
-from PyQt5.QtCore import Qt, QTime, QTimer, pyqtSignal, pyqtSlot
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (
     QApplication,
     QLabel,
     QPushButton,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -44,7 +43,6 @@ class GuiSignals(QWidget):
     status_received = pyqtSignal(str)
     active_received = pyqtSignal(bool)
     paused_received = pyqtSignal(bool)
-    diagnostic_received = pyqtSignal(str)
 
 
 class ControlGuiNode(Node):
@@ -79,7 +77,7 @@ class ControlGuiNode(Node):
         self.create_subscription(
             String,
             '/limo/planning/status',
-            lambda msg: self.signals.diagnostic_received.emit(msg.data),
+            lambda msg: self._diagnostic(msg.data),
             state_qos,
         )
         self.create_subscription(
@@ -109,7 +107,7 @@ class ControlGuiNode(Node):
         self.create_subscription(
             String,
             '/limo/control/cmd_vel_source',
-            lambda msg: self.signals.diagnostic_received.emit(
+            lambda msg: self._diagnostic(
                 f'CMD_VEL SOURCE: {msg.data}'),
             state_qos,
         )
@@ -117,7 +115,6 @@ class ControlGuiNode(Node):
 
     def _diagnostic(self, message):
         self.get_logger().info(message)
-        self.signals.diagnostic_received.emit(message)
 
     def _report_service_availability(self):
         availability = (
@@ -229,10 +226,6 @@ class ControlGuiNode(Node):
             message = f'Control request failed: {exc}'
         log = self.get_logger().info if success else self.get_logger().error
         log(message)
-        self.signals.diagnostic_received.emit(
-            'RESPONSE: {} success={} message={}'.format(
-                kind, success, message)
-        )
         self.signals.request_finished.emit(
             kind,
             success,
@@ -251,12 +244,11 @@ class ControlWindow(QWidget):
         self.control_paused = False
         self.control_requested = False
         self.path_ready = False
-        self.last_status = 'waiting for status'
 
         self.setWindowTitle('LIMO Control')
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         self.setMinimumWidth(360)
-        self.resize(580, 520)
+        self.resize(420, 180)
 
         layout = QVBoxLayout(self)
         self.state_label = QLabel('Control state: waiting for status')
@@ -273,27 +265,11 @@ class ControlWindow(QWidget):
         self.start_button.clicked.connect(self._toggle_active)
         layout.addWidget(self.start_button)
 
-        terminal_label = QLabel('CONTROL TERMINAL')
-        terminal_label.setStyleSheet('font-weight: bold;')
-        layout.addWidget(terminal_label)
-
-        self.terminal = QTextEdit()
-        self.terminal.setReadOnly(True)
-        self.terminal.setMinimumHeight(180)
-        self.terminal.document().setMaximumBlockCount(1000)
-        self.terminal.setStyleSheet(
-            'background-color: #101418; color: #d7e0e7; '
-            'font-family: monospace; font-size: 12px; padding: 6px;'
-        )
-        layout.addWidget(self.terminal)
-
         signals.request_finished.connect(self._request_finished)
         signals.status_received.connect(self._set_status)
         signals.active_received.connect(self._set_active)
         signals.paused_received.connect(self._set_paused)
-        signals.diagnostic_received.connect(self._append_status)
         self._refresh_buttons()
-        self._append_status('GUI ready; waiting for path executor status')
 
     @staticmethod
     def _button_style(color):
@@ -305,10 +281,6 @@ class ControlWindow(QWidget):
     @pyqtSlot()
     def _toggle_active(self):
         requested_state = not self.control_requested
-        self._append_status(
-            'BUTTON: {} CONTROL pressed'.format(
-                'START' if requested_state else 'ABORT')
-        )
         self.start_button.setEnabled(False)
         if not self.node.request_active(requested_state):
             self.start_button.setEnabled(True)
@@ -324,52 +296,42 @@ class ControlWindow(QWidget):
     def _request_finished(self, kind, success, requested_state, message):
         if success and kind == 'active':
             self.control_requested = requested_state
-            if requested_state:
-                QTimer.singleShot(3000, self._check_controller_started)
             if not requested_state:
                 self.control_active = False
                 self.control_paused = False
         elif success and kind == 'enabled':
             self.control_paused = not requested_state
-        self._append_status(message)
+        if not success:
+            self.state_label.setText(f'Control state: ERROR: {message}')
+            self.state_label.setStyleSheet('color: #c62828; font-weight: bold;')
         self._refresh_buttons()
 
     @pyqtSlot(str)
     def _set_status(self, status):
-        self.last_status = status
         self.state_label.setText(f'Control state: {status}')
-        if status.startswith('READY:'):
-            self.path_ready = True
+        if status.startswith(('READY:', 'IDLE:')):
+            self.path_ready = status.startswith('READY:')
             self.control_requested = False
+            self.control_active = False
+            self.control_paused = False
         elif status.startswith('SUCCESS:'):
             self.path_ready = True
             self.control_requested = False
             self.control_active = False
             self.control_paused = False
-        elif status.startswith('IDLE:'):
-            self.path_ready = False
-            self.control_requested = False
         elif status.startswith('ERROR:'):
             self.control_requested = False
-        elif status.startswith(('WAITING:', 'STARTING:', 'ACTIVE:', 'PAUSING:',
-                                'PAUSED:', 'RESUMING:', 'ABORTING:')):
-            self.control_requested = not status.startswith('ABORTING:')
+        elif status.startswith(('WAITING:', 'CHECKING:', 'STARTING:', 'ACTIVE:', 'PAUSED:')):
+            self.control_requested = True
         color = '#2e7d32'
-        if status.startswith(('WAITING:', 'PAUSED:', 'PAUSING:')):
+        if status.startswith(('WAITING:', 'PAUSED:')):
             color = '#ef6c00'
-        elif status.startswith(('ERROR:', 'ABORTING:')):
+        elif status.startswith('ERROR:'):
             color = '#c62828'
         self.state_label.setStyleSheet(
             f'color: {color}; font-weight: bold;'
         )
-        self._append_status(status)
         self._refresh_buttons()
-
-    def _check_controller_started(self):
-        if self.last_status.startswith(('WAITING:', 'STARTING:')):
-            self._append_status(
-                'WARNING: FollowPath has not reached ACTIVE after 3 seconds'
-            )
 
     @pyqtSlot(bool)
     def _set_active(self, active):
@@ -402,11 +364,6 @@ class ControlWindow(QWidget):
         self.start_button.setEnabled(
             self.control_requested or self.path_ready
         )
-
-    @pyqtSlot(str)
-    def _append_status(self, message):
-        timestamp = QTime.currentTime().toString('HH:mm:ss')
-        self.terminal.append(f'{timestamp}  {message}')
 
 
 def main(args=None):
