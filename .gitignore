@@ -22,3 +22,14 @@ browse.vc.db
 .git-backups/
 Limo_robot_dev_mk2/control_logs/
 Limo_robot_dev_mk2/ai_control_logs/
+
+# Runtime diagnostic reports and parameter snapshots.
+/limo_sim/workspace/diagnostics/
+/limo_sim/workspace/amcl.yaml
+/limo_sim/workspace/controller_server.yaml
+/limo_sim/workspace/global_costmap__global_costmap.yaml
+/limo_sim/workspace/local_costmap__local_costmap.yaml
+/limo_sim/workspace/path_executor.yaml
+/limo_sim/workspace/planner_server.yaml
+/limo_sim/workspace/rviz_goal_bridge.yaml
+/limo_sim/workspace/twist_mux.yaml
