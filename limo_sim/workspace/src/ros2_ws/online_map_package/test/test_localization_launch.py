@@ -69,6 +69,7 @@ def test_simulation_starts_maps_amcl_rviz_and_cv(monkeypatch):
     assert set(nodes) == {
         'complete_map_server', 'laser_map_server', 'cv_map_server',
         'lifecycle_manager_online_maps', 'local_ctrl_map', 'rviz2',
+        'online_rviz_lane_overlay_decoder',
     }
     assert all(node['values']['use_sim_time'] is True
                for node in nodes.values())
@@ -111,12 +112,36 @@ def test_real_profile_is_headless_and_starts_cv(monkeypatch):
     assert amcl['cv_enabled'] == 'true'
 
 
-def test_desktop_online_starts_rviz_and_overlay_decoder(monkeypatch):
-    nodes, includes = online(monkeypatch, 'real', mode='desktop')
-    assert set(nodes) == {'rviz2', 'online_rviz_waterfall_overlay_decoder'}
-    assert nodes['rviz2']['values']['use_sim_time'] is False
+@pytest.mark.parametrize('profile,decoder', [
+    ('real', 'online_rviz_waterfall_overlay_decoder'),
+    ('sim', 'online_rviz_lane_overlay_decoder'),
+])
+def test_desktop_online_starts_rviz_and_overlay_decoder(monkeypatch, profile, decoder):
+    nodes, includes = online(monkeypatch, profile, mode='desktop')
+    assert set(nodes) == {'rviz2', decoder}
+    assert nodes['rviz2']['values']['use_sim_time'] is (profile == 'sim')
+    topic = dict(nodes[decoder]['remappings'])['out']
+    assert topic in dict(nodes['rviz2']['remappings']).values()
     assert nodes['rviz2']['arguments'][-2:] == ['-f', 'map']
     assert includes == []
+
+
+@pytest.mark.parametrize('start_rviz', ['true', 'false'])
+def test_ideal_simulation_wires_overlay_only_with_rviz(monkeypatch, start_rviz):
+    actions = ideal(monkeypatch, start_rviz=start_rviz, start_cv='false',
+                    start_monitor='false')
+    nodes = {action['name']: action for action in actions
+             if isinstance(action, dict)}
+    decoder = 'online_rviz_lane_overlay_decoder'
+    if start_rviz == 'false':
+        assert 'rviz2' not in nodes and decoder not in nodes
+        return
+    source = '/limo/cv_package/detection/lane_overlay'
+    destination = dict(nodes[decoder]['remappings'])['out']
+    assert dict(nodes['rviz2']['remappings'])[source] == destination
+    assert dict(nodes['rviz2']['remappings'])[
+        '/limo/map_package/online/maps/cv_obstacle'] == '/map'
+    assert nodes[decoder]['parameters'] == [{'use_sim_time': True}]
 
 
 def test_custom_profile_and_cli_overrides_reach_consumers(
@@ -246,7 +271,8 @@ def test_local_exterior_road_settings_leave_amcl_on_the_original_cv_cloud(
                 if 'cv_cloud_topic' in dict(action.launch_arguments))
     assert amcl['cv_cloud_topic'] == '/limo/cv_package/visual_ptcld/points'
     assert amcl['cv_enabled'] == 'true'
-    assert amcl['cv_weight_factor'] == amcl['laser_weight_factor'] == '1.0'
+    assert amcl['cv_weight_factor'] == '1.0'
+    assert amcl['laser_weight_factor'] == ('2.0' if profile == 'sim' else '1.0')
 
 
 def ideal(monkeypatch, **overrides):
@@ -268,6 +294,7 @@ def test_ideal_launch_uses_separate_wall_and_cv_maps(monkeypatch):
     assert set(nodes) == {
         'ideal_map_server', 'ideal_laser_map_server',
         'lifecycle_manager_ideal_map', 'rviz2', 'amcl_experiment',
+        'online_rviz_lane_overlay_decoder',
     }
     server = nodes['ideal_map_server']
     params = server['parameters'][0]
@@ -298,7 +325,7 @@ def test_ideal_launch_uses_separate_wall_and_cv_maps(monkeypatch):
     args = dict(amcl.launch_arguments)
     assert args['map_topic'] == '/limo/map_package/online/maps/laser_map'
     assert args['cv_map_topic'] == '/map'
-    assert args['laser_weight_factor'] == '1.0'
+    assert args['laser_weight_factor'] == '2.0'
     assert args['cv_weight_factor'] == '1.0'
     assert args['cv_enabled'] == 'true'
     assert args['cv_occupied_threshold'] == '50'
@@ -328,7 +355,7 @@ def test_ideal_launch_supports_cloud_replay_and_custom_map(monkeypatch, tmp_path
     amcl = next(action for action in actions
                 if isinstance(action, IncludeLaunchDescription))
     assert dict(amcl.launch_arguments)['use_sim_time'] == 'false'
-    assert dict(amcl.launch_arguments)['laser_weight_factor'] == '1.0'
+    assert dict(amcl.launch_arguments)['laser_weight_factor'] == '2.0'
 
 
 def test_ideal_launch_rejects_missing_map(monkeypatch, tmp_path):

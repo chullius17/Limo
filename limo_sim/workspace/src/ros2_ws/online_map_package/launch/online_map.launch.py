@@ -16,7 +16,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from limo_rviz.overlay import waterfall_overlay_bridge
+from limo_rviz.overlay import lane_overlay_bridge
 
 
 AMCL_PARAMETER_TYPES = {
@@ -216,7 +216,7 @@ def _launch_online(context):
             rviz_config = os.path.join(
                 get_package_share_directory('limo_rviz'),
                 'config', rviz_config)
-        bridge, overlay_remappings = waterfall_overlay_bridge(rviz_config, 'online_rviz')
+        bridge, overlay_remappings = lane_overlay_bridge(rviz_config, 'online_rviz')
         if bridge:
             actions.append(Node(**bridge, parameters=[clock]))
         actions.append(Node(

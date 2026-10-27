@@ -9,8 +9,8 @@
 | Rear axle to base | 0.10 m | 0.12 m |
 | Minimum turning radius | 0.462 m | 0.55 m |
 | Controller frequency | 10 Hz | 20 Hz |
-| MPC sequences / steps | 128 / 25 | 768 / 80 |
-| Model timestep / horizon | 0.10 s / 2.5 s | 0.05 s / 4.0 s |
+| MPC proposal budget / steps | Up to 59 / 40 | Up to 59 / 80 |
+| Model timestep / horizon | 0.10 s / 4.0 s | 0.05 s / 4.0 s |
 | Require chassis command mode | Yes | No |
 | Default clock | Wall clock | Simulation clock |
 | Default local GUI | Off | On |
@@ -21,6 +21,17 @@ Simulation geometry is now in its YAML rather than applied over a parameter file
 by the launch. Real control uses a smaller Nano CPU budget, retaining geometry,
 velocity/acceleration limits, the prediction horizon and footprint collision checks.
 The real local costmap updates at 10 Hz and publishes at 2 Hz.
+
+Both profiles add three slow-start candidates when the model's initial speed
+is at most 0.05 m/s in magnitude: full right steering, straight, and full left
+steering. Each ramps at 0.05 m/s² toward 0.03 m/s and holds that speed through
+the horizon. Tune these under `FollowPath.MPC.Startup` (`enabled`,
+`max_initial_speed`, `target_speed`, `acceleration`). They obey the same steering
+dynamics, effort costs, full-footprint collision checks and terminal tube as
+every other candidate. The regular 56 proposals remain available; at low speed
+the budget is 59 before deduplication. Telemetry labels this family
+`Partenza lenta` in the preview. See [Pianificazione.md](limo_controller/Pianificazione.md)
+for all trajectory groups.
 
 Both profiles enable `FollowPath.MppiPath.ObstacleGuidance`: when a newly observed
 obstacle blocks the reference, MPC scores progress through free space toward
@@ -33,18 +44,17 @@ for parameters and local-map/kinematic limitations. Rebuild both
 `limo_dwb_critics` and `limo_controller`, then restart the control application.
 
 Detours are triggered by the oriented footprint, so an already collision-free
-planned path beside an obstacle keeps normal tracking. Simulation uses a 4 s
-prediction horizon and soft costs for reverse distance and direction changes;
-both profiles retain detour scoring until the robot has returned near the reference.
-Real control retains its 2.5 s horizon and 128 candidates at 10 Hz. Both profiles
+planned path beside an obstacle keeps normal tracking. Both profiles use a 4 s
+prediction horizon, forward motion or stopping, and retain detour scoring until
+the robot has returned near the reference. Real control runs at 10 Hz, simulation
+at 20 Hz; both generate up to 59 proposals before deduplication. Both profiles
 use a 5 x 5 m local costmap and a 2.50 m prune distance to include a free rejoin
-point beyond the obstacle. The real controller footprint is 0.312 x 0.210 m
-with zero padding, inset 5 mm per side from the planner footprint; this reduces
-the collision envelope below the physical dimensions. The chassis guard and
+point beyond the obstacle. The real controller footprint is 0.322 x 0.220 m
+with zero padding. The chassis guard and
 command timeouts remain active. The larger map and guidance field add work to
 the real control cycle; verify the complete cycle still fits within 100 ms on
-the Nano. The shorter real horizon and smaller sample budget can limit detours
-that succeed with the simulation profile.
+the Nano. Different geometry, model timesteps and obstacle weights can produce
+different detours between the real and simulation profiles.
 
 The real profile gives local obstacle costs twice their reference weight:
 `FollowPath.MppiObstacle.scale` is 6.0 instead of 3.0, while path and goal
@@ -214,6 +224,43 @@ the configured 4 cm-wide bands are represented only where cell distances allow.
 Published output is `/local_costmap/costmap_raw`; MPC telemetry captures this
 same final grid when evaluating candidates.
 
+## Confirmed arrival: SUCCESS
+
+After START has been accepted, `path_executor` publishes a latched `SUCCESS`
+status when the measured robot center stays inside the green goal circle while
+remaining stopped continuously for the configured dwell time. Position is
+`base_link` transformed into the global path frame at the odometry timestamp;
+velocity comes from measured odometry, including planar lateral velocity and
+yaw rate. Final orientation is not part of this SUCCESS condition.
+
+Tune these in `path_executor.ros__parameters` of `control_sim.yaml` or
+`control_real.yaml`:
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `goal_circle_radius` | 0.20 m | Shared radius for the green circle and arrival detection |
+| `success_dwell_time` | 2.0 s | Continuous stopped time, measured on the ROS clock |
+| `stopped_linear_velocity` | 0.01 m/s | Maximum measured planar speed considered stopped |
+| `stopped_angular_velocity` | 0.05 rad/s | Maximum absolute measured yaw rate considered stopped |
+| `success_odom_topic` | `/odometry/filtered` | Measured odometry source |
+| `success_odom_timeout` | 0.5 s | Maximum measurement age and gap between qualifying samples |
+
+Motion, leaving the circle, unavailable TF, stale or invalid odometry, clock
+rewind, PAUSE, ABORT or a replacement path reset the dwell. Repeated timestamps
+do not advance it. No SUCCESS is reported before START or during PAUSE.
+The radius applies to the robot center, not the footprint.
+
+On SUCCESS the executor ends its control request and cancels any remaining
+FollowPath action. Late action results preserve SUCCESS. The GUI shows SUCCESS
+in green, restores START and disables PAUSE. A new path, START or ABORT clears
+the latched success state; there is no automatic restart.
+
+Nav2's existing goal checker still decides when FollowPath finishes. If it
+finishes first, the procedure stays ACTIVE while waiting for the measured
+arrival condition, then reports SUCCESS instead of returning directly to READY.
+Errors remain ERROR and cannot produce SUCCESS from subsequent idle samples.
+Restart the control application after changing these parameters.
+
 ## MPC telemetry and optional image preview
 
 `FollowPath.MPC.Debug.enabled` enables telemetry on `/limo/control/mpc_debug`.
@@ -278,7 +325,13 @@ free cells remain blank. The legend reports the number of positive-cost cells.
 `costmap_point_size` changes only marker size in either mode.
 
 The view also contains the global reference in magenta and representative predicted base_link
-trajectories. Initial and first
+trajectories. A green circle marks the last point of the global reference;
+`path_executor.ros__parameters.goal_circle_radius` in the selected controller
+profile sets its radius in meters (default 0.20). The launch passes this same
+radius to the preview and the SUCCESS detector. A standalone preview uses
+`goal_circle_radius` in `config/mpc_preview_sim.yaml` instead (0 hides its circle).
+The circle is drawn before START and during PAUSE too, and disappears when the
+global path is cleared. Initial and first
 winning velocity/steering values are shown numerically in the legend. These are
 model states, not measured steering joints. The bicycle drawing, steering arrows
 and magnified model inset are omitted to leave the costmap visible.
@@ -290,6 +343,9 @@ and magnified model inset are omitted to leave the costmap visible.
 | Constant curvature | Purple |
 | Perturbed nominal | Teal |
 | Broad exploration | Orange |
+| Structured blocks | Magenta |
+| Monophase | Cyan |
+| Slow starts | Violet |
 | Selected trajectory | Green with a white outline |
 | Global reference path | Magenta with a white outline |
 
@@ -316,8 +372,8 @@ Settings are split between two YAML files:
 The footprint comes directly from the controller snapshot, so editing it does
 not require duplicating it in the renderer YAML.
 Simulation exports MPC snapshots and images at a target of 10 Hz; the real
-profile retains 4 Hz MPC telemetry. Each snapshot contains six representatives
-per family (one each for braking/nominal), plus the winner if necessary. Fonts
+profile retains 4 Hz MPC telemetry. Each snapshot contains up to 27 representatives
+per family (one each for braking/nominal, up to three slow starts), plus the winner if necessary. Fonts
 and nonfree cell indices are cached; cell transforms share one affine map per
 image. PNG compression defaults to level 1, keeping every point and the full
 960 x 960 image while reducing encoding work. No snapshot is constructed

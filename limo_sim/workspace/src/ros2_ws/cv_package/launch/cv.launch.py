@@ -10,7 +10,7 @@ from launch.event_handlers import OnProcessStart
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from limo_rviz.overlay import waterfall_overlay_bridge
+from limo_rviz.overlay import lane_overlay_bridge
 
 
 def _boolean(value):
@@ -102,7 +102,7 @@ def _launch_cv(context):
         config_dir = os.path.join(
             get_package_share_directory('limo_rviz'), 'config')
         rviz_config = os.path.join(config_dir, settings['rviz_config'])
-        bridge, overlay_remappings = waterfall_overlay_bridge(rviz_config, 'cv_rviz')
+        bridge, overlay_remappings = lane_overlay_bridge(rviz_config, 'cv_rviz')
         if bridge:
             nodes.append(Node(**bridge, parameters=[{'use_sim_time': use_sim_time}]))
         nodes.append(Node(

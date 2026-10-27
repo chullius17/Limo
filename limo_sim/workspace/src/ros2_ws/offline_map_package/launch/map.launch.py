@@ -16,7 +16,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
-from limo_rviz.overlay import waterfall_overlay_bridge
+from limo_rviz.overlay import lane_overlay_bridge
 
 
 def _boolean(value):
@@ -114,7 +114,7 @@ def _launch_mapping(context):
         if not os.path.isabs(rviz_config):
             rviz_config = os.path.join(
                 get_package_share_directory('limo_rviz'), 'config', rviz_config)
-        bridge, overlay_remappings = waterfall_overlay_bridge(rviz_config, 'offline_rviz')
+        bridge, overlay_remappings = lane_overlay_bridge(rviz_config, 'offline_rviz')
         if bridge:
             nodes.append(Node(**bridge, parameters=[clock]))
         nodes.append(Node(

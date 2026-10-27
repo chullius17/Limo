@@ -10,10 +10,19 @@ griglia semantica CV con memoria e inflation, come nell'applicazione normale.
 Il launch avvia una sola pipeline CV e il nodo `local_ctrl_map` con
 `mapping_sim.yaml`. Tutti i nodi usano `/clock`; i grafici AMCL non vengono avviati.
 
+Si apre anche la GUI di planning: in alto mostra la costmap globale usata da
+SMAC, aggiornata dal topic configurato nel bridge (normalmente
+`/global_costmap/costmap`), e in basso il log dei tentativi: posa di start e
+arrivo, motivo del fallimento e successo finale. Il log riparte a ogni nuovo
+goal e resta disponibile riaprendo la GUI. I due pannelli sono ridimensionabili.
+La finestra mostra la costmap
+elaborata del planner, distinta dalla mappa ideale `/map` e dalla costmap locale
+dell'MPC.
+
 Con Gazebo, robot, camera, `/scan` e odometria già attivi, compilare nel workspace ROS:
 
 ```bash
-colcon build --packages-select online_map_package user_package --symlink-install
+colcon build --packages-select online_map_package traj_package user_package --symlink-install
 source install/setup.bash
 ros2 launch user_package limo_app_ideal_sim.launch.py
 ```
@@ -24,7 +33,7 @@ selezionare il goal con **2D Goal Pose** e avviare l'esecuzione con **START**
 nell'interfaccia di controllo. AMCL confronta la CV con la mappa ideale e
 `/scan` con la mappa statica dei muri perimetrali Gazebo, pubblicata su
 `/limo/map_package/online/maps/laser_map`. Entrambi i pesi sono quelli di
-`mapping_sim.yaml` (1.0). Il laser alimenta anche gli ostacoli locali dell'MPC.
+`mapping_sim.yaml`: laser 2.0 e CV 1.0. Il laser alimenta anche gli ostacoli locali dell'MPC.
 In RViz abilitare **Static Laser Map** per vedere il bordo di localizzazione.
 Gazebo e il bringup del robot si avviano separatamente.
 
@@ -48,7 +57,8 @@ ros2 launch user_package limo_app_ideal_sim.launch.py \
   laser_map_yaml:=/percorso/laser_map.yaml start_cv:=false
 ```
 
-`start_rviz:=false`, `start_control_gui:=false` e `start_mpc_preview:=false`
+`start_rviz:=false`, `start_control_gui:=false`, `start_planning_gui:=false`
+e `start_mpc_preview:=false`
 disabilitano i rispettivi viewer. `planner_params_file`, `controller_params_file`
 e `mpc_preview_params_file` consentono di usare YAML personalizzati; quelli
 predefiniti sono i profili `sim` esistenti.

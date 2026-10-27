@@ -11,7 +11,7 @@ namespace limo_smac_planner
 nav_msgs::msg::Path dubinsConnector(
   const geometry_msgs::msg::PoseStamped & start,
   const geometry_msgs::msg::PoseStamped & end,
-  double turning_radius, double sample_step, double max_length)
+  double turning_radius, double sample_step, double max_length, double * measured_length)
 {
   if (start.header.frame_id != end.header.frame_id || turning_radius <= 0.0 ||
     sample_step <= 0.0 || max_length <= 0.0)
@@ -27,8 +27,9 @@ nav_msgs::msg::Path dubinsConnector(
   to[1] = end.pose.position.y;
   to[2] = tf2::getYaw(end.pose.orientation);
   const double length = space->distance(from(), to());
+  if (measured_length) {*measured_length = length;}
   if (!std::isfinite(length) || length > max_length) {
-    throw std::runtime_error("Initial Dubins connector exceeds start_connector_max_length");
+    throw DubinsLengthError();
   }
   nav_msgs::msg::Path path;
   path.header = start.header;

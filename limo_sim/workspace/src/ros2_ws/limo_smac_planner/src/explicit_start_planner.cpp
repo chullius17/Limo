@@ -25,7 +25,8 @@ public:
     clock_ = node->get_clock();
     costmap_ = costmap;
     const auto read = [&](const std::string & key, double value) {
-        nav2_util::declare_parameter_if_not_declared(node, name + "." + key,
+        nav2_util::declare_parameter_if_not_declared(
+          node, name + "." + key,
           rclcpp::ParameterValue(value));
         const double result = node->get_parameter(name + "." + key).as_double();
         if (!std::isfinite(result) || result <= 0.0) {
@@ -41,62 +42,75 @@ public:
     planner_ = loader_->createSharedInstance("smac_planner/SmacPlanner");
     planner_->configure(node, name, tf, costmap);
     angle_bins_ = node->get_parameter(name + ".angle_quantization_bins").as_int();
-    nav2_util::declare_parameter_if_not_declared(node, name + ".explicit_start_service",
+    nav2_util::declare_parameter_if_not_declared(
+      node, name + ".explicit_start_service",
       rclcpp::ParameterValue("/compute_path_with_start"));
     service_ = node->create_service<limo_interfaces::srv::ComputePathWithStart>(
       node->get_parameter(name + ".explicit_start_service").as_string(),
       [this](const std::shared_ptr<limo_interfaces::srv::ComputePathWithStart::Request> request,
       std::shared_ptr<limo_interfaces::srv::ComputePathWithStart::Response> response) {
         std::lock_guard<std::mutex> lock(mutex_);
+        response->connector_max_length = max_length_;
         try {
           if (!active_) {throw std::runtime_error("Planner is inactive");}
           std::unique_lock<nav2_costmap_2d::Costmap2D::mutex_t> map_lock(
             *costmap_->getCostmap()->getMutex());
           const auto frame = costmap_->getGlobalFrameID();
-          for (const auto * pose : {&request->real_start, &request->start, &request->goal}) {
-            if (pose->header.frame_id != frame) {
+          auto * map = costmap_->getCostmap();
+          const auto validate = [&](const geometry_msgs::msg::PoseStamped & pose, bool check_cell) {
+            if (pose.header.frame_id != frame) {
               throw std::runtime_error("Explicit-start poses must use the global costmap frame");
             }
-            const auto & q = pose->pose.orientation;
-            if (!std::isfinite(pose->pose.position.x) || !std::isfinite(pose->pose.position.y) ||
-              !std::isfinite(q.x) || !std::isfinite(q.y) || !std::isfinite(q.z) ||
-              !std::isfinite(q.w) || q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w < 1e-12)
+            const auto & q = pose.pose.orientation;
+            if (!std::isfinite(pose.pose.position.x) || !std::isfinite(pose.pose.position.y) ||
+            !std::isfinite(q.x) || !std::isfinite(q.y) || !std::isfinite(q.z) ||
+            !std::isfinite(q.w) || q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w < 1e-12)
             {
               throw std::runtime_error("Invalid explicit-start pose coordinates or quaternion");
             }
             unsigned int x, y;
-            if (!costmap_->getCostmap()->worldToMap(
-                pose->pose.position.x, pose->pose.position.y, x, y))
-            {
+            if (!map->worldToMap(pose.pose.position.x, pose.pose.position.y, x, y)) {
               throw std::runtime_error("Explicit-start pose is outside the global costmap");
             }
-            if (pose != &request->real_start && costmap_->getCostmap()->getCost(x, y) >=
-              nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE)
+            if (check_cell && map->getCost(x, y) >=
+            nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE)
             {
               throw std::runtime_error("Virtual start or goal is occupied");
             }
-          }
-          auto path = planner_->createPlan(request->start, request->goal);
-          if (path.poses.empty()) {throw std::runtime_error("SMAC found no path");}
+          };
+          validate(request->real_start, false);
+          validate(request->start, true);
+          auto & virtual_start = response->planning_start;
+          virtual_start = request->start;
+          unsigned int x, y;
+          map->worldToMap(virtual_start.pose.position.x, virtual_start.pose.position.y, x, y);
+          map->mapToWorld(x, y, virtual_start.pose.position.x, virtual_start.pose.position.y);
+          const double bin = 2.0 * std::acos(-1.0) / angle_bins_;
+          double heading = tf2::getYaw(virtual_start.pose.orientation);
+          if (heading < 0.0) {heading += 2.0 * std::acos(-1.0);}
+          tf2::Quaternion orientation;
+          orientation.setRPY(0.0, 0.0, std::floor(heading / bin) * bin);
+          virtual_start.pose.orientation = tf2::toMsg(orientation);
           const double translation = std::hypot(
             request->real_start.pose.position.x - request->start.pose.position.x,
             request->real_start.pose.position.y - request->start.pose.position.y);
           const double yaw = tf2::getYaw(request->real_start.pose.orientation) -
-            tf2::getYaw(request->start.pose.orientation);
-          if (translation > 1e-6 || std::abs(std::atan2(std::sin(yaw), std::cos(yaw))) > 1e-6) {
-            // Foxy backtrace omits the initial node. Restore its exact grid/yaw
-            // pose so the connector ends at the virtual start, before the first SMAC step.
-            auto virtual_start = request->start;
-            unsigned int x, y;
-            auto * map = costmap_->getCostmap();
-            map->worldToMap(virtual_start.pose.position.x, virtual_start.pose.position.y, x, y);
-            map->mapToWorld(x, y, virtual_start.pose.position.x, virtual_start.pose.position.y);
-            const double bin = 2.0 * std::acos(-1.0) / angle_bins_;
-            double heading = tf2::getYaw(virtual_start.pose.orientation);
-            if (heading < 0.0) {heading += 2.0 * std::acos(-1.0);}
-            tf2::Quaternion orientation;
-            orientation.setRPY(0.0, 0.0, std::floor(heading / bin) * bin);
-            virtual_start.pose.orientation = tf2::toMsg(orientation);
+          tf2::getYaw(request->start.pose.orientation);
+          response->connector_required = translation > 1e-6 ||
+          std::abs(std::atan2(std::sin(yaw), std::cos(yaw))) > 1e-6;
+          response->connector_checked = true;
+          nav_msgs::msg::Path connector;
+          if (response->connector_required) {
+            // Check and sample the prefix BEFORE spending time in SMAC. As
+            // before, only this real-to-virtual prefix ignores collisions.
+            try {
+              connector = dubinsConnector(
+                request->real_start, virtual_start,
+                radius_, step_, max_length_, &response->connector_length);
+            } catch (const DubinsLengthError &) {
+              response->start_rejected = true;
+              throw;
+            }
             nav2_costmap_2d::FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *> checker(map);
             const double footprint_cost = checker.footprintCostAtPose(
               virtual_start.pose.position.x, virtual_start.pose.position.y,
@@ -104,10 +118,14 @@ public:
             if (footprint_cost < 0.0 || footprint_cost >= nav2_costmap_2d::LETHAL_OBSTACLE) {
               throw std::runtime_error("Quantized virtual start footprint is occupied");
             }
+          }
+          validate(request->goal, true);
+          auto path = planner_->createPlan(request->start, request->goal);
+          if (path.poses.empty()) {throw std::runtime_error("SMAC found no path");}
+          if (response->connector_required) {
+            // Foxy backtrace omits the initial node. Restore its grid/yaw pose
+            // at the join, then keep the original collision-checked SMAC suffix.
             path.poses.insert(path.poses.begin(), virtual_start);
-            // This prefix deliberately has no costmap or footprint collision checks.
-            auto connector = dubinsConnector(request->real_start, virtual_start,
-              radius_, step_, max_length_);
             response->connector_end_index = connector.poses.size() - 1;
             connector.poses.insert(connector.poses.end(), path.poses.begin() + 1, path.poses.end());
             path = std::move(connector);
@@ -154,6 +172,7 @@ public:
     clock_.reset();
     active_ = false;
   }
+
 private:
   std::mutex mutex_;
   bool active_{false};

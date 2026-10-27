@@ -27,6 +27,14 @@ int motionDirection(double velocity)
 
 void MpcConfig::validate() const
 {
+  if (startup_enabled && (!structured_actions ||
+    !std::isfinite(startup_max_initial_speed) || startup_max_initial_speed <= 0.0 ||
+    startup_max_initial_speed > max_velocity ||
+    !std::isfinite(startup_target_speed) || startup_target_speed <= 0.0 ||
+    startup_target_speed > startup_max_initial_speed ||
+    !std::isfinite(startup_acceleration) || startup_acceleration <= 0.0 ||
+    startup_acceleration > std::min(acceleration, deceleration)))
+  {throw std::invalid_argument("Invalid MPC startup speed, acceleration or strategy");}
   if (structured_actions) {
     double sum = 0.0;
     for (const double fraction : block_fractions) {
@@ -59,7 +67,8 @@ void MpcConfig::validate() const
     curvature_samples < 3 || curvature_samples > 100 || batch_size > 10000 ||
     !std::isfinite(action_noise) || action_noise < 0.0 || action_noise >= 1.0 ||
     action_variants < 1 || action_variants > 100 ||
-    (structured_actions ? (batch_size != 2 + 18 * action_variants || min_velocity != 0.0) :
+    (structured_actions ? (batch_size != 2 + 18 * action_variants +
+    (startup_enabled ? 3 : 0) || min_velocity != 0.0) :
     batch_size < 2 + velocity_samples * curvature_samples))
   {
     throw std::invalid_argument("Invalid MPC horizon, sample count, limits or weights");
@@ -356,6 +365,25 @@ MpcSolution SamplingMpc::solve(
       }
     }
     for (const auto & targets : monophase_targets) {consider(targets, MpcFamily::Monophase);}
+    if (config_.startup_enabled &&
+      std::abs(initial.control.velocity) <= config_.startup_max_initial_speed)
+    {
+      // Three absolute steering references: full right, straight, full left.
+      // Ramp toward a low speed, then hold it for the rest of the horizon.
+      // These candidates use the same rollout, effort costs and evaluator.
+      const double max_angle = std::atan(config_.wheelbase / config_.min_turning_radius);
+      for (int direction = -1; direction <= 1; ++direction) {
+        std::vector<MpcControl> targets(count);
+        auto control = initial.control;
+        for (std::size_t t = 0; t < count; ++t) {
+          targets[t] = boundedTarget({approach(control.velocity,
+              config_.startup_target_speed, config_.startup_acceleration * config_.dt),
+              direction * max_angle});
+          control = advance(control, targets[t]);
+        }
+        consider(targets, MpcFamily::Startup);
+      }
+    }
   } else {
   // Deterministic constant-curvature seeds cover the whole operating range.
   // The remaining samples vary their targets across control_segments blocks.

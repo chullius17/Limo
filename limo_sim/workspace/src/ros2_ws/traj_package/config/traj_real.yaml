@@ -69,10 +69,8 @@ planner_server:
 
       change_penalty: 0.0
       non_straight_penalty: 1.15
-      # Preserve cells up to 85 as traversable, but make semantic costs above
-      # 25 increasingly unattractive. A strong cost weight makes SMAC prefer a
-      # longer low-cost detour while still allowing the 26-85 band when it is
-      # the only feasible route. Values >= 86 are made lethal by StaticLayer.
+      # Penalize traversable semantic costs below 60. Yellow lines (60),
+      # boardwalk (90) and occupied cells (100) are lethal in StaticLayer.
       cost_penalty: 4.0
 
       # Preserve the curvature of the kinematically feasible Hybrid-A* path.
@@ -105,9 +103,9 @@ global_costmap:
       # These are costmap-wide StaticLayer inputs in Foxy. Keeping
       # trinary mode disabled preserves intermediate OccupancyGrid costs.
       trinary_costmap: false
-      # Source-map values strictly greater than 85 are hard obstacles for
-      # SMAC. StaticLayer treats values >= this threshold as lethal.
-      lethal_cost_threshold: 86
+      # Yellow lines (60) and higher source-map costs are hard obstacles for
+      # SMAC. White markings (30) remain traversable with a soft cost.
+      lethal_cost_threshold: 60
       unknown_cost_value: 255
       use_maximum: false
 

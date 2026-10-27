@@ -94,12 +94,19 @@ def test_constant_radii_are_valid_ros_launch_parameters(monkeypatch, profile):
         np.testing.assert_array_equal(evaluated[name], cloud[name])
 
 
-def test_desktop_starts_only_viewer_and_backend_ignores_rviz(monkeypatch):
-    desktop = pipeline(monkeypatch, mode='desktop')
-    assert set(desktop) == {'cv_rviz', 'cv_rviz_waterfall_overlay_decoder'}
+@pytest.mark.parametrize('profile,config,decoder', [
+    ('real', 'cv_visual_real.rviz', 'cv_rviz_waterfall_overlay_decoder'),
+    ('sim', 'cv_visual.rviz', 'cv_rviz_lane_overlay_decoder'),
+])
+def test_desktop_starts_only_viewer_and_backend_ignores_rviz(
+        monkeypatch, profile, config, decoder):
+    desktop = pipeline(monkeypatch, profile, mode='desktop')
+    assert set(desktop) == {'cv_rviz', decoder}
     assert desktop['cv_rviz']['arguments'] == [
-        '-d', str(PACKAGES / 'limo_rviz/config/cv_visual_real.rviz')]
-    nodes = pipeline(monkeypatch, mode='backend', start_rviz='true',
+        '-d', str(PACKAGES / 'limo_rviz/config' / config)]
+    topic = dict(desktop[decoder]['remappings'])['out']
+    assert topic in dict(desktop['cv_rviz']['remappings']).values()
+    nodes = pipeline(monkeypatch, profile, mode='backend', start_rviz='true',
                      visual_ptcld_enable_telemetry='false')
     assert 'cv_rviz' not in nodes
     assert nodes['visual_ptcld']['parameters'][0]['enable_telemetry'] is False

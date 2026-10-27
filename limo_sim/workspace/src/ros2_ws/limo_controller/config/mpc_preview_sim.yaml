@@ -6,6 +6,7 @@ mpc_preview:
     tube_radius: 0.60  # Meters from the global path to the white boundary; 0 hides it.
     # control.launch.py overrides this with path_distance_layer.tube_radius.
     tube_line_width: 2  # Pixels; draw the contour without covering the costmap.
+    goal_circle_radius: 0.20  # Standalone fallback; launch shares path_executor.goal_circle_radius.
     costmap_topic: /local_costmap/costmap_raw
     footprint_topic: /local_costmap/published_footprint
     view_mode: costmap  # Same final grid used by MPC, including Gaussian inflation.
@@ -50,6 +51,7 @@ mpc_preview:
       broad_exploration: [220, 140, 35]
       structured: [230, 60, 180]
       monophase: [70, 185, 195]
+      startup: [120, 90, 220]
     selected_color: [0, 180, 65]
     global_path_color: [190, 40, 140]
     free_color: [238, 241, 245]

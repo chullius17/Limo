@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Verify real RViz profiles decode JPEG overlays into raw Image messages."""
+"""Verify simulation and real RViz profiles decode JPEG lane overlays."""
 
 from pathlib import Path
 import signal
@@ -22,22 +22,25 @@ import time
 import pytest
 import yaml
 
-from limo_rviz.overlay import WATERFALL_OVERLAY, waterfall_overlay_bridge
+from limo_rviz.overlay import LANE_OVERLAY, WATERFALL_OVERLAY, lane_overlay_bridge
 
 
 PACKAGE = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize('profile,viewer', [
-    ('online_map_real.rviz', 'online_rviz'),
-    ('offline_map_real.rviz', 'offline_rviz'),
-    ('cv_visual_real.rviz', 'cv_rviz'),
+@pytest.mark.parametrize('profile,viewer,topic', [
+    ('online_map_real.rviz', 'online_rviz', WATERFALL_OVERLAY),
+    ('offline_map_real.rviz', 'offline_rviz', WATERFALL_OVERLAY),
+    ('cv_visual_real.rviz', 'cv_rviz', WATERFALL_OVERLAY),
+    ('online_map.rviz', 'online_rviz', LANE_OVERLAY),
+    ('offline_map.rviz', 'offline_rviz', LANE_OVERLAY),
+    ('cv_visual.rviz', 'cv_rviz', LANE_OVERLAY),
 ])
-def test_real_viewers_wire_compressed_overlay_to_raw_display(profile, viewer):
-    decoder, remappings = waterfall_overlay_bridge(PACKAGE / 'config' / profile, viewer)
+def test_viewers_wire_compressed_overlay_to_raw_display(profile, viewer, topic):
+    decoder, remappings = lane_overlay_bridge(PACKAGE / 'config' / profile, viewer)
     assert decoder['arguments'] == ['compressed', 'raw']
-    assert dict(decoder['remappings'])['in/compressed'] == WATERFALL_OVERLAY + '/compressed'
-    assert dict(remappings)[WATERFALL_OVERLAY] == dict(decoder['remappings'])['out']
+    assert dict(decoder['remappings'])['in/compressed'] == topic + '/compressed'
+    assert dict(remappings)[topic] == dict(decoder['remappings'])['out']
 
 
 def test_disabled_overlay_does_not_start_decoder(tmp_path):
@@ -47,10 +50,14 @@ def test_disabled_overlay_does_not_start_decoder(tmp_path):
             display['Enabled'] = False
     path = tmp_path / 'disabled.rviz'
     path.write_text(yaml.safe_dump(config))
-    assert waterfall_overlay_bridge(path, 'test') == (None, [])
+    assert lane_overlay_bridge(path, 'test') == (None, [])
 
 
-def test_republisher_decodes_jpeg_and_preserves_header():
+@pytest.mark.parametrize('profile,topic', [
+    ('online_map.rviz', LANE_OVERLAY),
+    ('online_map_real.rviz', WATERFALL_OVERLAY),
+])
+def test_republisher_decodes_jpeg_and_preserves_header(profile, topic):
     rclpy = pytest.importorskip('rclpy')
     cv2 = pytest.importorskip('cv2')
     np = pytest.importorskip('numpy')
@@ -58,8 +65,8 @@ def test_republisher_decodes_jpeg_and_preserves_header():
     from cv_bridge import CvBridge
     from sensor_msgs.msg import CompressedImage, Image
 
-    decoder, remappings = waterfall_overlay_bridge(
-        PACKAGE / 'config/online_map_real.rviz', 'overlay_test')
+    decoder, remappings = lane_overlay_bridge(
+        PACKAGE / 'config' / profile, 'overlay_test')
     command = [get_package_prefix('image_transport') + '/lib/image_transport/republish',
                *decoder['arguments'], '--ros-args', '-r', '__node:=' + decoder['name']]
     for source, destination in decoder['remappings']:
@@ -67,8 +74,8 @@ def test_republisher_decodes_jpeg_and_preserves_header():
     rclpy.init(args=[])
     node = rclpy.create_node('overlay_bridge_test')
     received = []
-    node.create_subscription(Image, dict(remappings)[WATERFALL_OVERLAY], received.append, 10)
-    publisher = node.create_publisher(CompressedImage, WATERFALL_OVERLAY + '/compressed', 10)
+    node.create_subscription(Image, dict(remappings)[topic], received.append, 10)
+    publisher = node.create_publisher(CompressedImage, topic + '/compressed', 10)
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
         pixels = np.full((16, 32, 3), (200, 20, 10), dtype=np.uint8)

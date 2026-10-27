@@ -63,6 +63,9 @@ def mpc_preview_node(context, configured_params, preview_params):
     tube = config.get('local_costmap', {}).get('local_costmap', {}).get(
         'ros__parameters', {}).get('path_distance_layer', {})
     preview_parameters = [preview_params]
+    executor = config.get('path_executor', {}).get('ros__parameters', {})
+    preview_parameters.append({
+        'goal_circle_radius': float(executor.get('goal_circle_radius', 0.20))})
     if 'tube_radius' in tube:
         preview_parameters.append({'tube_radius': float(tube['tube_radius'])})
     return [Node(

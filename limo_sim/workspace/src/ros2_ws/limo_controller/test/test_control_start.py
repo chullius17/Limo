@@ -38,6 +38,7 @@ def test_start_control_sends_the_stored_path():
     bridge = SimpleNamespace(
         goal_pending=False,
         waiting_for_server=False,
+        arrival_pending=False,
         control_path=path,
         active_control_goal_handle=None,
         follow_path_client=SimpleNamespace(
@@ -46,6 +47,7 @@ def test_start_control_sends_the_stored_path():
         control_paused=False,
         _send_control_goal=lambda: sent.append(path) or True,
         _publish_control_state=states.append,
+        _reset_arrival=lambda: None,
     )
     request = SimpleNamespace(data=True)
     response = SimpleNamespace(success=False, message='')
@@ -368,3 +370,146 @@ def test_resume_performs_a_fresh_tube_check(tube_executor):
     assert tube_executor.tube_check_future is fresh
     fresh.set_result(SimpleNamespace(success=True, message='Footprint inside tube'))
     tube_executor.follow_path_client.send_goal_async.assert_called_once()
+
+
+@pytest.fixture
+def arriving_executor(executor, monkeypatch):
+    from rclpy.time import Time
+    path = ready_path(executor)
+    path.poses[-1].pose.position.x = 10.0
+    path.poses[-1].pose.position.y = 5.0
+    executor.control_path = path
+    clock = Mock()
+    clock.now.return_value = Time(nanoseconds=0)
+    monkeypatch.setattr(executor, 'get_clock', lambda: clock)
+    executor.tf_buffer.lookup_transform = Mock()
+    assert start(executor).success
+    executor.test_goal_handle = accept_pending_goal(executor)
+    return executor
+
+
+def arrival_sample(executor, now, *, stamp=None, x=10.1, linear=0.0, angular=0.0):
+    from geometry_msgs.msg import TransformStamped
+    from nav_msgs.msg import Odometry
+    from rclpy.time import Time
+    executor.get_clock().now.return_value = Time(nanoseconds=round(now * 1e9))
+    odometry = Odometry()
+    odometry.header.stamp = Time(nanoseconds=round(
+        (now if stamp is None else stamp) * 1e9)).to_msg()
+    # The odometry pose is deliberately in a different frame: use TF for the goal distance.
+    odometry.pose.pose.position.x = -100.0
+    odometry.twist.twist.linear.x = linear
+    odometry.twist.twist.angular.z = angular
+    transform = TransformStamped()
+    transform.transform.translation.x = x
+    transform.transform.translation.y = 5.0
+    executor.tf_buffer.lookup_transform.return_value = transform
+    executor._arrival_odometry(odometry)
+
+
+def control_status(executor):
+    return executor.control_status_publisher.publish.call_args[0][0].data
+
+
+@pytest.mark.parametrize('late_status', ['STATUS_CANCELED', 'STATUS_SUCCEEDED', 'STATUS_ABORTED'])
+def test_measured_arrival_cancels_control_and_latches_success_despite_late_action_result(
+        arriving_executor, late_status):
+    from action_msgs.msg import GoalStatus
+    node = arriving_executor
+    for index in range(20):
+        arrival_sample(node, index / 10)
+        assert not control_status(node).startswith('SUCCESS:')
+    arrival_sample(node, 2.0)
+    assert control_status(node).startswith('SUCCESS:')
+    assert not node.control_requested
+    assert not node.control_paused
+    node.test_goal_handle.cancel_goal_async.assert_called_once()
+    node.test_goal_handle.get_result_async.return_value.set_result(
+        SimpleNamespace(status=getattr(GoalStatus, late_status)))
+    assert control_status(node).startswith('SUCCESS:')
+    node._retry_waiting_control_goal()
+    node.follow_path_client.send_goal_async.assert_called_once()
+    ready_path(node)
+    assert control_status(node).startswith('READY:')
+    assert node.success_generation is None
+
+
+@pytest.mark.parametrize('problem', ['moving', 'rotating', 'outside', 'stale', 'tf', 'nan'])
+def test_arrival_dwell_resets_on_motion_outside_circle_or_missing_measurements(
+        arriving_executor, problem):
+    from tf2_ros import TransformException
+    node = arriving_executor
+    for index in range(11):
+        arrival_sample(node, index / 10)
+    values = {}
+    if problem == 'moving':
+        values['linear'] = 0.02
+    elif problem == 'rotating':
+        values['angular'] = 0.1
+    elif problem == 'outside':
+        values['x'] = 10.21
+    elif problem == 'stale':
+        values['stamp'] = 0.0
+    elif problem == 'tf':
+        node.tf_buffer.lookup_transform.side_effect = TransformException('missing TF')
+    else:
+        values['linear'] = float('nan')
+    arrival_sample(node, 1.1, **values)
+    node.tf_buffer.lookup_transform.side_effect = None
+    for index in range(12, 32):
+        arrival_sample(node, index / 10)
+        assert not control_status(node).startswith('SUCCESS:')
+    arrival_sample(node, 3.2)
+    assert control_status(node).startswith('SUCCESS:')
+
+
+def test_nav2_completion_waits_for_measured_stop_instead_of_returning_to_ready(arriving_executor):
+    from action_msgs.msg import GoalStatus
+    node = arriving_executor
+    node.test_goal_handle.get_result_async.return_value.set_result(
+        SimpleNamespace(status=GoalStatus.STATUS_SUCCEEDED))
+    assert node.arrival_pending
+    assert node.control_requested
+    assert control_status(node).startswith('ACTIVE:')
+    assert start(node).success  # Repeated START cannot restart a completed Nav2 action.
+    assert node._set_control_enabled(SetBool.Request(data=True), SetBool.Response()).success
+    node.follow_path_client.send_goal_async.assert_called_once()
+    for index in range(21):
+        arrival_sample(node, index / 10)
+    assert control_status(node).startswith('SUCCESS:')
+    node.test_goal_handle.cancel_goal_async.assert_not_called()
+
+
+@pytest.mark.parametrize('operation', ['pause', 'abort', 'replace'])
+def test_pause_abort_and_new_path_discard_partial_arrival(arriving_executor, operation):
+    node = arriving_executor
+    for index in range(11):
+        arrival_sample(node, index / 10)
+    if operation == 'pause':
+        node._set_control_enabled(SetBool.Request(data=False), SetBool.Response())
+    elif operation == 'abort':
+        node._set_control_active(SetBool.Request(data=False), SetBool.Response())
+    else:
+        ready_path(node)
+    for index in range(12, 35):
+        arrival_sample(node, index / 10)
+    assert not control_status(node).startswith('SUCCESS:')
+    assert node.arrival_monitor.started_at is None
+
+
+def test_stationary_robot_does_not_report_success_before_start(executor):
+    from nav_msgs.msg import Odometry
+    ready_path(executor)
+    executor._arrival_odometry(Odometry())
+    assert control_status(executor).startswith('READY:')
+
+
+def test_controller_failure_cannot_turn_into_success_from_idle_measurements(arriving_executor):
+    from action_msgs.msg import GoalStatus
+    node = arriving_executor
+    node.test_goal_handle.get_result_async.return_value.set_result(
+        SimpleNamespace(status=GoalStatus.STATUS_ABORTED))
+    for index in range(25):
+        arrival_sample(node, index / 10)
+    assert control_status(node).startswith('ERROR:')
+    assert not node.control_requested

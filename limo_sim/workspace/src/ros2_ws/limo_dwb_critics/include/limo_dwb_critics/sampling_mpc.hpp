@@ -22,6 +22,10 @@ struct MpcConfig
   bool deduplicate{false};
   int action_variants{3};
   double action_noise{0.20};
+  bool startup_enabled{false};
+  double startup_max_initial_speed{0.05};
+  double startup_target_speed{0.03};
+  double startup_acceleration{0.05};
   std::vector<double> block_fractions{0.25, 0.50, 0.25};
   double min_velocity{-0.10};
   double max_velocity{0.50};
@@ -71,7 +75,7 @@ struct MpcRollout
 enum class MpcFamily : std::uint8_t
 {
   Braking = 0, Nominal = 1, ConstantCurvature = 2,
-  PerturbedNominal = 3, BroadExploration = 4, Structured = 5, Monophase = 6
+  PerturbedNominal = 3, BroadExploration = 4, Structured = 5, Monophase = 6, Startup = 7
 };
 
 // NaN cost means effort-pruned; infinity means rejected. An observer never

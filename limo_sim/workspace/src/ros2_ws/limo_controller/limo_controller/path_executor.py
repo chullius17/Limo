@@ -15,11 +15,12 @@
 """Execute published paths through Nav2 on explicit GUI requests."""
 
 import copy
+import math
 import time
 
 from action_msgs.msg import GoalStatus
 from nav2_msgs.action import FollowPath
-from nav_msgs.msg import Path
+from nav_msgs.msg import Odometry, Path
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException
@@ -28,7 +29,9 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from std_msgs.msg import Bool, String
 from std_srvs.srv import SetBool, Trigger
+from tf2_ros import Buffer, TransformException, TransformListener
 
+from limo_controller.arrival import ArrivalDwell
 from limo_controller.chassis_safety import ChassisSafety
 
 
@@ -44,6 +47,26 @@ class PathExecutor(Node):
         self.declare_parameter('require_chassis_status', False)
         self.declare_parameter('commanded_control_mode', 1)
         self.declare_parameter('chassis_status_timeout', 1.0)
+        self.declare_parameter('goal_circle_radius', 0.20)
+        self.declare_parameter('success_dwell_time', 2.0)
+        self.declare_parameter('stopped_linear_velocity', 0.01)
+        self.declare_parameter('stopped_angular_velocity', 0.05)
+        self.declare_parameter('success_odom_topic', '/odometry/filtered')
+        self.declare_parameter('success_odom_timeout', 0.5)
+        self.declare_parameter('robot_base_frame', 'base_link')
+        self.arrival_monitor = ArrivalDwell(
+            radius=self.get_parameter('goal_circle_radius').value,
+            duration=self.get_parameter('success_dwell_time').value,
+            linear_limit=self.get_parameter('stopped_linear_velocity').value,
+            angular_limit=self.get_parameter('stopped_angular_velocity').value,
+            sample_timeout=self.get_parameter('success_odom_timeout').value)
+        self.robot_base_frame = self.get_parameter('robot_base_frame').value
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.success_generation = None
+        self.arrival_pending = False
+        self.execution_started_ns = None
+        self.success_clock_ns = None
         self.declare_parameter('require_tube_start', False)
         self.declare_parameter(
             'tube_check_service', '/local_costmap/local_costmap/path_distance_layer/check_start')
@@ -86,6 +109,9 @@ class PathExecutor(Node):
         self.path_subscription = self.create_subscription(
             Path, self.get_parameter('path_topic').value,
             self._path_callback, state_qos)
+        self.success_odom_subscription = self.create_subscription(
+            Odometry, self.get_parameter('success_odom_topic').value,
+            self._arrival_odometry, QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
         self.start_abort_service = self.create_service(
             SetBool, '/limo/control/set_active', self._set_control_active)
         self.pause_resume_service = self.create_service(
@@ -117,10 +143,66 @@ class PathExecutor(Node):
             self._publish_control_state(
                 f'READY: path contains {len(self.control_path.poses)} poses')
 
+    def _reset_arrival(self):
+        self.arrival_monitor.reset()
+        self.success_generation = None
+        self.arrival_pending = False
+        self.execution_started_ns = None
+        self.success_clock_ns = None
+
+    def _arrival_odometry(self, odometry):
+        """Confirm arrival from measured motion and the base_link center in the path frame."""
+        if (not self.control_requested or self.control_paused or self.control_path is None
+                or (self.active_control_goal_handle is None and not self.arrival_pending)):
+            self.arrival_monitor.reset()
+            return
+        now_ns = self.get_clock().now().nanoseconds
+        if self.success_clock_ns is not None and now_ns < self.success_clock_ns:
+            self.arrival_monitor.reset()
+            self.execution_started_ns = now_ns
+        self.success_clock_ns = now_ns
+        stamp = Time.from_msg(odometry.header.stamp)
+        age = (now_ns - stamp.nanoseconds) * 1e-9
+        if (not 0 <= age <= self.arrival_monitor.sample_timeout
+                or (self.execution_started_ns is not None
+                    and stamp.nanoseconds < self.execution_started_ns)):
+            self.arrival_monitor.reset()
+            return
+        endpoint_pose = self.control_path.poses[-1]
+        if (not self.control_path.header.frame_id or
+                (endpoint_pose.header.frame_id and
+                 endpoint_pose.header.frame_id != self.control_path.header.frame_id)):
+            self.arrival_monitor.reset()
+            return
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                self.control_path.header.frame_id, self.robot_base_frame, stamp)
+        except TransformException:
+            self.arrival_monitor.reset()
+            return
+        endpoint = endpoint_pose.pose.position
+        center = transform.transform.translation
+        twist = odometry.twist.twist
+        if self.arrival_monitor.update(
+                stamp.nanoseconds * 1e-9, math.hypot(center.x - endpoint.x, center.y - endpoint.y),
+                math.hypot(twist.linear.x, twist.linear.y), twist.angular.z):
+            self.success_generation = self.path_generation
+            self.arrival_pending = False
+            self.control_requested = False
+            self.control_paused = False
+            self.waiting_for_server = False
+            self.arrival_monitor.reset()
+            if self.active_control_goal_handle is not None:
+                self.active_control_goal_handle.cancel_goal_async()
+            self._publish_control_state(
+                'SUCCESS: stopped for {:g} s inside the goal circle (r={:g} m)'.format(
+                    self.arrival_monitor.duration, self.arrival_monitor.radius))
+
     def _path_callback(self, path):
         # Empty paths invalidate the previous plan. A replacement never starts
         # automatically, even when it arrives during an active control action.
         self.path_generation += 1
+        self._reset_arrival()
         self._invalidate_tube_check()
         self.control_requested = False
         self.control_paused = False
@@ -133,6 +215,7 @@ class PathExecutor(Node):
 
     def _set_control_active(self, request, response):
         if not request.data:
+            self._reset_arrival()
             self._invalidate_tube_check()
             self.safety_stop_reason = None
             self.control_requested = False
@@ -151,13 +234,14 @@ class PathExecutor(Node):
         if self.control_path is None:
             response.success = False
             response.message = 'No planned path is ready.'
-        elif (self.waiting_for_server or self.goal_pending
+        elif (self.waiting_for_server or self.goal_pending or self.arrival_pending
               or self.active_control_goal_handle is not None):
             response.success = self.control_requested
             response.message = (
                 'Control is already active.' if self.control_requested
                 else 'Wait for control abort to finish.')
         else:
+            self._reset_arrival()
             self.safety_stop_reason = None
             self.control_requested = True
             self.control_paused = False
@@ -173,6 +257,12 @@ class PathExecutor(Node):
             response.success = False
             response.message = 'Control has not been started.'
             return response
+        if request.data and not self.control_paused and self.arrival_pending:
+            response.success = True
+            response.message = 'Control is verifying stopped arrival.'
+            return response
+        self.arrival_monitor.reset()
+        self.arrival_pending = False
         if request.data:
             if not self._chassis_ready():
                 response.success = False
@@ -196,6 +286,7 @@ class PathExecutor(Node):
         return response
 
     def _fail(self, message):
+        self._reset_arrival()
         self.control_requested = False
         self.control_paused = False
         self.waiting_for_server = False
@@ -264,6 +355,8 @@ class PathExecutor(Node):
             generation = self.path_generation
             self.last_control_feedback_ns = None
             self.goal_pending = True
+            self.arrival_monitor.reset()
+            self.arrival_pending = False
             self._publish_control_state('STARTING: sending path to controller')
             future = self.follow_path_client.send_goal_async(
                 request,
@@ -366,6 +459,7 @@ class PathExecutor(Node):
                 or self.control_paused):
             goal_handle.cancel_goal_async()
             return
+        self.execution_started_ns = self.get_clock().now().nanoseconds
         self._publish_control_state(
             f'ACTIVE: following path with {pose_count} poses')
 
@@ -374,6 +468,8 @@ class PathExecutor(Node):
             self.active_control_goal_handle = None
         if generation != self.path_generation:
             return
+        if self.success_generation == generation:
+            return  # A late cancellation/result must not erase the confirmed SUCCESS.
         if self.safety_stop_reason is not None:
             # Cancellation/late action results must not erase the safety fault.
             self._publish_control_state(f'ERROR: {self.safety_stop_reason}')
@@ -384,9 +480,14 @@ class PathExecutor(Node):
             self._fail(f'Failed to receive FollowPath result: {exc}')
             return
         if response.status == GoalStatus.STATUS_SUCCEEDED:
-            self.control_requested = False
-            self.control_paused = False
-            self._publish_available_path()
+            if self.control_paused:
+                self._publish_control_state('PAUSED: control is stopped')
+            elif self.control_requested:
+                self.arrival_pending = True
+                self._publish_control_state(
+                    'ACTIVE: controller finished; verifying stopped arrival')
+            else:
+                self._publish_available_path()
         elif response.status == GoalStatus.STATUS_CANCELED:
             if self.control_paused:
                 self._publish_control_state('PAUSED: control is stopped')

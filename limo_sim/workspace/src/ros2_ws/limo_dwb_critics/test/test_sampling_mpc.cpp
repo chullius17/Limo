@@ -15,6 +15,117 @@ using limo_dwb_critics::MpcRollout;
 using limo_dwb_critics::MpcState;
 using limo_dwb_critics::SamplingMpc;
 
+TEST(SamplingMpc, ThreeSlowStartsRampFromRestAndHoldAbsoluteSteeringReferences)
+{
+  for (const double dt : {0.05, 0.10}) {
+    MpcConfig config;
+    config.structured_actions = true;
+    config.startup_enabled = true;
+    config.min_velocity = 0.0;
+    config.control_segments = 3;
+    config.batch_size = 59;
+    config.dt = dt;
+    config.time_steps = static_cast<int>(4.0 / dt);
+    config.steering_rate = 0.5;
+    for (const double speed : {0.0, 0.005, config.startup_max_initial_speed}) {
+      MpcState initial;
+      initial.control.velocity = speed;
+      initial.control.steering = 0.1;
+      SamplingMpc model(config);
+      std::vector<MpcRollout> starts;
+      model.solve(initial, [](const MpcRollout &, double) {return 1000.0;}, 1,
+        [&](const MpcRollout & r, limo_dwb_critics::MpcFamily family, std::size_t, double) {
+          if (family == limo_dwb_critics::MpcFamily::Startup) {starts.push_back(r);}
+        });
+      ASSERT_EQ(starts.size(), 3u);
+      const double max_angle = std::atan(config.wheelbase / config.min_turning_radius);
+      for (std::size_t i = 0; i < starts.size(); ++i) {
+        const auto & r = starts[i];
+        for (std::size_t t = 0; t < r.targets.size(); ++t) {
+          EXPECT_NEAR(r.targets[t].steering, (static_cast<int>(i) - 1) * max_angle, 1e-12);
+          const auto & a = r.states[t].control;
+          const auto & b = r.states[t + 1].control;
+          EXPECT_LE(std::abs(b.velocity - a.velocity), config.startup_acceleration * dt + 1e-12);
+          EXPECT_LE(std::abs(b.steering - a.steering), config.steering_rate * dt + 1e-12);
+          EXPECT_GE(b.velocity, 0.0);
+          EXPECT_LE(b.velocity, std::max(speed, config.startup_target_speed) + 1e-12);
+          EXPECT_LE(std::abs(model.yawRate(b)), config.max_yaw_rate + 1e-12);
+        }
+        EXPECT_NEAR(r.states.back().control.velocity, config.startup_target_speed, 1e-12);
+        EXPECT_GT(r.states.back().x, initial.x);
+        EXPECT_GT(r.effort_cost, 0.0);
+      }
+    }
+    MpcState moving;
+    moving.control.velocity = config.startup_max_initial_speed + 0.001;
+    SamplingMpc model(config);
+    int starts = 0;
+    model.solve(moving, [](const MpcRollout &, double) {return 1000.0;}, 1,
+      [&](const MpcRollout &, limo_dwb_critics::MpcFamily family, std::size_t, double) {
+        starts += family == limo_dwb_critics::MpcFamily::Startup;
+      });
+    EXPECT_EQ(starts, 0);
+  }
+}
+
+TEST(SamplingMpc, SlowStartEscapesStationaryChoiceWhenFastPredictionsAreBlocked)
+{
+  MpcConfig config;
+  config.structured_actions = true;
+  config.deduplicate = true;
+  config.min_velocity = 0.0;
+  config.control_segments = 3;
+  config.time_steps = 80;
+  config.steering_rate = 0.5;
+  config.batch_size = 56;
+  const auto objective = [](const MpcRollout & r, double) {
+      for (const auto & s : r.states) {
+        if (std::hypot(s.x, s.y) > 0.20) {return std::numeric_limits<double>::infinity();}
+      }
+      return 10.0 * std::pow(0.15 - r.states.back().x, 2);
+    };
+  SamplingMpc baseline(config);
+  auto stopped = baseline.solve(MpcState(), objective);
+  ASSERT_TRUE(std::isfinite(stopped.cost));
+  EXPECT_DOUBLE_EQ(stopped.rollout.states[1].control.velocity, 0.0);
+  config.startup_enabled = true;
+  config.batch_size = 59;
+  SamplingMpc updated(config);
+  auto result = updated.solve(MpcState(), objective);
+  ASSERT_TRUE(std::isfinite(result.cost));
+  EXPECT_EQ(result.family, limo_dwb_critics::MpcFamily::Startup);
+  EXPECT_GT(result.rollout.states[1].control.velocity, 0.0);
+  EXPECT_GT(result.rollout.states.back().x, 0.05);
+  EXPECT_LT(result.cost, stopped.cost);
+  EXPECT_EQ(result.generated_count + result.duplicate_count, 59u);
+  auto blocked = updated.solve(MpcState(), [](const MpcRollout &, double) {
+      return std::numeric_limits<double>::infinity();
+    });
+  EXPECT_FALSE(std::isfinite(blocked.cost));
+  EXPECT_FALSE(updated.hasWarmStart());
+}
+
+TEST(SamplingMpc, StartupConfigurationRequiresValidLimitsAndItsThreeProposalBudget)
+{
+  MpcConfig valid;
+  valid.structured_actions = true;
+  valid.startup_enabled = true;
+  valid.min_velocity = 0.0;
+  valid.control_segments = 3;
+  valid.batch_size = 59;
+  EXPECT_NO_THROW(valid.validate());
+  for (int failure = 0; failure < 6; ++failure) {
+    auto config = valid;
+    if (failure == 0) {config.batch_size = 56;}
+    if (failure == 1) {config.startup_target_speed = 0.0;}
+    if (failure == 2) {config.startup_acceleration = config.acceleration + 0.1;}
+    if (failure == 3) {config.startup_max_initial_speed = config.startup_target_speed / 2;}
+    if (failure == 4) {config.startup_acceleration = std::numeric_limits<double>::quiet_NaN();}
+    if (failure == 5) {config.structured_actions = false;}
+    EXPECT_THROW(config.validate(), std::invalid_argument);
+  }
+}
+
 TEST(SamplingMpc, RejectsInvalidConfigurationAndState)
 {
   MpcConfig config;

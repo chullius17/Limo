@@ -243,7 +243,8 @@ def test_nano_budget_preserves_horizon_and_safety_timeouts():
     assert mpc['model_dt'] * mpc['time_steps'] == 4.0
     assert mpc['structured_actions'] is True
     assert mpc['control_segments'] == 3
-    assert mpc['batch_size'] == 2 + 18 * mpc['action_variants'] == 56
+    assert mpc['Startup']['enabled'] is True
+    assert mpc['batch_size'] == 2 + 18 * mpc['action_variants'] + 3 == 59
     assert mpc['Tube']['enabled'] is True
     assert params['FollowPath']['min_vel_x'] == 0.0
     assert config['path_executor']['ros__parameters']['require_tube_start'] is True
@@ -330,6 +331,19 @@ def test_custom_mpc_preview_file_is_used(monkeypatch, tmp_path):
                    if isinstance(action, dict) and action.get('name') == 'mpc_preview')
     config = yaml.safe_load(Path(preview['parameters'][0].perform(context)).read_text())
     assert config['mpc_preview']['ros__parameters']['image_width'] == 720
+
+
+def test_goal_circle_uses_the_same_custom_radius_as_success_detection(monkeypatch, tmp_path):
+    config = yaml.safe_load((PACKAGE / 'config/control_sim.yaml').read_text())
+    config['path_executor']['ros__parameters']['goal_circle_radius'] = 0.35
+    path = tmp_path / 'control.yaml'
+    path.write_text(yaml.safe_dump(config))
+    _, _, description = controller(
+        monkeypatch, robot_model='sim', controller_params_file=str(path))
+    preview = next(action for action in description.entities
+                   if isinstance(action, dict) and action.get('name') == 'mpc_preview')
+    assert any(isinstance(p, dict) and p.get('goal_circle_radius') == 0.35
+               for p in preview['parameters'])
 
 
 def test_gui_uses_clock_without_mpc_parameters(monkeypatch):

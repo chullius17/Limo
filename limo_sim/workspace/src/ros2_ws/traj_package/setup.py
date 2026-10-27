@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'rviz_goal_bridge = '
             'traj_package.rviz_goal_bridge:main',
+            'planning_gui = traj_package.planning_gui:main',
         ],
     },
 )

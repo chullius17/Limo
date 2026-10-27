@@ -61,8 +61,8 @@ amcl:
   # Ignore CV localization updates without enough independent non-road evidence.
   cv_min_non_road_voxels: 20
   cv_occupied_threshold: 50
-  # Equal laser/CV factors; unusable CV leaves the laser update intact.
-  laser_weight_factor: 1.0
+  # Strengthen laser evidence during fusion; unusable CV keeps the laser update intact.
+  laser_weight_factor: 2.0
   cv_weight_factor: 1.0
   cv_sad_gain: 20.0
   cv_quality_gate_enabled: true

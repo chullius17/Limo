@@ -254,8 +254,9 @@ road overlay is available separately. Debug images are produced only when their
 topics have subscribers, share a single resized camera background, and retain
 the input header. JPEG encoding runs in the publisher worker.
 
-The real online/offline/CV RViz launch profiles decode the waterfall JPEG on
-the desktop using `image_transport republish compressed raw`. RViz Foxy's
+All online/offline/CV RViz launch profiles decode their lane overlay JPEG on
+the desktop using `image_transport republish compressed raw`: the color
+overlay in simulation and the waterfall overlay on the real robot. RViz Foxy's
 Image display receives the local raw topic through a launch remapping; the
 image sent over the robot-to-PC link stays compressed. `Transport Hint` in a
 Foxy RViz Image configuration does not create a compressed subscription.

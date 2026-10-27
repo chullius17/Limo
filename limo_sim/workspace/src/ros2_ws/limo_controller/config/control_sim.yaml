@@ -102,7 +102,12 @@ controller_server:
         progress_weight: 2.0
         progress_distance: 1.0  # Desired progress in meters over the horizon.
         terminal_heading_weight: 1.0
-        batch_size: 56  # Proposal budget; duplicates are removed before environment scoring.
+        Startup:
+          enabled: true
+          max_initial_speed: 0.05  # Add three slow starts only at low speed (m/s).
+          target_speed: 0.03  # Ramp to this speed, then hold through the horizon.
+          acceleration: 0.05  # m/s^2; steering still obeys max_steering_rate.
+        batch_size: 59  # 56 regular proposals + at most three slow starts, before deduplication.
         velocity_samples: 8
         curvature_samples: 15
         wheelbase: 0.24
@@ -262,6 +267,12 @@ local_costmap:
 # Simulation has no physical chassis feedback.
 path_executor:
   ros__parameters:
+    goal_circle_radius: 0.20  # Shared with the preview's green circle (meters).
+    success_dwell_time: 2.0  # Continuous measured stop inside the circle (ROS seconds).
+    stopped_linear_velocity: 0.01  # m/s; measured planar speed.
+    stopped_angular_velocity: 0.05  # rad/s; measured yaw rate.
+    success_odom_topic: /odometry/filtered
+    success_odom_timeout: 0.5  # Maximum measurement age and gap between qualifying samples (s).
     require_tube_start: true
     require_chassis_status: false
 

@@ -15,7 +15,10 @@ TEST(DubinsConnector, ExactEndpointsForwardMotionAndRadius)
   tf2::Quaternion q;
   q.setRPY(0.0, 0.0, angle);
   end.pose.orientation = tf2::toMsg(q);
-  const auto path = limo_smac_planner::dubinsConnector(start, end, radius, 0.02, 2.0);
+  double measured_length = -1.0;
+  const auto path = limo_smac_planner::dubinsConnector(
+    start, end, radius, 0.02, 2.0, &measured_length);
+  EXPECT_NEAR(measured_length, radius * angle, 1e-9);
   ASSERT_GT(path.poses.size(), 2U);
   EXPECT_DOUBLE_EQ(path.poses.front().pose.position.x, start.pose.position.x);
   EXPECT_DOUBLE_EQ(path.poses.back().pose.position.x, end.pose.position.x);
@@ -25,9 +28,11 @@ TEST(DubinsConnector, ExactEndpointsForwardMotionAndRadius)
     const auto & b = path.poses[i].pose;
     const double ds = std::hypot(b.position.x - a.position.x, b.position.y - a.position.y);
     EXPECT_LE(ds, 0.02 + 1e-9);
-    EXPECT_GT((b.position.x - a.position.x) * std::cos(tf2::getYaw(a.orientation)) +
+    EXPECT_GT(
+      (b.position.x - a.position.x) * std::cos(tf2::getYaw(a.orientation)) +
       (b.position.y - a.position.y) * std::sin(tf2::getYaw(a.orientation)), 0.0);
-    EXPECT_LE(std::abs(tf2::getYaw(b.orientation) - tf2::getYaw(a.orientation)) / ds,
+    EXPECT_LE(
+      std::abs(tf2::getYaw(b.orientation) - tf2::getYaw(a.orientation)) / ds,
       1.0 / radius + 0.001);
   }
 }
@@ -38,7 +43,27 @@ TEST(DubinsConnector, RejectsExcessiveLengthAndMismatchedFrames)
   start.header.frame_id = end.header.frame_id = "map";
   start.pose.orientation.w = end.pose.orientation.w = 1.0;
   end.pose.position.x = 3.0;
-  EXPECT_THROW(limo_smac_planner::dubinsConnector(start, end, 0.7, 0.02, 2.0), std::runtime_error);
+  double measured_length = -1.0;
+  EXPECT_THROW(
+    limo_smac_planner::dubinsConnector(
+      start, end, 0.7, 0.02, 2.0, &measured_length), limo_smac_planner::DubinsLengthError);
+  EXPECT_NEAR(measured_length, 3.0, 1e-9);
   end.header.frame_id = "odom";
-  EXPECT_THROW(limo_smac_planner::dubinsConnector(start, end, 0.7, 0.02, 4.0), std::invalid_argument);
+  EXPECT_THROW(
+    limo_smac_planner::dubinsConnector(start, end, 0.7, 0.02, 4.0),
+    std::invalid_argument);
+}
+
+TEST(DubinsConnector, NearbyStartBehindRobotCanRequireALongForwardLoop)
+{
+  geometry_msgs::msg::PoseStamped start, end;
+  start.header.frame_id = end.header.frame_id = "map";
+  start.pose.orientation.w = end.pose.orientation.w = 1.0;
+  end.pose.position.x = -0.1;
+  double measured_length = 0.0;
+  EXPECT_THROW(
+    limo_smac_planner::dubinsConnector(
+      start, end, 0.7, 0.02, 2.0, &measured_length), limo_smac_planner::DubinsLengthError);
+  EXPECT_TRUE(std::isfinite(measured_length));
+  EXPECT_GT(measured_length, 2.0);
 }

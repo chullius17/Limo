@@ -35,7 +35,7 @@ def compose(monkeypatch, **overrides):
 
 
 def test_ideal_map_drives_planning_while_control_keeps_live_sensors(monkeypatch):
-    mapping, local_map, planner, controller = compose(monkeypatch)
+    mapping, local_map, planner, controller, planning_gui = compose(monkeypatch)
     assert mapping['launch'] == 'experiments/online_map_ideal_sim.launch.py'
     assert Path(mapping['arguments']['map_yaml']) == (
         PACKAGES / 'offline_map_package/experiments/sim/ideal_map/ideal_map.yaml')
@@ -62,12 +62,17 @@ def test_ideal_map_drives_planning_while_control_keeps_live_sensors(monkeypatch)
         assert subsystem['arguments']['robot_model'] == 'sim'
         assert subsystem['arguments']['use_sim_time'] == 'true'
     assert params['use_sim_time'] is True
+    assert planning_gui['package'] == 'traj_package'
+    assert planning_gui['launch'] == 'planning_gui.launch.py'
+    assert planning_gui['arguments']['use_sim_time'] == 'true'
+    assert planning_gui['arguments']['planner_params_file'] == (
+        planner['arguments']['planner_params_file'])
 
 
 def test_existing_cv_and_headless_execution_are_supported(monkeypatch):
     mapping, _, _, controller = compose(
         monkeypatch, start_cv='false', start_rviz='false',
-        start_control_gui='false', start_mpc_preview='false')
+        start_control_gui='false', start_mpc_preview='false', start_planning_gui='false')
     assert mapping['arguments']['start_cv'] == 'false'
     assert mapping['arguments']['start_rviz'] == 'false'
     assert controller['arguments']['start_gui'] == 'false'
@@ -78,12 +83,13 @@ def test_existing_cv_and_headless_execution_are_supported(monkeypatch):
 def test_custom_map_and_tuning_files_are_forwarded(monkeypatch, tmp_path):
     map_yaml = tmp_path / 'ideal.yaml'
     map_yaml.write_text('image: ideal.pgm\n')
-    mapping, _, planner, controller = compose(
+    mapping, _, planner, controller, planning_gui = compose(
         monkeypatch, map_yaml=str(map_yaml), planner_params_file='/tmp/planner.yaml',
         controller_params_file='/tmp/controller.yaml', laser_map_yaml='/tmp/walls.yaml')
     assert mapping['arguments']['map_yaml'] == str(map_yaml)
     assert mapping['arguments']['laser_map_yaml'] == '/tmp/walls.yaml'
     assert planner['arguments']['planner_params_file'] == '/tmp/planner.yaml'
+    assert planning_gui['arguments']['planner_params_file'] == '/tmp/planner.yaml'
     assert controller['arguments']['controller_params_file'] == '/tmp/controller.yaml'
 
 
@@ -93,7 +99,7 @@ def test_missing_map_is_rejected(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize('name', [
-    'start_cv', 'start_rviz', 'start_control_gui', 'start_mpc_preview'])
+    'start_cv', 'start_rviz', 'start_control_gui', 'start_mpc_preview', 'start_planning_gui'])
 def test_invalid_switch_is_rejected(monkeypatch, name):
     with pytest.raises(ValueError, match=name + ' must be true or false'):
         compose(monkeypatch, **{name: 'invalid'})

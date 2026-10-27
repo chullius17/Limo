@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Connect Foxy's raw RViz Image display to the compressed waterfall overlay."""
+"""Connect Foxy's raw RViz Image display to compressed lane overlays."""
 
 import yaml
 
 
 WATERFALL_OVERLAY = '/limo/cv_package/detection/lane_waterfall_overlay'
+LANE_OVERLAY = '/limo/cv_package/detection/lane_overlay'
 
 
-def waterfall_overlay_bridge(rviz_config, viewer):
+def lane_overlay_bridge(rviz_config, viewer):
     """Return a desktop decoder specification and the RViz topic remapping."""
     with open(rviz_config, encoding='utf-8') as stream:
         config = yaml.safe_load(stream)
@@ -29,17 +30,25 @@ def waterfall_overlay_bridge(rviz_config, viewer):
         topic = display.get('Topic', {})
         topic = topic.get('Value', '') if isinstance(topic, dict) else topic
         if (display.get('Class') == 'rviz_default_plugins/Image'
-                and display.get('Enabled', False) and topic == WATERFALL_OVERLAY):
-            output_topic = '/limo/desktop/{}/lane_waterfall_overlay'.format(viewer)
+                and display.get('Enabled', False)
+                and topic in (LANE_OVERLAY, WATERFALL_OVERLAY)):
+            overlay_name = topic.rsplit('/', 1)[-1]
+            decoder_name = ('waterfall_overlay' if topic == WATERFALL_OVERLAY
+                            else 'lane_overlay')
+            output_topic = '/limo/desktop/{}/{}'.format(viewer, overlay_name)
             return {
                 'package': 'image_transport',
                 'executable': 'republish',
-                'name': viewer + '_waterfall_overlay_decoder',
+                'name': viewer + '_' + decoder_name + '_decoder',
                 'output': 'screen',
                 'arguments': ['compressed', 'raw'],
                 'remappings': [
-                    ('in/compressed', WATERFALL_OVERLAY + '/compressed'),
+                    ('in/compressed', topic + '/compressed'),
                     ('out', output_topic),
                 ],
-            }, [(WATERFALL_OVERLAY, output_topic)]
+            }, [(topic, output_topic)]
     return None, []
+
+
+# Keep existing callers compatible with the original waterfall-only helper.
+waterfall_overlay_bridge = lane_overlay_bridge

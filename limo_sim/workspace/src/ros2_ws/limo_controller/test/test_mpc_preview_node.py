@@ -301,6 +301,7 @@ def test_latched_live_map_and_path_survive_an_mpc_pause_and_keep_updating():
             preview.options.free_color, preview.options.inflated_color))
         path_color = preview.options.global_path_color
         wait_for_image(lambda _, image: image.getpixel((260, 200)) == path_color
+                       and image.getpixel((280, 200)) == (0, 180, 65)
                        and image.getpixel((383, 238)) == inflation
                        and image.getpixel((310, 303)) == (20, 30, 45),
                        lambda: footprint_publisher.publish(footprint))
@@ -310,13 +311,14 @@ def test_latched_live_map_and_path_survive_an_mpc_pause_and_keep_updating():
         # Active MPC still uses its own coherent snapshot.
         snapshot = debug_message(sample_frame())
         wait_for_image(lambda msg, image: msg.header.stamp.sec == 1234
-                       and image.getpixel((260, 220)) == preview.options.selected_color,
+                       and image.getpixel((272, 240)) == preview.options.selected_color,
                        lambda: debug_publisher.publish(snapshot))
         # Without /clock or new MPC snapshots, context remains after predictions expire.
         wait_for_image(lambda msg, image: msg.header.stamp.sec == 0
                        and image.getpixel((260, 200)) == path_color
                        and image.getpixel((383, 238)) == inflation
-                       and image.getpixel((260, 220)) != preview.options.selected_color)
+                       and image.getpixel((272, 240)) != preview.options.selected_color
+                       and image.getpixel((280, 200)) == (0, 180, 65))
         costs[66 * 100 + 62] = 254
         costmap.data = list(costs)
         map_publisher.publish(costmap)
@@ -326,9 +328,11 @@ def test_latched_live_map_and_path_survive_an_mpc_pause_and_keep_updating():
         base.transform.translation.x = 1.5
         broadcaster.sendTransform([odom, base])
         wait_for_image(lambda _, image: image.getpixel((210, 200)) == path_color
+                       and image.getpixel((230, 200)) == (0, 180, 65)
                        and image.getpixel((333, 238)) == preview.options.lethal_color)
         path_publisher.publish(Path())
         wait_for_image(lambda _, image: image.getpixel((210, 200)) != path_color
+                       and image.getpixel((230, 200)) != (0, 180, 65)
                        and image.getpixel((333, 238)) == preview.options.lethal_color)
         assert preview.get_clock().now().nanoseconds == 0
         assert subscription is not None

@@ -16,6 +16,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+from limo_rviz.overlay import lane_overlay_bridge
+
 
 def _default_map(share, filename='ideal_map.yaml'):
     relative = Path(
@@ -107,15 +109,18 @@ def _launch_ideal(context):
             package='online_map_package', executable='amcl_experiment',
             name='amcl_experiment', output='screen', parameters=[clock]))
     if _flag(context, 'start_rviz'):
+        rviz_config = os.path.join(
+            get_package_share_directory('limo_rviz'), 'config',
+            profile['launch']['rviz_config'])
+        bridge, overlay_remappings = lane_overlay_bridge(rviz_config, 'online_rviz')
+        if bridge:
+            actions.append(Node(**bridge, parameters=[clock]))
         actions.append(Node(
             package='rviz2', executable='rviz2', name='rviz2', output='screen',
-            arguments=['-d', os.path.join(
-                get_package_share_directory('limo_rviz'), 'config',
-                profile['launch']['rviz_config']),
-                '-f', amcl['global_frame_id']],
+            arguments=['-d', rviz_config, '-f', amcl['global_frame_id']],
             remappings=[
                 ('/limo/map_package/online/maps/cv_obstacle', '/map'),
-            ], parameters=[clock]))
+            ] + overlay_remappings, parameters=[clock]))
     return actions
 
 

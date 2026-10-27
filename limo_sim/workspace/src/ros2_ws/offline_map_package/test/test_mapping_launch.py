@@ -49,7 +49,8 @@ def mapping(monkeypatch, profile='sim', **overrides):
 
 def test_simulation_preserves_mapping_parameters(monkeypatch):
     nodes = mapping(monkeypatch)
-    assert set(nodes) == {'slam_toolbox', 'semantic_mapper', 'rviz2', 'map_save_gui'}
+    assert set(nodes) == {'slam_toolbox', 'semantic_mapper', 'rviz2', 'map_save_gui',
+                          'offline_rviz_lane_overlay_decoder'}
     assert all(node['values']['use_sim_time'] is True for node in nodes.values())
     assert nodes['slam_toolbox']['values']['base_frame'] == 'base_link'
     assert nodes['slam_toolbox']['values']['minimum_time_interval'] == 0.1
@@ -78,9 +79,12 @@ def test_real_profile_is_headless_with_wall_clock(monkeypatch):
 def test_desktop_never_starts_mapping_nodes(monkeypatch, profile, sim_time):
     nodes = mapping(monkeypatch, profile, mode='desktop', start_slam='true', start_mapper='true')
     expected = {'rviz2', 'map_save_gui'}
-    if profile == 'real':
-        expected.add('offline_rviz_waterfall_overlay_decoder')
+    decoder = ('offline_rviz_waterfall_overlay_decoder' if profile == 'real'
+               else 'offline_rviz_lane_overlay_decoder')
+    expected.add(decoder)
     assert set(nodes) == expected
+    topic = dict(nodes[decoder]['remappings'])['out']
+    assert topic in dict(nodes['rviz2']['remappings']).values()
     assert all(node['values']['use_sim_time'] is sim_time for node in nodes.values())
     assert nodes['map_save_gui']['values']['save_service'].endswith('/map_saver/save_map')
 

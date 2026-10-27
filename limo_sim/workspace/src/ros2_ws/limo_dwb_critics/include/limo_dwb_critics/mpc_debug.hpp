@@ -34,8 +34,8 @@ private:
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_;
   rclcpp_lifecycle::LifecyclePublisher<limo_interfaces::msg::MpcDebug>::SharedPtr publisher_;
   MpcConfig config_;
-  std::array<int, 7> totals_{};
-  std::array<int, 7> seen_{};
+  std::array<int, 8> totals_{};
+  std::array<int, 8> seen_{};
   int samples_per_family_{6};
   int pose_stride_{2};
   std::int64_t period_ns_{0};

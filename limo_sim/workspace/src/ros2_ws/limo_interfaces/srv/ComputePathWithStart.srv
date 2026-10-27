@@ -7,3 +7,11 @@ bool success
 string error
 nav_msgs/Path path
 uint32 connector_end_index
+# Geometry-only rejection: the bridge can skip this start for all other goals
+# in the same search. Obstacle, goal and SMAC failures never set this flag.
+bool start_rejected
+bool connector_checked
+bool connector_required
+geometry_msgs/PoseStamped planning_start
+float64 connector_length
+float64 connector_max_length

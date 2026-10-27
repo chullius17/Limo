@@ -69,6 +69,21 @@ def test_gui_keeps_control_terminal_without_mpc_panel_or_subscriptions(gui):
     assert not window.start_button.isEnabled()
 
 
+def test_success_keeps_the_path_and_restores_start_instead_of_pause_or_abort(gui):
+    _, _, window, _ = gui
+    window.control_requested = True
+    window.control_active = True
+    window.control_paused = True
+    window._set_status('SUCCESS: stopped inside the goal circle')
+    assert window.path_ready
+    assert not window.control_requested
+    assert not window.control_active
+    assert not window.control_paused
+    assert window.start_button.text() == 'START CONTROL'
+    assert window.start_button.isEnabled()
+    assert not window.pause_button.isEnabled()
+
+
 def test_gui_receives_ros_state_and_sends_start_pause_resume_abort(gui):
     app, node, window, _ = gui
     transport = Node('gui_control_test')

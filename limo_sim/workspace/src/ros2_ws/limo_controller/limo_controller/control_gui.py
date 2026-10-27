@@ -341,6 +341,11 @@ class ControlWindow(QWidget):
         if status.startswith('READY:'):
             self.path_ready = True
             self.control_requested = False
+        elif status.startswith('SUCCESS:'):
+            self.path_ready = True
+            self.control_requested = False
+            self.control_active = False
+            self.control_paused = False
         elif status.startswith('IDLE:'):
             self.path_ready = False
             self.control_requested = False

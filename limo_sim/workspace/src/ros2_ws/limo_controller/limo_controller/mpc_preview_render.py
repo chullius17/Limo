@@ -22,11 +22,11 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 
 FAMILIES = ('braking', 'nominal', 'constant_curvature',
-            'perturbed_nominal', 'broad_exploration', 'structured', 'monophase')
-LABELS = ('Frenata', 'Nominale', 'Curvatura costante',
-          'Perturbata', 'Esplorazione ampia', 'Azioni a blocchi', 'Monofase')
+            'perturbed_nominal', 'broad_exploration', 'structured', 'monophase', 'startup')
+LABELS = ('Braking', 'Nominal', 'Constant curvature',
+          'Perturbed nominal', 'Broad exploration', 'Block actions', 'Single phase', 'Slow startup')
 DEFAULT_COLORS = ((220, 75, 65), (35, 105, 220), (145, 75, 190),
-                  (25, 165, 170), (220, 140, 35), (230, 60, 180), (70, 185, 195))
+                  (25, 165, 170), (220, 140, 35), (230, 60, 180), (70, 185, 195), (120, 90, 220))
 
 
 @dataclass
@@ -103,6 +103,7 @@ class RenderOptions:
     global_path_color: tuple = (190, 40, 140)
     tube_radius: float = 0.30
     tube_line_width: int = 2
+    goal_circle_radius: float = 0.20
     costmap_as_points: bool = True
     costmap_colormap: str = 'classic'
     costmap_point_size: int = 3
@@ -132,6 +133,8 @@ class RenderOptions:
         if (not math.isfinite(self.tube_radius) or not 0 <= self.tube_radius <= 10.0
                 or not 1 <= self.tube_line_width <= 10):
             raise ValueError('Invalid path tube radius or line width')
+        if not math.isfinite(self.goal_circle_radius) or not 0 <= self.goal_circle_radius <= 10.0:
+            raise ValueError('Goal circle radius must be finite and between 0 and 10 meters')
         if not (1 <= self.line_width <= 30 and 1 <= self.selected_line_width <= 30
                 and 8 <= self.font_size <= 72):
             raise ValueError('Invalid line width or font size')
@@ -417,6 +420,12 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
                 end = points[-1]
                 draw.ellipse((end[0] - 4, end[1] - 4, end[0] + 4, end[1] + 4),
                              fill=options.selected_color)
+    if global_path and options.goal_circle_radius > 0:
+        end_x, end_y = base_to_pixel(global_path[-1], options)
+        radius = options.goal_circle_radius * options.pixels_per_meter
+        draw.ellipse((end_x - radius, end_y - radius, end_x + radius, end_y + radius),
+                     outline=(0, 180, 65), width=options.line_width + 1)
+
     if view is not None:
         polygon = [base_to_pixel(point, options) for point in view.footprint]
         if len(polygon) >= 3:
@@ -431,12 +440,12 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
               fill=(195, 35, 35), font=font)
     draw.text(base_to_pixel((0, options.axis_length + 0.15), options), '+y',
               fill=(35, 130, 55), font=font)
-    title = ('MPC - sorgenti prima dell\'inflation / base_link' if sources is not None else
-             'MPC - vista dall\'alto / base_link')
-    detail = status or 'In attesa di uno snapshot MPC'
+    title = ('MPC - sources before inflation / base_link' if sources is not None else
+             'MPC - top view / base_link')
+    detail = status or 'Waiting for MPC data'
     if frame is not None:
-        detail = (f'{frame.generated_count} candidati | {len(frame.candidates)} esportati | '
-                  f'orizzonte {frame.time_steps * frame.model_dt:.2f} s')
+        detail = (f'{frame.generated_count} candidates | {len(frame.candidates)} exported | '
+                  f'horizon {frame.time_steps * frame.model_dt:.2f} s')
         if status:
             detail += ' | ' + status
     draw.rectangle((0, 0, options.image_width, 70), fill=options.background_color)
@@ -448,7 +457,7 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
         draw.rectangle((x - 8, y - 6, x + width + 18, y + 64),
                        fill=options.background_color)
         top = 99 if source_costs else 253
-        title = 'Jet punti 0-99 | nero:100' if source_costs else 'Jet 0-253 | nero: 254'
+        title = 'Jet points 0-99 | black:100' if source_costs else 'Jet 0-253 | black: 254'
         draw.text((x, y), title, fill=(30, 35, 45), font=font)
         for column in range(width):
             value = round(top * column / (width - 1))
@@ -468,39 +477,39 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
         draw.text((x + 30, y), label, fill=(30, 35, 45), font=font)
     x, y = 16 + 2 * (options.image_width // 3), legend_y + 64
     draw.line((x, y + 8, x + 24, y + 8), fill=options.selected_color, width=5)
-    draw.text((x + 30, y), 'Scelta', fill=(30, 35, 45), font=font)
-    layer_label = ('Jet: costo di classe del punto' if source_costs else
-                   'Laser rosso | CV blu' if sources is not None else
-                   'Tratteggio: scartata / potata')
+    draw.text((x + 30, y), 'Selected', fill=(30, 35, 45), font=font)
+    layer_label = ('Jet: point class cost' if source_costs else
+                   'Laser red | CV blue' if sources is not None else
+                   'Dashed: rejected / cost-pruned')
     draw.text((16, legend_y + 94), layer_label,
               fill=(60, 65, 75), font=font)
     x, y = options.image_width // 2, legend_y + 94
     draw.line((x, y + 8, x + 24, y + 8), fill=options.global_path_color, width=3)
-    path_label = 'Traiettoria globale'
+    path_label = 'Global path'
     if options.tube_radius > 0:
-        path_label += f' | tubo r={options.tube_radius:g} m'
+        path_label += f' | tube r={options.tube_radius:g} m'
     draw.text((x + 30, y), path_label, fill=(30, 35, 45), font=font)
     if frame is not None:
-        steering = (f'v0={frame.initial_velocity:.2f} m/s  '
-                    f'delta0={math.degrees(frame.initial_steering):.1f} deg')
+        steering = (f'initial v={frame.initial_velocity:.2f} m/s  '
+                    f'initial steering={math.degrees(frame.initial_steering):.1f}°')
         if frame.selected_id >= 0:
-            steering += (f' | v1={frame.command_velocity:.2f} m/s  '
-                         f'delta1={math.degrees(frame.command_steering):.1f} deg')
+            steering += (f' | command v={frame.command_velocity:.2f} m/s  '
+                         f'command steering={math.degrees(frame.command_steering):.1f}°')
         else:
-            steering += ' | nessuna traiettoria valida'
+            steering += ' | no valid trajectory'
         draw.text((16, legend_y + 119), steering, fill=(30, 35, 45), font=font)
     if sources is not None:
-        map_label = (f'Laser: {len(sources.laser)} | Locali: {len(sources.semantic)} | '
-                     + ('costi punti 0-100' if source_costs else 'nessuna inflation nel debug'))
+        map_label = (f'Laser: {len(sources.laser)} | Local points: {len(sources.semantic)} | '
+                     + ('point costs 0-100' if source_costs else 'view without inflation'))
     elif options.costmap_as_points:
         count = _costmap_cells(view.costmap_data)[1] if view is not None else 0
-        map_label = (f'{count} celle con costo > 0 | Jet=costi MPC, nero=letale, grigio=ignoto'
+        map_label = (f'{count} cells with cost > 0 | Jet=MPC costs, black=lethal, gray=unknown'
                      if options.costmap_colormap == 'jet' else
-                     f'{count} celle con costo > 0 | punti scuri=costi MPC, grigi=sconosciuto')
+                     f'{count} cells with cost > 0 | dark points=MPC costs, gray=unknown')
     else:
-        map_label = ('Jet: 0-253 | nero=254 letale, grigio=255 sconosciuto'
+        map_label = ('Jet: 0-253 | black=254 lethal, gray=255 unknown'
                      if options.costmap_colormap == 'jet' else
-                     'costmap: chiaro=libero, arancio=inflazione, scuro=ostacolo')
-    draw.text((16, legend_y + 145), f'Griglia: {options.grid_spacing:g} m | ' + map_label,
+                     'Costmap: light=free, orange=inflation, dark=obstacle')
+    draw.text((16, legend_y + 145), f'Grid: {options.grid_spacing:g} m | ' + map_label,
               fill=(60, 65, 75), font=font)
     return image

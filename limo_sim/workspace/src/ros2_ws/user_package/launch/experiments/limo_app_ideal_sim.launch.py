@@ -58,7 +58,7 @@ def _launch_experiment(context):
     if preview:
         preview = flag('start_mpc_preview')
 
-    return [
+    actions = [
         _include('online_map_package', 'experiments/online_map_ideal_sim.launch.py', {
             'map_yaml': map_yaml,
             'laser_map_yaml': os.path.expanduser(value('laser_map_yaml')),
@@ -93,6 +93,12 @@ def _launch_experiment(context):
             'mpc_preview_params_file': os.path.expanduser(value('mpc_preview_params_file')),
         }),
     ]
+    if flag('start_planning_gui') == 'true':
+        actions.append(_include('traj_package', 'planning_gui.launch.py', {
+            'use_sim_time': 'true',
+            'planner_params_file': os.path.expanduser(value('planner_params_file')),
+        }))
+    return actions
 
 
 def generate_launch_description():
@@ -104,6 +110,7 @@ def generate_launch_description():
         ('start_cv', 'true', 'Start CV; set false if it is already running.'),
         ('start_rviz', 'true', 'Open RViz for initial pose and goal selection.'),
         ('start_control_gui', 'true', 'Open the START/PAUSE control interface.'),
+        ('start_planning_gui', 'true', 'Open the planner costmap and planning attempt log.'),
         ('start_mpc_preview', '', 'Optional true/false override for the MPC preview.'),
         ('planner_params_file', os.path.join(
             get_package_share_directory('traj_package'), 'config', 'traj_sim.yaml'),

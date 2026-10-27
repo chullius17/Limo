@@ -58,7 +58,8 @@ zero**. With valid lidar and a positive weight, every CV frame is used only
 once. Reuse never renews the original-cloud time limit; TF odometry compensates
 motion and configured CV gain is retained.
 
-Current profiles use 'laser_weight_factor: 1.0' and 'cv_weight_factor: 1.0'.
+Simulation uses 'laser_weight_factor: 2.0' and 'cv_weight_factor: 1.0'; the real
+profile uses 1.0 for both factors.
 A zero laser weight skips the laser model even if CV is absent. '/scan' is still
 required to trigger updates and assess validity. 'cv_enabled:=false' or
 'cv_weight_factor:=0.0' disables CV fusion. CV parameters are read at node
@@ -94,7 +95,7 @@ Use `start_rviz:=false` for a headless run, or `start_cv:=false` when a bag
 already supplies the semantic cloud. The simulation clock is enabled by default.
 Set `start_monitor:=false` to disable the experiment window and its recording.
 
-AMCL reuses `config/mapping_sim.yaml`, including laser/CV weights of 1.0.
+AMCL reuses `config/mapping_sim.yaml`, including laser factor 2.0 and CV factor 1.0.
 The laser compares `/scan` with physical wall occupancy; CV uses `/map`:
 road cost 0 is free, yellow/boardwalk
 costs 60/90 are occupied for CV at the configured threshold 50, and white cost

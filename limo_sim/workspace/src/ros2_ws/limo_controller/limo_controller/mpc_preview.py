@@ -208,13 +208,14 @@ class MpcPreview(Node):
         """Compensate source timestamps through odometry, including while paused."""
         layers, status = {}, []
         for name, source in (('laser', self.laser), ('semantic', self.semantic)):
+            label = 'laser' if name == 'laser' else 'semantic points'
             layers[name] = ()
             if source is None:
-                status.append(name + ': in attesa')
+                status.append(label + ': waiting')
                 continue
             header, points, received_at = source
             if time.monotonic() - received_at > self.source_stale_timeout:
-                status.append(name + ': dati scaduti')
+                status.append(label + ': stale data')
             if not points:
                 continue
             try:
@@ -227,7 +228,7 @@ class MpcPreview(Node):
                     transform = (tf.translation.x, tf.translation.y, self._yaw(tf.rotation))
                 layers[name] = transform_points(points, transform, robot_pose)
             except TransformException:
-                status.append('TF ' + name + ': in attesa')
+                status.append('TF ' + label + ': waiting')
         sources = PreviewSources(
             laser=tuple((x, y) for x, y, _ in layers['laser']),
             semantic=layers['semantic'])  # Preserve each original point's class.
@@ -309,7 +310,7 @@ class MpcPreview(Node):
         frame = self.frame if fresh else None
         background = None
         status = '' if fresh else (
-            'MPC: dati scaduti' if self.received_at is not None else 'MPC: in attesa')
+            'MPC: stale data' if self.received_at is not None else 'MPC: waiting')
         target_frame, robot_pose, stamp = self.base_frame, (0.0, 0.0, 0.0), Time()
         if fresh:
             target_frame, robot_pose = self.header.frame_id, frame.robot_pose
@@ -318,14 +319,14 @@ class MpcPreview(Node):
             try:
                 background = self._background()
             except TransformException:
-                status += ' | TF costmap non disponibile'
+                status += ' | Costmap TF unavailable'
             if background is not None:
                 target_frame, robot_pose = self.costmap.header.frame_id, background.robot_pose
                 age = time.monotonic() - self.costmap_received_at
-                status += (' | costmap non aggiornata' if age > self.costmap_stale_timeout
-                           else ' | costmap locale')
+                status += (' | stale costmap' if age > self.costmap_stale_timeout
+                           else ' | local costmap')
             elif self.costmap is None:
-                status += ' | costmap in attesa'
+                status += ' | waiting for costmap'
         sources = None
         if self.view_mode == 'sources':
             sources, source_status = self._sources_in_view(target_frame, robot_pose, stamp)
@@ -334,7 +335,7 @@ class MpcPreview(Node):
             global_path = self._path_in_view(target_frame, robot_pose, stamp)
         except TransformException:
             global_path = ()
-            status += ' | TF percorso non disponibile'
+            status += ' | Path TF unavailable'
         try:
             image = render_preview(frame, self.options, status, background, global_path, sources)
             output = BytesIO()

@@ -62,6 +62,7 @@ protected:
           node_->set_parameter(rclcpp::Parameter(name, value));
         };
       override("FollowPath.MPC.structured_actions", rclcpp::ParameterValue(false));
+      override("FollowPath.MPC.Startup.enabled", rclcpp::ParameterValue(false));
       override("FollowPath.MPC.deduplicate", rclcpp::ParameterValue(false));
       override("FollowPath.MPC.Tube.enabled", rclcpp::ParameterValue(false));
       override("FollowPath.MPC.batch_size", rclcpp::ParameterValue(simulation ? 768 : 128));
@@ -802,11 +803,11 @@ TEST_F(StructuredPipelineTest, RuntimeProfileRunsStructuredSearchAndRejectsOutsi
   const auto command = controller.computeVelocityCommands(current(), geometry_msgs::msg::Twist());
   const auto ms = std::chrono::duration<double, std::milli>(
     std::chrono::steady_clock::now() - begin).count();
-  std::cout << "Structured full pipeline, 56 candidates, 40 steps: " << ms << " ms\n";
+  std::cout << "Structured full pipeline, up to 59 candidates, 40 steps: " << ms << " ms\n";
   EXPECT_GT(command.twist.linear.x, 0.0);
   EXPECT_LE(command.twist.linear.x, 0.13 + 1e-9);
   EXPECT_DOUBLE_EQ(command.twist.linear.y, 0.0);
-  EXPECT_EQ(node_->get_parameter("FollowPath.MPC.batch_size").as_int(), 56);
+  EXPECT_EQ(node_->get_parameter("FollowPath.MPC.batch_size").as_int(), 59);
   EXPECT_TRUE(node_->get_parameter("FollowPath.MPC.Tube.enabled").as_bool());
   controller.deactivate();
   controller.cleanup();
@@ -912,9 +913,9 @@ TEST_F(StructuredPipelineTest, DebugExportsAllStructuredCandidatesAndTerminalTub
   }
   ASSERT_NE(snapshot, nullptr);
   EXPECT_GT(snapshot->generated_count, 0u);
-  EXPECT_LT(snapshot->generated_count, 56u);
+  EXPECT_LT(snapshot->generated_count, 59u);
   EXPECT_EQ(snapshot->candidates.size(), snapshot->generated_count);
-  std::vector<int> families(7);
+  std::vector<int> families(8);
   for (const auto & candidate : snapshot->candidates) {
     ASSERT_LT(candidate.family, families.size());
     ++families[candidate.family];
@@ -926,6 +927,29 @@ TEST_F(StructuredPipelineTest, DebugExportsAllStructuredCandidatesAndTerminalTub
   EXPECT_EQ(families[2] + families[3] + families[4], 0);
   EXPECT_GT(families[5], 0);
   EXPECT_GT(families[6], 0);
+  EXPECT_EQ(families[7], 3);
+  controller.deactivate();
+  controller.cleanup();
+}
+
+TEST_F(StructuredPipelineTest, SlowStartMovesBeforeAWallWithoutRelaxingTubeOrCollisionChecks)
+{
+  // A wall rules out full-speed four-second rollouts but leaves room to creep.
+  for (unsigned int y = 0; y < costmap_->getCostmap()->getSizeInCellsY(); ++y) {
+    for (double x = 0.35; x <= 0.40; x += 0.02) {
+      double wx, wy;
+      costmap_->getCostmap()->mapToWorld(0, y, wx, wy);
+      setCost(x, wy, 254);
+    }
+  }
+  limo_dwb_critics::AckermannMPCController controller;
+  controller.configure(node_, "FollowPath", tf_, costmap_);
+  controller.activate();
+  controller.setPlan(reference_);
+  const auto command = controller.computeVelocityCommands(current(), geometry_msgs::msg::Twist());
+  EXPECT_GT(command.twist.linear.x, 0.0);
+  EXPECT_LE(command.twist.linear.x, 0.005 + 1e-12);
+  EXPECT_NEAR(command.twist.angular.z, 0.0, 1e-12);
   controller.deactivate();
   controller.cleanup();
 }

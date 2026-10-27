@@ -58,6 +58,13 @@ void AckermannMPCController::configure(
   config.deduplicate = read_bool("deduplicate", false);
   config.action_variants = read_int("action_variants", 3);
   config.action_noise = read_double("MPC.action_noise", 0.20);
+  config.startup_enabled = read_bool("Startup.enabled", config.startup_enabled);
+  config.startup_max_initial_speed = read_double(
+    "MPC.Startup.max_initial_speed", config.startup_max_initial_speed);
+  config.startup_target_speed = read_double(
+    "MPC.Startup.target_speed", config.startup_target_speed);
+  config.startup_acceleration = read_double(
+    "MPC.Startup.acceleration", config.startup_acceleration);
   if (!node->has_parameter(name + ".MPC.block_fractions")) {
     node->declare_parameter(name + ".MPC.block_fractions", config.block_fractions);
   }
