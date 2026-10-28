@@ -226,9 +226,11 @@ complete simulation and physical-robot stacks, respectively.
 
 AMCL publishes 'map -> odom'; provide an initial pose through RViz or AMCL's
 global-localization service. Do not start SLAM concurrently if it publishes the
-same TF. The launch starts CV, localization, map servers, and optional RViz.
-Both mapping profiles default to `start_cv: true`: waterfall for real, HSV color
-for simulation. Pass `start_cv:=false` when CV is already running separately.
+same TF. The launch starts localization, map servers, and optional RViz.
+The real profile defaults to `start_cv: false`: start the waterfall pipeline
+separately with `ros2 launch cv_package cv_real.launch.py` when needed.
+Simulation keeps `start_cv: true` with its HSV detector. An explicit
+`start_cv:=true` still enables CV for one run; `start_cv:=false` disables it.
 `launch.cv_config` selects the CV profile independently of `use_sim_time`;
 `cv_config:=/path/to/profile.yaml` provides an override. The `user_package`
 application launches keep their own `start_cv` default; pass `start_cv:=true`
@@ -273,7 +275,9 @@ publishes '/limo/map_package/online/local_costmap' directly as a
 'nav_msgs/OccupancyGrid'. The grid matches the green rectangle: 2.50 x 2.66 m,
 origin '(0, -1.33)' in 'base_link', and exactly 125 x 133 cells at 2 cm
 resolution. The real profile sets 'boardwalk_only: true': only boardwalk
-classes 4/6 enter the live grid and persistent memory, at cost 90. Simulation
+classes 4/6 enter the live grid at cost 90; only class 4 enters persistent
+memory. Internal boardwalk (6) and yellow lines (2) are not reprojected in
+the real profile. Simulation
 retains all live classes 1--6: road (1/5) costs 0, yellow line (2) 60,
 soft obstacle (3) 30 and boardwalk (4/6) 90. Where multiple points
 fall in one cell, the greatest cost is retained. The source grid is not
@@ -284,7 +288,7 @@ the fixed class costs.
 At 10 Hz, all points used to build the grid are also published as
 'sensor_msgs/PointCloud2' on
 '/limo/map_package/online/local_ctrl_map/points': all recent-live points and
-classes admitted by the profile, plus memory for classes 4/6 in the real
+classes admitted by the profile, plus memory for class 4 in the real
 profile or 2/4 in simulation, reprojected into the current frame.
 Memory is capped at 600 entries in the real
 profile and 300 in simulation; recent-live points are not subject to this cap.

@@ -36,7 +36,7 @@ class SemanticMemory:
         self.yellow_decay_multiplier = yellow_decay_multiplier
         self.voxel_size = voxel_size
         self.persistent_classes = (
-            (4, 6) if boardwalk_only else
+            (4,) if boardwalk_only else
             (1, 2, 4) if persist_exterior_road else (2, 4))
         self.reset()
 

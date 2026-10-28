@@ -447,7 +447,7 @@ def test_profile_boardwalk_filter_applies_to_live_grid_and_reprojection(
     xy = [[0.615, y] for y in [0.115, -0.115, 0.035, -0.035, 0.195, -0.195]]
     node.cloud_callback(make_cloud(xy, [1, 2, 3, 4, 5, 6], stamp))
     assert set(node.live_classes) == ({4, 6} if real else {1, 2, 3, 4, 5, 6})
-    assert set(node.memory.classes) == ({4, 6} if real else {2, 4})
+    assert set(node.memory.classes) == ({4} if real else {2, 4})
 
     grids, clouds = [], []
     monkeypatch.setattr(node, 'grid_pub', SimpleNamespace(publish=grids.append))
@@ -466,5 +466,5 @@ def test_profile_boardwalk_filter_applies_to_live_grid_and_reprojection(
     add_pose(node, Time(seconds=10.7).to_msg(), 0.1)
     node.publish_grid()
     points = np.frombuffer(clouds[-1].data, dtype=INPUT_DTYPE)
-    assert set(points['class_id']) == ({4, 6} if real else {2, 4})
+    assert set(points['class_id']) == ({4} if real else {2, 4})
     np.testing.assert_allclose(points['x'], 0.515)

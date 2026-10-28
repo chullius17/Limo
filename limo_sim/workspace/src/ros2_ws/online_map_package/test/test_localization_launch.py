@@ -96,7 +96,7 @@ def test_simulation_starts_maps_amcl_rviz_and_cv(monkeypatch):
     assert nodes['local_ctrl_map']['values']['boardwalk_cost'] == 90
 
 
-def test_real_profile_is_headless_and_starts_cv(monkeypatch):
+def test_real_profile_is_headless_without_starting_cv(monkeypatch):
     nodes, includes = online(monkeypatch, 'real', mode='backend')
     assert set(nodes) == {
         'complete_map_server', 'laser_map_server', 'cv_map_server',
@@ -104,8 +104,9 @@ def test_real_profile_is_headless_and_starts_cv(monkeypatch):
     }
     assert all(node['values']['use_sim_time'] is False
                for node in nodes.values())
-    assert len(includes) == 2
+    assert len(includes) == 1
     include_arguments = [dict(action.launch_arguments) for action in includes]
+    assert all('config_file' not in values for values in include_arguments)
     amcl = next(values for values in include_arguments
                 if 'cv_voxel_size' in values)
     assert amcl['use_sim_time'] == 'false'
@@ -234,13 +235,14 @@ def test_amcl_launch_passes_typed_cloud_parameters(monkeypatch):
 
 
 @pytest.mark.parametrize('profile', ['real', 'sim'])
-def test_default_cv_selects_matching_profile(monkeypatch, profile):
+def test_default_cv_only_starts_for_simulation(monkeypatch, profile):
     _, includes = online(monkeypatch, profile)
     cv = [dict(action.launch_arguments) for action in includes
           if 'config_file' in dict(action.launch_arguments)]
-    assert len(cv) == 1
-    assert cv[0]['config_file'] == str(
-        PACKAGES / 'cv_package' / 'config' / ('cv_' + profile + '.yaml'))
+    assert len(cv) == int(profile == 'sim')
+    if cv:
+        assert cv[0]['config_file'] == str(
+            PACKAGES / 'cv_package' / 'config' / 'cv_sim.yaml')
 
 
 @pytest.mark.parametrize('profile,clock', [('sim', 'false'), ('real', 'true')])

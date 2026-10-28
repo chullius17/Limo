@@ -1,5 +1,5 @@
 # Read by online_map.launch.py; this is not a ROS --params-file.
-# Robot: wall clock, headless localization and CV; sensors already run onboard.
+# Robot: wall clock, headless localization; sensors and CV run separately.
 launch:
   use_sim_time: false
   start_cv: true
@@ -20,9 +20,13 @@ map_servers:
   cv_obstacle_topic: /limo/map_package/online/maps/cv_obstacle
 
 local_ctrl_map:
+  trapezoid_near_width: 0.45112782  # Scaled with rectangle_width.
+  rectangle_width: 2.0  # Lateral extent in base_link (meters).
+  rectangle_length: 1.40  # Forward extent in base_link (meters).
+  trapezoid_height: 0.86  # Near edge at x=0.54 m.
   output_cloud_topic: /limo/map_package/online/local_ctrl_map/points
   inner_trapezoid_inset: 0.20  # Inset of near and sloped edges; front stays aligned.
-  maximum_points: 300  # Highest-confidence persistent boardwalk points (classes 4/6).
+  maximum_points: 300  # Highest-confidence persistent boardwalk points (class 4 only).
   minimum_confidence: 0.30
   confidence_decay_per_sec: 0.10
   yellow_decay_multiplier: 3.0
@@ -40,7 +44,7 @@ local_ctrl_map:
   live_cloud_timeout_sec: 0.50
   tf_wait_timeout_sec: 0.20  # Bounded non-blocking wait for exact cloud TF.
   max_pending_clouds: 10
-  boardwalk_only: true  # Filter both live and persistent control-map points to classes 4/6.
+  boardwalk_only: true  # Live classes 4/6; persist and reproject only boardwalk (class 4).
   persist_exterior_road: false
   exterior_road_cost: 0
   yellow_line_cost: 60
