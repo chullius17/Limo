@@ -83,7 +83,7 @@ controller_server:
         feedback: "OPEN_LOOP"
         Debug:
           enabled: true  # MPC telemetry.
-          preview_enabled: true  # Start the image renderer; requires telemetry.
+          preview_enabled: false  # The PC starts the renderer via desktop_app.launch.py.
           topic: /limo/control/mpc_debug
           publish_rate: 4.0
           samples_per_family: 27

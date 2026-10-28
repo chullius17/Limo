@@ -274,8 +274,10 @@ The control GUI contains only the control buttons and current status label; it d
 not subscribe to MPC telemetry or images. Read numerical telemetry in a separate
 terminal with `ros2 topic echo /limo/control/mpc_debug --no-arr`.
 `FollowPath.MPC.Debug.preview_enabled` starts the image renderer: it is `true`
-in both `control_sim.yaml` and `control_real.yaml`. Both the standalone
-controller and application launches use the selected controller YAML setting.
+in `control_sim.yaml` and `false` in `control_real.yaml`. For the real robot,
+`desktop_app.launch.py` starts the renderer on the PC by default; open
+`rqt_image_view` manually. Both the standalone controller and application
+launches use the selected controller YAML setting.
 Use `start_mpc_preview:=true` or `start_mpc_preview:=false` to override it for
 one run. The viewer can run with MPC telemetry disabled: it still shows the
 planned global path and published local costmap before START and during PAUSE.
@@ -363,7 +365,7 @@ Settings are split between two YAML files:
 
 - `config/control_sim.yaml` / `config/control_real.yaml`, under `FollowPath.MPC.Debug`:
   enable telemetry with `enabled` (true in both profiles) and start the image
-  renderer with `preview_enabled` (true in both shipped profiles); configure the
+  renderer with `preview_enabled` (true in simulation; the real desktop runs it on the PC); configure the
   telemetry topic, publication rate, samples per family and pose downsampling stride.
   Representatives are evenly distributed over each family's generated order;
   the winner is always included even if it was not among those representatives.

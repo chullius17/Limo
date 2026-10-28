@@ -14,6 +14,7 @@ from launch.actions import (
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from nav2_common.launch import RewrittenYaml
 
 
 def _boolean(value):
@@ -41,7 +42,7 @@ def _desktop_include(package, filename, arguments):
 
 
 def _launch_desktop(context):
-    """Compose only viewers and the remote control service client."""
+    """Compose viewers, the MPC image renderer and remote control client."""
     mapping_config = os.path.expanduser(
         LaunchConfiguration('mapping_config').perform(context))
     with open(mapping_config, encoding='utf-8') as stream:
@@ -56,6 +57,8 @@ def _launch_desktop(context):
         LaunchConfiguration('start_mapping_rviz').perform(context))
     start_control_gui = _boolean(
         LaunchConfiguration('start_control_gui').perform(context))
+    start_mpc_preview = _boolean(
+        LaunchConfiguration('start_mpc_preview').perform(context))
 
     actions = []
     if start_mapping_rviz:
@@ -87,6 +90,33 @@ def _launch_desktop(context):
             name='control_gui', output='screen',
             parameters=[{'use_sim_time': False}],
         ))
+    if start_mpc_preview:
+        controller_file = os.path.expanduser(
+            LaunchConfiguration('controller_params_file').perform(context))
+        with open(controller_file, encoding='utf-8') as stream:
+            controller = yaml.safe_load(stream)
+        tube = controller.get('local_costmap', {}).get('local_costmap', {}).get(
+            'ros__parameters', {}).get('path_distance_layer', {})
+        executor = controller.get('path_executor', {}).get('ros__parameters', {})
+        parameters = {
+            'use_sim_time': False,
+            'goal_circle_radius': float(executor.get('goal_circle_radius', 0.20)),
+        }
+        if 'tube_radius' in tube:
+            parameters['tube_radius'] = float(tube['tube_radius'])
+        preview_file = os.path.expanduser(
+            LaunchConfiguration('mpc_preview_params_file').perform(context))
+        preview_parameters = RewrittenYaml(
+            source_file=preview_file, root_key='', convert_types=True,
+            param_rewrites={
+                name: str(value).lower()
+                for name, value in parameters.items()},
+        )
+        actions.append(Node(
+            package='limo_controller', executable='mpc_preview',
+            name='mpc_preview', output='screen',
+            parameters=[preview_parameters, parameters],
+        ))
     return actions
 
 
@@ -95,6 +125,7 @@ def generate_launch_description():
     mapping_config = os.path.join(
         get_package_share_directory('online_map_package'),
         'config', 'mapping_real.yaml')
+    control_share = get_package_share_directory('limo_controller')
     return LaunchDescription([
         DeclareLaunchArgument(
             'mapping_config', default_value=mapping_config,
@@ -111,5 +142,16 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'start_control_gui', default_value='true',
             description='Open the remote start/pause/resume/abort control window.'),
+        DeclareLaunchArgument(
+            'start_mpc_preview', default_value='true',
+            description='Publish the MPC preview image on the PC; open its viewer manually.'),
+        DeclareLaunchArgument(
+            'controller_params_file', default_value=os.path.join(
+                control_share, 'config', 'control_real.yaml'),
+            description='Controller YAML used on the robot; shares preview tube/goal geometry.'),
+        DeclareLaunchArgument(
+            'mpc_preview_params_file', default_value=os.path.join(
+                control_share, 'config', 'mpc_preview_sim.yaml'),
+            description='MPC image rendering settings; the desktop uses the wall clock.'),
         OpaqueFunction(function=_launch_desktop),
     ])

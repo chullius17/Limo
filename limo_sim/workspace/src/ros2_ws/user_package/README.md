@@ -200,7 +200,8 @@ ros2 launch user_package desktop_app.launch.py
 ```
 
 This opens one RViz for mapping, planned paths and the local costmap, together
-with the control GUI. The additional CV RViz is disabled by default, independently
+with the control GUI. It also starts the MPC image renderer on the PC; open
+`rqt_image_view` manually to display its output. The additional CV RViz is disabled by default, independently
 of CV processing on the robot. Enable it explicitly with `start_cv_rviz:=true`.
 Each RViz client runs in its own launch scope. The desktop launch starts no mapping, CV processing,
 planner, controller, velocity mux, path executor or second goal bridge.
@@ -219,6 +220,11 @@ The controller YAML's `FollowPath.MPC.Debug.preview_enabled` starts the MPC imag
 renderer by default in simulation and leaves it off on the real robot.
 Override it for one run with `start_mpc_preview:=true` or `start_mpc_preview:=false`.
 View `/limo/control/mpc_preview/image/compressed` separately with `rqt_image_view`.
+On the physical robot, `desktop_app.launch.py` starts the renderer on the PC
+using wall time. The real backend leaves its renderer disabled to avoid a second
+publisher. The desktop does not open an image-viewing window. Override its
+rendering YAML with `mpc_preview_params_file` and supply the same
+`controller_params_file` used on the robot to share tube and goal-circle sizes.
 
 The real RViz profiles show **Waterfall Lane Overlay** using a desktop
 `image_transport` decoder. The robot sends JPEG on
@@ -256,6 +262,7 @@ Optional desktop switches:
 ros2 launch user_package desktop_app.launch.py start_cv_rviz:=true
 ros2 launch user_package desktop_app.launch.py start_mapping_rviz:=false
 ros2 launch user_package desktop_app.launch.py start_control_gui:=false
+ros2 launch user_package desktop_app.launch.py start_mpc_preview:=false
 ```
 
 `start_cv_rviz` only selects the desktop viewer; it does not change CV processing

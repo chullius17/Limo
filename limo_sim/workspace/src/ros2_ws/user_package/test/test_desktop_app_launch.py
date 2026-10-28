@@ -1,4 +1,4 @@
-"""Verify application desktop clients never launch robot processing nodes."""
+"""Verify desktop visualization never launches robot control/processing nodes."""
 
 import importlib.util
 from pathlib import Path
@@ -81,13 +81,37 @@ def test_desktop_expands_to_viewers_and_overlay_decoder(monkeypatch):
     nodes = expanded_viewers(monkeypatch, desktop(monkeypatch))
     assert {(node['package'], node['executable']) for node in nodes} == {
         ('rviz2', 'rviz2'), ('limo_controller', 'control_gui'),
-        ('image_transport', 'republish')}
+        ('image_transport', 'republish'), ('limo_controller', 'mpc_preview')}
     assert {node['name'] for node in nodes} == {
-        'rviz2', 'control_gui', 'online_rviz_waterfall_overlay_decoder'}
+        'rviz2', 'control_gui', 'online_rviz_waterfall_overlay_decoder', 'mpc_preview'}
     assert sum(node['executable'] == 'rviz2' for node in nodes) == 1
-    assert all(node['parameters'][0]['use_sim_time'] is False for node in nodes)
+    assert all(node['parameters'][-1]['use_sim_time'] is False for node in nodes)
     gui = next(node for node in nodes if node['name'] == 'control_gui')
     assert gui['executable'] != 'controller_server'
+
+
+def test_desktop_preview_shares_real_controller_geometry(monkeypatch, tmp_path):
+    config = yaml.safe_load(
+        (PACKAGES / 'limo_controller/config/control_real.yaml').read_text())
+    assert config['controller_server']['ros__parameters']['FollowPath']['MPC'][
+        'Debug']['preview_enabled'] is False
+    config['path_executor']['ros__parameters']['goal_circle_radius'] = 0.35
+    config['local_costmap']['local_costmap']['ros__parameters'][
+        'path_distance_layer']['tube_radius'] = 0.75
+    path = tmp_path / 'controller.yaml'
+    path.write_text(yaml.safe_dump(config))
+    preview_path = tmp_path / 'preview.yaml'
+    preview_path.write_text(yaml.safe_dump({'mpc_preview': {'ros__parameters': {
+        'use_sim_time': True, 'tube_radius': 9.0, 'goal_circle_radius': 9.0}}}))
+    actions = desktop(monkeypatch, controller_params_file=str(path),
+                      mpc_preview_params_file=str(preview_path))
+    preview = next(action for action in actions if isinstance(action, dict)
+                   and action['name'] == 'mpc_preview')
+    expected = {'use_sim_time': False, 'goal_circle_radius': 0.35, 'tube_radius': 0.75}
+    assert preview['parameters'][-1] == expected
+    rewritten = preview['parameters'][0].perform(LaunchContext())
+    assert yaml.safe_load(Path(rewritten).read_text())[
+        'mpc_preview']['ros__parameters'] == expected
 
 
 @pytest.mark.parametrize('enabled', [True, False])
@@ -114,7 +138,8 @@ def test_cv_view_requires_explicit_switch_independently_of_backend(
 def test_custom_cv_profile_and_client_switches_are_forwarded(monkeypatch):
     actions = desktop(
         monkeypatch, cv_config='/tmp/custom_cv.yaml',
-        start_mapping_rviz='false', start_control_gui='false', start_cv_rviz='true')
+        start_mapping_rviz='false', start_control_gui='false', start_cv_rviz='true',
+        start_mpc_preview='false')
     assert len(actions) == 1
     arguments = dict(actions[0][0].launch_arguments)
     assert arguments['config_file'] == '/tmp/custom_cv.yaml'
@@ -136,11 +161,11 @@ def test_cv_profile_is_resolved_from_mapping_yaml(monkeypatch, tmp_path):
 def test_all_desktop_clients_can_be_disabled(monkeypatch):
     assert desktop(
         monkeypatch, start_mapping_rviz='false',
-        start_cv_rviz='false', start_control_gui='false') == []
+        start_cv_rviz='false', start_control_gui='false', start_mpc_preview='false') == []
 
 
 @pytest.mark.parametrize('name', [
-    'start_mapping_rviz', 'start_cv_rviz', 'start_control_gui'])
+    'start_mapping_rviz', 'start_cv_rviz', 'start_control_gui', 'start_mpc_preview'])
 def test_invalid_desktop_switch_is_rejected(monkeypatch, name):
     with pytest.raises(ValueError, match='Expected true or false'):
         desktop(monkeypatch, **{name: 'typo'})
@@ -156,7 +181,7 @@ def test_desktop_requires_mapping_launch_settings(monkeypatch, tmp_path):
 def test_viewer_includes_have_separate_launch_scopes():
     module = load_launch('user_package', 'desktop_app.launch.py')
     context = launch_context(module, {
-        'start_control_gui': 'false', 'start_cv_rviz': 'true'})
+        'start_control_gui': 'false', 'start_cv_rviz': 'true', 'start_mpc_preview': 'false'})
     actions = module._launch_desktop(context)
     assert len(actions) == 2
     assert all(isinstance(action, GroupAction) for action in actions)
