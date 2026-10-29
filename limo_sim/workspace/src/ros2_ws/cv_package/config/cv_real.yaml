@@ -25,6 +25,9 @@ depth_correction:
   camera_info_topic: /depth_camera/depth/camera_info
   # Fit height AND tilt; register measured depth into RGB before the crop.
   register_to_rgb: true
+  # Crop in source coordinates, then sample at most 320x120 before projection.
+  registration_reduce_input: true
+  max_processing_rate_hz: 15.0
   rgb_camera_info_topic: /rgb/camera_info
   input_crop_y_min: 0.5
   calibration_frames: 10

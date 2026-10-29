@@ -6,6 +6,7 @@
   <description>Classical computer-vision pipeline for LIMO lane and boundary detection.</description>
   <maintainer email="giulio.cataldo@studio.unibo.it">Giulio Cataldo</maintainer>
   <license>Apache-2.0</license>
+  <build_depend>python3-dev</build_depend>
 
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>launch</exec_depend>

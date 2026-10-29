@@ -319,14 +319,42 @@ source the workspace after changing the package layout, as shown above.
 ## Real RGB/depth geometry (30 September 2026)
 
 The real profile enables `depth_correction.register_to_rgb`. It reads both
-CameraInfo topics and the calibrated optical-frame TF, back-projects valid
-full-resolution depth, then projects it into the RGB lower-half 320x120 crop.
+CameraInfo topics and the calibrated optical-frame TF, then projects measured
+depth into the RGB lower-half 320x120 crop. The real profile enables
+`registration_reduce_input`: it first crops the native depth image to source
+pixels that can reach that RGB region within the configured depth range,
+then selects at most `output_width` x `output_height` samples with nearest
+neighbour resize before conversion and projection. Cached rays use the exact
+same source pixels, so the RGB/depth extrinsics and output geometry are retained.
+This reduces registration work but can omit thin objects and produces more
+holes than full-resolution registration; those holes follow the usual plane
+completion rule. Set `registration_reduce_input: false` to retain every input
+measurement. The default and simulation profile retain full-resolution input.
+`max_processing_rate_hz` limits depth processing and all its outputs (15.0 Hz
+in the real profile, 0.0/unlimited by default and in simulation). A steady-clock
+timer consumes only the newest received frame, before any conversion, TF lookup
+or calibration; excess images are replaced without a backlog and unchanged
+images are never republished. This also avoids reducing a 30 Hz input to 15 Hz
+when requesting 20 Hz. The original image timestamp is preserved. Change the
+limit at runtime with `ros2 param set /depth_correction max_processing_rate_hz 15.0`;
+use `0.0` to disable it. Negative and non-finite values are rejected.
 Each target pixel retains the nearest measured RGB optical Z (z-buffer).
+Registration caches the source rays already rotated into the RGB frame whenever
+calibration changes. A C++ extension fuses per-frame projection, range checks
+and nearest-Z visibility into one loop over those rays, writing a reusable
+float32 output buffer without allocating intermediate point clouds. Geometry
+uses float64 arithmetic; measurements and output timestamps are preserved.
+The extension uses Python's buffer protocol and does not depend on NumPy's C
+ABI. Rebuild `cv_package` with a C++ compiler and Python development headers
+after this change. The node logs `Depth registration backend: native` when the
+extension is loaded; otherwise it uses a NumPy implementation with cached rays
+and reusable working buffers. The uncached `register_depth` helper remains
+available as the independent reference for geometry tests and replay checks.
 The input camera images must have zero distortion/rectified calibration;
 unsupported calibration or mismatched source frames are rejected explicitly.
 The Astra driver remains in unregistered mode: registration is performed here.
 
-At startup, measured lower-image points calibrate the full ground plane
+At startup, original full-resolution lower-image points calibrate the full ground plane
 (normal plus distance) over ten stable frames. RANSAC rejects vertical walls,
 insufficient support and nearly collinear samples. The fit assumes ground
 within 20 degrees of horizontal and 5–60 cm below `plane_frame` (`camera_link`).

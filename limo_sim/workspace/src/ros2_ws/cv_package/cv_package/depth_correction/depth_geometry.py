@@ -2,6 +2,11 @@
 
 import numpy as np
 
+try:
+    from ._registration_native import project_depth as _native_project_depth
+except ImportError:
+    _native_project_depth = None
+
 
 def pixel_rays(k, source_width, source_height, width, height, crop=0.0):
     """Rays at output pixel centres, using the same crop as the RGB labels."""
@@ -16,6 +21,45 @@ def pixel_rays(k, source_width, source_height, width, height, crop=0.0):
     u, v = np.meshgrid(u, v)
     return np.stack(((u - k[0, 2]) / k[0, 0],
                      (v - k[1, 2]) / k[1, 1], np.ones_like(u)), axis=-1)
+
+
+def registration_source_crop(rays, rotation, translation, rgb_k, rgb_size,
+                             crop=.5, min_depth=.1, max_depth=5.0):
+    """Bound source pixels that can reach the RGB crop at any allowed depth.
+
+    Clip each source ray's depth interval against the RGB viewing frustum.
+    This runs only when calibration changes, before any image downsampling.
+    A literal lower-half source crop would be wrong for distinct RGB optics.
+    """
+    directions = rays @ rotation.T
+    k = np.asarray(rgb_k).reshape(3, 3)
+    width, height = rgb_size
+    lower = np.full(rays.shape[:2], min_depth, dtype=np.float64)
+    upper = np.full(rays.shape[:2], max_depth, dtype=np.float64)
+    constraints = [(directions[..., 2], translation[2] - min_depth),
+                   (-directions[..., 2], max_depth - translation[2])]
+    for axis, low, high, focal, center in (
+            (0, -.5, width - .5, k[0, 0], k[0, 2]),
+            (1, int(height * crop) - .5, height - .5, k[1, 1], k[1, 2])):
+        low, high = (low - center) / focal, (high - center) / focal
+        constraints.extend([
+            (directions[..., axis] - low * directions[..., 2],
+             translation[axis] - low * translation[2]),
+            (high * directions[..., 2] - directions[..., axis],
+             high * translation[2] - translation[axis]),
+        ])
+    for coefficient, offset in constraints:
+        boundary = np.zeros_like(lower)
+        np.divide(-offset, coefficient, out=boundary, where=coefficient != 0)
+        np.maximum(lower, boundary, out=lower, where=coefficient > 0)
+        np.minimum(upper, boundary, out=upper, where=coefficient < 0)
+        upper[(coefficient == 0) & (offset < 0)] = -np.inf
+    rows, cols = np.nonzero((lower <= upper) & np.isfinite(directions).all(axis=2))
+    if not len(rows):
+        # Keep resize well-defined when the cameras have no shared field of view.
+        return slice(0, 1), slice(0, 1)
+    return (slice(int(rows.min()), int(rows.max()) + 1),
+            slice(int(cols.min()), int(cols.max()) + 1))
 
 
 def register_depth(depth, rays, rotation, translation, rgb_k, rgb_size,
@@ -93,7 +137,81 @@ def register_depth(depth, rays, rotation, translation, rgb_k, rgb_size,
     np.minimum.at(result, rows * width + cols, points[visible, 2])
     result[~np.isfinite(result)] = np.nan
     return result.reshape(height, width)
-    # TODO: verify if the passage of intrinsics and the frame transformation is useful or can be avoided
+
+
+class DepthRegistration:
+    """Cache rigid ray rotation and reuse the registration output buffer.
+
+    The returned float32 array belongs to this instance and is overwritten by
+    the next call. Copy it when retaining an earlier frame. Depth-dependent
+    translation, projection and nearest-Z visibility are evaluated per frame.
+    """
+
+    def __init__(self, rays, rotation, translation, rgb_k, rgb_size,
+                 output_size, crop=.5, min_depth=.1, max_depth=5.0,
+                 use_native=True):
+        self.rays = np.ascontiguousarray(np.asarray(rays, dtype=np.float64)
+                                         @ np.asarray(rotation, dtype=np.float64).T)
+        k = np.asarray(rgb_k, dtype=np.float64).reshape(3, 3)
+        width, height = output_size
+        rgb_width, rgb_height = rgb_size
+        self.parameters = np.array([
+            *translation, k[0, 0], k[1, 1], k[0, 2], k[1, 2],
+            rgb_width, rgb_height, int(rgb_height * crop), min_depth, max_depth,
+        ], dtype=np.float64)
+        if (self.rays.ndim != 3 or self.rays.shape[2] != 3
+                or not np.isfinite(self.rays).all()
+                or not np.isfinite(self.parameters).all()
+                or min(width, height, rgb_width, rgb_height) <= 0
+                or not 0 <= crop < 1 or not 0 < min_depth < max_depth):
+            raise ValueError('Invalid registration geometry')
+        self.output = np.empty((height, width), dtype=np.float32)
+        self._native = _native_project_depth if use_native else None
+        self.backend = 'native' if self._native is not None else 'numpy'
+        self._points = None
+
+    def register(self, depth):
+        """Register float32/float64 optical Z, including strided source views."""
+        if depth.shape != self.rays.shape[:2] or depth.dtype not in (np.float32, np.float64):
+            raise ValueError('Depth shape/dtype does not match registration geometry')
+        if self._native is not None:
+            self._native(depth, self.rays, self.output, self.parameters)
+            return self.output
+        if self._points is None:
+            self._points = np.empty_like(self.rays)
+            self._u = np.zeros(depth.shape, dtype=np.float64)
+            self._v = np.zeros(depth.shape, dtype=np.float64)
+        tx, ty, tz, fx, fy, cx, cy, rw, rh, start, near, far = self.parameters
+        height, width = self.output.shape
+        with np.errstate(invalid='ignore', divide='ignore', over='ignore'):
+            np.multiply(self.rays, depth[..., None], out=self._points)
+            np.add(self._points, [tx, ty, tz], out=self._points)
+            x, y, z = (self._points[..., i] for i in range(3))
+            valid = (np.isfinite(depth) & (depth >= near) & (depth <= far)
+                     & np.isfinite(z) & (z >= near) & (z <= far))
+            np.divide(x, z, out=self._u, where=valid)
+            np.divide(y, z, out=self._v, where=valid)
+            self._u *= fx
+            self._u += cx
+            self._u += .5
+            self._u *= width
+            self._u /= rw
+            self._u -= .5
+            self._v *= fy
+            self._v += cy
+            self._v -= start
+            self._v += .5
+            self._v *= height
+            self._v /= rh - start
+            self._v -= .5
+            valid &= ((self._u >= -.5) & (self._u < width - .5)
+                      & (self._v >= -.5) & (self._v < height - .5))
+        cols = np.floor(self._u[valid] + .5).astype(np.intp)
+        rows = np.floor(self._v[valid] + .5).astype(np.intp)
+        self.output.fill(np.inf)
+        np.minimum.at(self.output.ravel(), rows * width + cols, z[valid])
+        self.output[~np.isfinite(self.output)] = np.nan
+        return self.output
 
 def fit_ground_plane(points, threshold=.008, min_points=150,
                      min_inlier_ratio=.6, max_tilt_deg=20.0):

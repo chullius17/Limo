@@ -1,0 +1,2 @@
+# Architecture-specific extension produced by colcon/setup.py.
+cv_package/depth_correction/_registration_native*.so

@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 from pathlib import Path
+from copy import deepcopy
+import time
 import numpy as np
 import pytest
 import yaml
@@ -9,6 +11,7 @@ import yaml
 pytest.importorskip('rclpy')
 import rclpy
 from geometry_msgs.msg import TransformStamped
+from rclpy.parameter import Parameter
 from sensor_msgs.msg import CameraInfo
 from cv_package.depth_correction.depth_correction import DepthCorrection
 from cv_package.depth_correction.depth_geometry import ground_depth, pixel_rays, register_depth
@@ -18,7 +21,8 @@ from cv_package.depth_correction.depth_geometry import ground_depth, pixel_rays,
 def camera(request):
     profile = yaml.safe_load((Path(__file__).resolve().parents[1] / 'config' /
                               f'cv_{request.param}.yaml').read_text())
-    parameters = dict(profile['depth_correction'], calibration_frames=1)
+    parameters = dict(profile['depth_correction'], calibration_frames=1,
+                      max_processing_rate_hz=0.0)
     arguments = ['--ros-args']
     for name, value in parameters.items():
         if isinstance(value, float) and np.isnan(value):
@@ -106,8 +110,10 @@ def test_calibration_change_invalidates_frozen_plane(camera):
     node, msg, _, _ = camera
     node.depth_callback(msg)
     assert node.ground_plane is not None
+    registration = node.depth_registration
     node.rgb_info.k[0] += 2
     node.registered_geometry(msg)
+    assert node.depth_registration is not registration
     assert node.ground_plane is None
     assert np.isnan(node.registered_ground_lut).all()
     assert not node.ground_samples
@@ -155,6 +161,7 @@ def test_tf_composition_roundoff_does_not_restart_calibration(camera):
     node, msg, _, _ = camera
     node.depth_callback(msg)
     plane = node.ground_plane
+    registration = node.depth_registration
     original = node.tf_buffer.lookup_transform
 
     def noisy_transform(*args):
@@ -165,4 +172,103 @@ def test_tf_composition_roundoff_does_not_restart_calibration(camera):
     node.tf_buffer.lookup_transform = noisy_transform
     node.registered_geometry(msg)
     assert node.ground_plane is plane
+    assert node.depth_registration is registration
     assert np.isfinite(node.registered_ground_lut).any()
+
+
+def test_reduced_registration_uses_native_sample_rays_and_full_plane_fit(camera):
+    node, msg, published, plane = camera
+    node.registration_reduce_input = True
+    node.output_width, node.output_height = 80, 40
+    node.debug_telemetry = True
+    node.depth_callback(msg)
+    assert node.registration_rays.shape[:2] == (40, 80)
+    assert node.frame_counter == node.frames_received == 1
+    assert len(node.telemetry_stats['registration']) == 1
+    # Check the original calibrated plane despite the smaller registration input.
+    np.testing.assert_allclose(node.ground_plane, plane, atol=1e-6)
+    rows, cols = node.registration_crop
+    source_rows = rows.start + np.arange(40) * (rows.stop - rows.start) // 40
+    source_cols = cols.start + np.arange(80) * (cols.stop - cols.start) // 80
+    selected = np.ix_(source_rows, source_cols)
+    np.testing.assert_array_equal(node.registration_rays, node.source_rays[selected])
+    depth = node.bridge.imgmsg_to_cv2(msg)[selected]
+    measured = register_depth(depth, node.source_rays[selected],
+                              *node.registered_transforms[0], node.rgb_info.k,
+                              (node.rgb_info.width, node.rgb_info.height), (80, 40))
+    output = node.bridge.imgmsg_to_cv2(published[0])
+    valid = np.isfinite(measured)
+    assert valid.sum() > 100
+    np.testing.assert_array_equal(output[valid], measured[valid])
+    assert published[0].header.frame_id == node.rgb_info.header.frame_id
+    assert published[0].header.stamp == msg.header.stamp
+    # Native uint16 millimetres must select the same pixels before conversion.
+    millimetres = np.rint(np.nan_to_num(node.bridge.imgmsg_to_cv2(msg)) * 1000).astype(np.uint16)
+    msg_u16 = node.bridge.cv2_to_imgmsg(millimetres, encoding='16UC1')
+    msg_u16.header = msg.header
+    frozen_plane = node.ground_plane
+    node.depth_callback(msg_u16)
+    measured_u16 = register_depth(
+        millimetres[selected].astype(np.float32) * np.float32(.001),
+        node.source_rays[selected], *node.registered_transforms[0], node.rgb_info.k,
+        (node.rgb_info.width, node.rgb_info.height), (80, 40))
+    valid = np.isfinite(measured_u16)
+    np.testing.assert_array_equal(node.bridge.imgmsg_to_cv2(published[-1])[valid],
+                                  measured_u16[valid])
+    assert node.ground_plane is frozen_plane
+
+
+def test_rate_limit_processes_latest_frame_once_and_can_be_disabled(camera):
+    node, msg, published, _ = camera
+    result = node.set_parameters_atomically([Parameter('max_processing_rate_hz', value=20.0)])
+    assert result.successful
+    latest = deepcopy(msg)
+    latest.header.stamp.sec += 1
+    node.depth_callback(msg)
+    node.depth_callback(latest)
+    assert not published
+    assert node.frames_received == 2
+    assert node.frames_rate_limited == 1
+    node._process_pending_depth()
+    assert len(published) == 1
+    assert published[0].header.stamp == latest.header.stamp
+    node._process_pending_depth()
+    assert len(published) == 1
+    result = node.set_parameters_atomically([Parameter('max_processing_rate_hz', value=0.0)])
+    assert result.successful
+    assert node._rate_timer is None
+    node.depth_callback(msg)
+    assert len(published) == 2
+
+
+def test_wall_timer_caps_processing_with_faster_input(camera, monkeypatch):
+    node, msg, _, _ = camera
+    processed = []
+    monkeypatch.setattr(node, '_process_depth', lambda image: processed.append(time.monotonic()))
+    assert node.set_parameters_atomically([
+        Parameter('max_processing_rate_hz', value=20.0)]).successful
+    start = time.monotonic()
+    while time.monotonic() - start < .45:
+        node.depth_callback(msg)
+        rclpy.spin_once(node, timeout_sec=.005)
+    assert 6 <= len(processed) <= 10
+    # Let the final pending image drain, then verify idle ticks publish nothing.
+    deadline = time.monotonic() + .07
+    while time.monotonic() < deadline:
+        rclpy.spin_once(node, timeout_sec=.005)
+    count = len(processed)
+    deadline = time.monotonic() + .07
+    while time.monotonic() < deadline:
+        rclpy.spin_once(node, timeout_sec=.005)
+    assert len(processed) == count
+
+
+@pytest.mark.parametrize('rate', [-1.0, float('nan'), float('inf')])
+def test_invalid_rate_does_not_apply_other_parameter_changes(camera, rate):
+    node, _, _, _ = camera
+    result = node.set_parameters_atomically([
+        Parameter('enable_telemetry', value=True),
+        Parameter('max_processing_rate_hz', value=rate)])
+    assert not result.successful
+    assert node.max_processing_rate_hz == 0.0
+    assert node.debug_telemetry is False

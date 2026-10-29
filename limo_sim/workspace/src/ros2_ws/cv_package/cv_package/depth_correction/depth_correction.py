@@ -17,6 +17,7 @@ from cv_bridge import CvBridge, CvBridgeError
 import numpy as np
 import rclpy
 from rcl_interfaces.msg import SetParametersResult
+from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
@@ -28,7 +29,8 @@ from collections import deque
 from copy import deepcopy
 
 from .depth_geometry import (
-    pixel_rays, register_depth, fit_ground_plane, ground_depth, complete_depth,
+    DepthRegistration, pixel_rays, registration_source_crop, fit_ground_plane,
+    ground_depth, complete_depth,
 )
 
 
@@ -64,6 +66,7 @@ class DepthCorrection(Node):
         self.declare_parameter('plane_frame', 'camera_link')
         self.declare_parameter('plane_height_m', float('nan'))
         self.declare_parameter('register_to_rgb', False)
+        self.declare_parameter('registration_reduce_input', False)
         self.declare_parameter('rgb_camera_info_topic', '/rgb/camera_info')
         self.declare_parameter('ground_depth_topic',
                                'limo/cv_package/depth_correction/ground_depth/raw')
@@ -75,6 +78,7 @@ class DepthCorrection(Node):
         self.declare_parameter('calibration_frames', 30)
         self.declare_parameter('calibration_rows', 10)
         self.declare_parameter('debug_jpeg_quality', 80)
+        self.declare_parameter('max_processing_rate_hz', 0.0)
 
         input_topic = self.get_parameter('input_topic').value
         camera_info_topic = self.get_parameter('camera_info_topic').value
@@ -86,6 +90,8 @@ class DepthCorrection(Node):
         self.plane_height_m = float(
             self.get_parameter('plane_height_m').value)
         self.register_to_rgb = bool(self.get_parameter('register_to_rgb').value)
+        self.registration_reduce_input = bool(
+            self.get_parameter('registration_reduce_input').value)
         self.input_crop_y_min = float(self.get_parameter('input_crop_y_min').value)
         if not 0 <= self.input_crop_y_min < 1:
             raise ValueError('input_crop_y_min must be in [0, 1)')
@@ -102,6 +108,15 @@ class DepthCorrection(Node):
             self.get_parameter('calibration_rows').value)
         self.debug_jpeg_quality = int(
             self.get_parameter('debug_jpeg_quality').value)
+        self.max_processing_rate_hz = float(
+            self.get_parameter('max_processing_rate_hz').value)
+        if (not np.isfinite(self.max_processing_rate_hz)
+                or self.max_processing_rate_hz < 0):
+            raise ValueError('max_processing_rate_hz must be finite and >= 0')
+        self._pending_depth = None
+        self._rate_timer = None
+        # CPU load control must keep working independently of /clock pauses.
+        self._rate_clock = Clock(clock_type=ClockType.STEADY_TIME)
 
         if self.output_width <= 0 or self.output_height <= 0:
             raise ValueError('Output dimensions must be greater than zero')
@@ -176,6 +191,9 @@ class DepthCorrection(Node):
         self.telemetry_stats = {
             'ingress': deque(maxlen=self.window_size),
             'resize_convert': deque(maxlen=self.window_size),
+            'geometry': deque(maxlen=self.window_size),
+            'calibration': deque(maxlen=self.window_size),
+            'registration': deque(maxlen=self.window_size),
             'lut_fill': deque(maxlen=self.window_size),
             'depth_publish': deque(maxlen=self.window_size),
             'raw_jet': deque(maxlen=self.window_size),
@@ -184,6 +202,7 @@ class DepthCorrection(Node):
         }
         self.frame_counter = 0
         self.frames_received = 0
+        self.frames_rate_limited = 0
         self._ingress_arrival_times = deque(maxlen=self.window_size + 1)
         self._last_report_wall_time = time.perf_counter()
         self._last_report_frame_counter = 0
@@ -215,6 +234,7 @@ class DepthCorrection(Node):
                 self.rgb_info_callback, sensor_qos)
             self.ground_publisher = self.create_publisher(
                 Image, self.get_parameter('ground_depth_topic').value, sensor_qos)
+        self._set_processing_rate(self.max_processing_rate_hz)
 
         calibration_status = (
             f'Waiting for {self.calibration_frames} calibration frames.'
@@ -231,9 +251,36 @@ class DepthCorrection(Node):
     def _on_set_parameters(self, params):
         """Apply runtime parameter changes without a per-frame lookup."""
         for param in params:
+            if param.name == 'max_processing_rate_hz':
+                if (not np.isfinite(param.value) or param.value < 0):
+                    return SetParametersResult(
+                        successful=False,
+                        reason='max_processing_rate_hz must be finite and >= 0')
+        for param in params:
             if param.name == 'enable_telemetry':
                 self.debug_telemetry = bool(param.value)
+            elif param.name == 'max_processing_rate_hz':
+                self._set_processing_rate(float(param.value))
         return SetParametersResult(successful=True)
+
+    def _set_processing_rate(self, rate):
+        """Process the latest image on a wall-clock timer; zero means unlimited."""
+        if self._rate_timer is not None:
+            self.destroy_timer(self._rate_timer)
+            self._rate_timer = None
+        self.max_processing_rate_hz = rate
+        if rate > 0:
+            self._rate_timer = self.create_timer(
+                1.0 / rate, self._process_pending_depth, clock=self._rate_clock)
+        elif self._pending_depth is not None:
+            self._pending_depth = None
+            self.frames_rate_limited += 1
+
+    def _process_pending_depth(self):
+        """Consume a new frame once; never queue stale frames or repeat an image."""
+        if self._pending_depth is not None:
+            msg, self._pending_depth = self._pending_depth, None
+            self._process_depth(msg)
 
     def camera_info_callback(self, msg):
         """Store the latest intrinsic calibration until the LUT is frozen."""
@@ -277,10 +324,40 @@ class DepthCorrection(Node):
         if changed:
             self.source_rays = pixel_rays(source.k, source.width, source.height,
                                          msg.width, msg.height)
+            self.registration_crop = (slice(0, msg.height), slice(0, msg.width))
+            self.registration_rays = self.source_rays
+            self.registration_size = (msg.width, msg.height)
+            if self.registration_reduce_input:
+                self.registration_crop = registration_source_crop(
+                    self.source_rays, *transforms[0], rgb.k,
+                    (rgb.width, rgb.height), self.input_crop_y_min,
+                    self.min_depth_m, self.max_depth_m)
+                cropped_rays = self.source_rays[self.registration_crop]
+                self.registration_size = (
+                    min(self.output_width, cropped_rays.shape[1]),
+                    min(self.output_height, cropped_rays.shape[0]))
+                # Use exactly the same native-pixel selection as the depth resize,
+                # rather than recomputing approximate pixel-centre intrinsics.
+                self.registration_rays = cv2.resize(
+                    cropped_rays, self.registration_size,
+                    interpolation=cv2.INTER_NEAREST)
+                rows, cols = self.registration_crop
+                self.get_logger().info(
+                    f'Registration source crop x={cols.start}:{cols.stop}, '
+                    f'y={rows.start}:{rows.stop}; sampling '
+                    f'{self.registration_size[0]}x{self.registration_size[1]} '
+                    f'instead of {msg.width}x{msg.height} points')
             self.rgb_rays = pixel_rays(rgb.k, rgb.width, rgb.height,
                                       self.output_width, self.output_height,
                                       self.input_crop_y_min)
             self.registered_transforms = transforms
+            self.depth_registration = DepthRegistration(
+                self.registration_rays, *transforms[0], rgb.k,
+                (rgb.width, rgb.height), (self.output_width, self.output_height),
+                self.input_crop_y_min, self.min_depth_m, self.max_depth_m)
+            self.get_logger().info(
+                f'Depth registration backend: {self.depth_registration.backend}; '
+                'rigid ray rotation cached')
             self.registered_signature = signature
             self.ground_samples = []
             self.ground_plane = None
@@ -330,35 +407,66 @@ class DepthCorrection(Node):
 
     def registered_depth_callback(self, msg):
         """Register measurements, then complete all missing RGB pixels from the plane."""
+        started = time.perf_counter() if self.debug_telemetry else 0.0
+        stage = started
+
+        def timing(key):
+            nonlocal stage
+            if self.debug_telemetry:
+                now = time.perf_counter()
+                self.telemetry_stats[key].append((now - stage) * 1000.0)
+                stage = now
+
         try:
             rgb = self.registered_geometry(msg)
-            depth, needs_scale = self._view_source(msg)
+            timing('geometry')
+            source, needs_scale = self._view_source(msg)
+            timing('ingress')
+            # Full source samples are needed only while fitting the plane.
+            if self.ground_plane is None:
+                calibration_depth = source.astype(np.float32, copy=False)
+                if needs_scale:
+                    calibration_depth = calibration_depth * self._MM_TO_M
+                self.calibrate_registered_ground(calibration_depth)
+            timing('calibration')
+            # Crop/resize on the native dtype BEFORE conversion and projection.
+            depth = source[self.registration_crop]
+            if (depth.shape[1], depth.shape[0]) != self.registration_size:
+                depth = cv2.resize(depth, self.registration_size,
+                                   interpolation=cv2.INTER_NEAREST)
             depth = depth.astype(np.float32, copy=False)
             if needs_scale:
                 depth = depth * self._MM_TO_M
-            self.calibrate_registered_ground(depth)
-            rotation, translation = self.registered_transforms[0]
-            registered = register_depth(
-                depth, self.source_rays, rotation, translation, rgb.k,
-                (rgb.width, rgb.height), (self.output_width, self.output_height),
-                self.input_crop_y_min, self.min_depth_m, self.max_depth_m)
+            timing('resize_convert')
+            registered = self.depth_registration.register(depth)
+            timing('registration')
         except (ValueError, TransformException) as error:
             self.get_logger().warning(str(error), throttle_duration_sec=3.0)
             return
         header = deepcopy(msg.header)
         header.frame_id = rgb.header.frame_id
         completed = complete_depth(registered, self.registered_ground_lut)
+        timing('lut_fill')
         self.publish_depth(completed, header)
         ground = self.bridge.cv2_to_imgmsg(self.registered_ground_lut, encoding='32FC1')
         ground.header = header
         self.ground_publisher.publish(ground)
+        timing('depth_publish')
         # Both views use RGB pixels; raw shows only registered measurements.
         if self.publisher.get_subscription_count():
             self.publish_image(self.publisher,
                                self._colorize_into(registered, self._buf_bgr), header)
+        timing('raw_jet')
         if self.corrected_publisher.get_subscription_count():
             self.publish_image(self.corrected_publisher,
                                self._colorize_into(completed, self._buf_bgr), header)
+        timing('corrected_jet')
+        self.frame_counter += 1
+        if self.debug_telemetry:
+            self.telemetry_stats['total_callback'].append(
+                (time.perf_counter() - started) * 1000.0)
+            if self.frame_counter % self.telemetry_log_interval_frames == 0:
+                self._log_telemetry_report()
 
     @staticmethod
     def quaternion_to_rotation(quaternion):
@@ -652,14 +760,23 @@ class DepthCorrection(Node):
         completed[fillable] = self.depth_lut[fillable]
 
     def depth_callback(self, msg):
+        """Receive images cheaply, retaining only the latest when rate limited."""
+        self.frames_received += 1
+        if self.debug_telemetry:
+            self._ingress_arrival_times.append(time.perf_counter())
+        if self.max_processing_rate_hz > 0:
+            if self._pending_depth is not None:
+                self.frames_rate_limited += 1
+            self._pending_depth = msg
+        else:
+            self._process_depth(msg)
+
+    def _process_depth(self, msg):
         """Crop, resize, calibrate if needed, then publish both views."""
         if self.register_to_rgb:
             self.registered_depth_callback(msg)
             return
-        self.frames_received += 1
         t_start = time.perf_counter() if self.debug_telemetry else 0.0
-        if self.debug_telemetry:
-            self._ingress_arrival_times.append(t_start)
 
         t0 = time.perf_counter() if self.debug_telemetry else 0.0
         try:
@@ -759,6 +876,7 @@ class DepthCorrection(Node):
             f"{self.window_size} frames) ======\n"
             f"  Frames Processed: {self.frame_counter} / Received: "
             f"{self.frames_received}\n"
+            f"  Frames replaced by rate limit: {self.frames_rate_limited}\n"
             "-----------------------------------------\n"
             "[RATE]\n"
             f" Input rate:                 {input_hz:.1f} Hz\n"
@@ -766,7 +884,10 @@ class DepthCorrection(Node):
             "-----------------------------------------\n"
             "[EXECUTION BREAKDOWN]\n"
             f" Ingress (view/CvBridge):    {avg('ingress'):.3f} ms\n"
+            f" Geometry/TF:                {avg('geometry'):.3f} ms\n"
+            f" Ground calibration:         {avg('calibration'):.3f} ms\n"
             f" Crop+resize+convert:        {avg('resize_convert'):.3f} ms\n"
+            f" Depth to RGB registration:  {avg('registration'):.3f} ms\n"
             f" LUT fill:                   {avg('lut_fill'):.3f} ms\n"
             f" Depth publish:              {avg('depth_publish'):.3f} ms\n"
             f" Raw JET:                    {avg('raw_jet'):.3f} ms\n"

@@ -1,4 +1,4 @@
-from setuptools import find_packages, setup
+from setuptools import Extension, find_packages, setup
 import os
 from glob import glob
 
@@ -8,6 +8,12 @@ setup(
     name=package_name,
     version='0.1.0',
     packages=find_packages(exclude=('test',)),
+    ext_modules=[Extension(
+        'cv_package.depth_correction._registration_native',
+        sources=['cv_package/depth_correction/_registration_native.cpp'],
+        language='c++',
+        extra_compile_args=['-O3', '-std=c++11', '-ffp-contract=off'],
+    )],
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -17,7 +23,7 @@ setup(
             glob(os.path.join('config', '*.yaml'))),
     ],
     install_requires=['setuptools', 'PyTurboJPEG'],
-    zip_safe=True,
+    zip_safe=False,
     maintainer='root',
     maintainer_email='root@todo.todo',
     description='TODO: Package description',
