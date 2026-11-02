@@ -115,6 +115,8 @@ explicit start missing from Foxy's `ComputePathToPose` action. With
 `enable_start_adjustment: true`, the bridge samples collision-free virtual
 starts as well as goals, and tries at most `max_planning_attempts` start/goal
 pairs. Exact starts retain normal obstacle checks.
+Both `traj_real.yaml` and `traj_sim.yaml` enable this start adjustment, searching
+within 0.75 m at 0.10 m steps and 22.5 degree heading increments.
 
 Both profiles set `GridBased.connect_adjusted_start: false`, also the plugin
 default. A virtual start can be beside the robot and need not be reachable from

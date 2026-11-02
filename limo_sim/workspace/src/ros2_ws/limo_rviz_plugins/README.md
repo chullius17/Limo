@@ -1,8 +1,11 @@
 # RViz footprint rendering
 
 `limo_rviz_plugins/Polygon` keeps the standard Polygon display's topics,
-properties and appearance, but sends messages released by a delayed TF to the
-GUI thread before modifying OGRE geometry. The online real and simulation
+properties and appearance, but retains only the newest message released by TF
+and draws it during the next GUI update. Each display retains at most one
+pending footprint; it never queues a history of Qt rendering callbacks.
+Outlines render 3 cm above the map plane so costmap tiles do not hide them.
+The online real and simulation
 profiles use it for **Trajectory Footprint** and **Control Footprint**.
 
 In Foxy 8.2.8, `MessageFilterDisplay` can call `PolygonDisplay::processMessage`
