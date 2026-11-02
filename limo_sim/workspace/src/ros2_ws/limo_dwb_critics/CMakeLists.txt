@@ -18,10 +18,15 @@ find_package(dwb_core REQUIRED)
 find_package(dwb_critics REQUIRED)
 find_package(dwb_msgs REQUIRED)
 find_package(nav2_core REQUIRED)
+find_package(nav2_controller REQUIRED)
+find_package(lifecycle_msgs REQUIRED)
 find_package(nav_2d_utils REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(nav2_util REQUIRED)
 find_package(limo_interfaces REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(limo_inflation REQUIRED)
@@ -59,6 +64,13 @@ pluginlib_export_plugin_description_file(
 pluginlib_export_plugin_description_file(
   nav2_core limo_mpc_controller_plugins.xml
 )
+
+add_executable(limo_controller_server src/controller_server_main.cpp)
+target_compile_features(limo_controller_server PUBLIC cxx_std_17)
+ament_target_dependencies(limo_controller_server
+  nav2_controller nav2_costmap_2d nav_2d_utils pluginlib
+  nav2_util rclcpp_lifecycle rclcpp_action rclcpp lifecycle_msgs)
+install(TARGETS limo_controller_server DESTINATION lib/${PROJECT_NAME})
 
 install(
   TARGETS ${PROJECT_NAME}

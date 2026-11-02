@@ -71,11 +71,15 @@ def _launch_cv(context):
         package='cv_package', executable=detectors[detector],
         name='lane_node', output='screen', emulate_tty=True,
         parameters=[lane_params], remappings=lane_remappings,
+        additional_env={'LIMO_FAST_EXIT': os.environ.get('LIMO_FAST_EXIT', '1')},
     )
     depth_node = Node(
         package='cv_package', executable='depth_correction',
         name='depth_correction', output='screen', emulate_tty=True,
-        additional_env={'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'},
+        additional_env={
+            'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1',
+            'LIMO_FAST_EXIT': os.environ.get('LIMO_FAST_EXIT', '1'),
+        },
         parameters=[depth_params],
     )
     cloud_node = Node(
@@ -86,6 +90,7 @@ def _launch_cv(context):
             'OMP_NUM_THREADS': '1',
             'MKL_NUM_THREADS': '1',
             'BLIS_NUM_THREADS': '1',
+            'LIMO_FAST_EXIT': os.environ.get('LIMO_FAST_EXIT', '1'),
         },
         parameters=[cloud_params],
     )

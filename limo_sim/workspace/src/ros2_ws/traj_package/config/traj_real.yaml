@@ -58,10 +58,8 @@ planner_server:
       # to the goal. Foxy does not expose an analytic-expansion length limit.
       analytic_expansion_ratio: 3.5
 
-      # The theoretical centre-line limit is 0.462 m. Use a conservative
-      # operational radius so every planned primitive remains comfortably
-      # inside the steering capability of the physical robot.
-      minimum_turning_radius: 0.55
+      # Retain 3.8 cm of margin above the physical centre-line limit of 0.462 m.
+      minimum_turning_radius: 0.50
       # The virtual start may lie beside the robot; no real-to-virtual connection is required.
       connect_adjusted_start: false
       explicit_start_service: /compute_path_with_start

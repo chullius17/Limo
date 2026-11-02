@@ -28,6 +28,26 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction  # noqa: E402
 PACKAGE = Path(__file__).resolve().parents[1]
 
 
+def test_controller_shutdown_host_preserves_nav2_arguments_and_opt_out(monkeypatch):
+    path = PACKAGE / 'launch/control.launch.py'
+    spec = importlib.util.spec_from_file_location('shutdown_control_launch', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, 'Node', lambda **kwargs: kwargs)
+    monkeypatch.setenv('LIMO_FAST_EXIT', '0')
+    context = LaunchContext()
+    context.launch_configurations['robot_model'] = 'real'
+    params = object()
+    node = module.controller_node(context, params, 'warn')[0]
+    assert (node['package'], node['executable']) == (
+        'limo_dwb_critics', 'limo_controller_server')
+    assert node['name'] == 'controller_server'
+    assert node['parameters'] == [params]
+    assert node['remappings'] == [('cmd_vel', '/cmd_vel_autonomy')]
+    assert node['arguments'] == ['--ros-args', '--log-level', 'warn']
+    assert node['additional_env']['LIMO_FAST_EXIT'] == '0'
+
+
 def controller(monkeypatch, **overrides):
     path = PACKAGE / 'launch/control.launch.py'
     spec = importlib.util.spec_from_file_location('control_launch_test', path)

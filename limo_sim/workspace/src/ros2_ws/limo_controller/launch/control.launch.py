@@ -34,13 +34,14 @@ def controller_node(context, configured_params, log_level):
     if profile not in ('real', 'sim'):
         raise ValueError('robot_model must be sim or real')
     return [Node(
-        package='nav2_controller',
-        executable='controller_server',
+        package='limo_dwb_critics',
+        executable='limo_controller_server',
         name='controller_server',
         output='screen',
         parameters=[configured_params],
         arguments=['--ros-args', '--log-level', log_level],
         remappings=[('cmd_vel', '/cmd_vel_autonomy')],
+        additional_env={'LIMO_FAST_EXIT': os.environ.get('LIMO_FAST_EXIT', '1')},
     )]
 
 

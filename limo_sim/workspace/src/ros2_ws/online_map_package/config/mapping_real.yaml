@@ -20,10 +20,11 @@ map_servers:
   cv_obstacle_topic: /limo/map_package/online/maps/cv_obstacle
 
 local_ctrl_map:
-  trapezoid_near_width: 0.45112782  # Scaled with rectangle_width.
-  rectangle_width: 2.0  # Lateral extent in base_link (meters).
-  rectangle_length: 1.40  # Forward extent in base_link (meters).
-  trapezoid_height: 0.86  # Near edge at x=0.54 m.
+  # Local grid and trapezoid geometry in base_link.
+  trapezoid_near_width: 0.70
+  rectangle_width: 1.80  # Far trapezoid width and lateral grid extent (meters).
+  rectangle_length: 1.46  # Far edge, about 6 cm beyond the current cloud.
+  trapezoid_height: 1.00  # Near edge at x=0.46 m in base_link.
   output_cloud_topic: /limo/map_package/online/local_ctrl_map/points
   inner_trapezoid_inset: 0.20  # Inset of near and sloped edges; front stays aligned.
   maximum_points: 300  # Highest-confidence persistent boardwalk points (class 4 only).

@@ -22,6 +22,15 @@ by the launch. Real control uses a smaller Nano CPU budget, retaining geometry,
 velocity/acceleration limits, the prediction horizon and footprint collision checks.
 The real local costmap updates at 10 Hz and publishes at 2 Hz.
 
+`control.launch.py` uses `limo_dwb_critics/limo_controller_server`, which hosts
+the same Nav2 controller server and parameters. On SIGINT it deactivates the
+controller (including its zero-velocity command and costmap thread), then
+cleans it up while ROS is still available, and finally shuts down ROS. The
+launch sets `LIMO_FAST_EXIT=1` to bypass slow native-library finalization after
+cleanup on the Nano; export `LIMO_FAST_EXIT=0` to debug ordinary finalization.
+SIGTERM remains launch's forced-stop fallback. Rebuild `limo_dwb_critics`
+before starting this launch after the update.
+
 Both profiles add three slow-start candidates when the model's initial speed
 is at most 0.05 m/s in magnitude: full right steering, straight, and full left
 steering. Each ramps at 0.05 m/s² toward 0.03 m/s and holds that speed through

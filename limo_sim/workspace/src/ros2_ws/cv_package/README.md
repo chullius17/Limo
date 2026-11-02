@@ -9,6 +9,14 @@ ros2 launch cv_package cv_real.launch.py
 ros2 launch cv_package cv_sim.launch.py
 ```
 
+The pipeline launch sets `LIMO_FAST_EXIT=1`. After worker shutdown, node
+destruction and `rclpy.shutdown()`, the depth, waterfall and cloud entry points flush their
+output and exit without running interpreter/native-library finalizers. This
+avoids the measured glibc 2.31 `_dl_sort_maps` stall on the Nano. Cleanup
+exceptions still produce failed exits. Set `LIMO_FAST_EXIT=0` before launching
+to restore ordinary finalization when debugging native libraries. Imported
+node classes and test processes do not use this exit path.
+
 
 `cv_real.launch.py` (and the default `cv.launch.py`) runs the waterfall detector;
 `cv_sim.launch.py` keeps the HSV color detector. `launch.lane_detector` selects

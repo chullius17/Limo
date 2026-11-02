@@ -514,6 +514,8 @@ def main(args=None):
             node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+    from cv_package.process_shutdown import exit_after_cleanup
+    exit_after_cleanup()
 
 
 if __name__ == '__main__':
