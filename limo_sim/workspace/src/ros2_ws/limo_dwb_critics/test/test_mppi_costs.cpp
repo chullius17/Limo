@@ -150,8 +150,40 @@ class InspectableMppiPathCritic : public limo_dwb_critics::MppiPathCritic
 {
 public:
   bool detouring() const {return guidance_active_;}
+  bool guidanceTraversable(unsigned int x, unsigned int y) const
+  {return guidance_.traversable(x, y);}
   std::size_t startIndex() const {return start_index_;}
 };
+
+TEST_F(MppiCostsTest, GuidanceGridTracksOffPathChangesEvenWhileReferenceIsFree)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  critic.setTimingEnabled(true);
+  const auto path = straightPath();
+  unsigned int x, y;
+  ASSERT_TRUE(costmap_->getCostmap()->worldToMap(0.0, 1.0, x, y));
+  const auto prepare = [&]() {
+      ASSERT_TRUE(critic.prepare(
+          pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2, 0), path));
+      EXPECT_FALSE(critic.detouring());
+      EXPECT_TRUE(critic.gridUpdated());
+      EXPECT_GE(critic.guidanceGridMs(), 0.0);
+    };
+  prepare();
+  EXPECT_TRUE(critic.guidanceTraversable(x, y));
+  setCost(0.0, 1.0, nav2_costmap_2d::LETHAL_OBSTACLE);
+  prepare();
+  EXPECT_FALSE(critic.guidanceTraversable(x, y));
+  clearMap();
+  prepare();
+  EXPECT_TRUE(critic.guidanceTraversable(x, y));
+  critic.setStartConnector(true);
+  ASSERT_TRUE(critic.prepare(
+      pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2, 0), path));
+  EXPECT_FALSE(critic.gridUpdated());
+  EXPECT_DOUBLE_EQ(critic.guidanceGridMs(), 0.0);
+}
 
 TEST_F(MppiCostsTest, PathCriticDisambiguatesNearbyPosesUsingChassisHeading)
 {
@@ -732,17 +764,17 @@ TEST_F(MppiCostsTest, NormalizesObstacleCostIndependentlyOfHorizonAndResolution)
   setCost(0.0, 0.0, 127);
   dwb_msgs::msg::Trajectory2D trajectory;
   trajectory.poses.assign(11, pose(0, 0));
-  EXPECT_DOUBLE_EQ(critic.getScale(), 6.0);
-  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory) * critic.getScale(), 3.0);
+  EXPECT_DOUBLE_EQ(critic.getScale(), 12.0);
+  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory) * critic.getScale(), 6.0);
   trajectory.poses.assign(51, pose(0, 0));
-  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory) * critic.getScale(), 3.0);
+  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory) * critic.getScale(), 6.0);
   costmap_->getCostmap()->resizeMap(50, 50, 0.1, -2.5, -2.5);
   clearMap();
   setCost(0.0, 0.0, 127);
-  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory) * critic.getScale(), 3.0);
+  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory) * critic.getScale(), 6.0);
 }
 
-TEST_P(MppiGuidanceProfilesTest, NearGoalDisablesRepulsionButNeverCollisionRejection)
+TEST_P(MppiGuidanceProfilesTest, NearGoalRepulsionMatchesProfileWithoutDisablingCollisionRejection)
 {
   limo_dwb_critics::MppiObstacleCritic critic;
   initialize(critic, "MppiObstacle");
@@ -752,11 +784,18 @@ TEST_P(MppiGuidanceProfilesTest, NearGoalDisablesRepulsionButNeverCollisionRejec
   trajectory.poses.assign(5, pose(0, 0));
   setCost(0.0, 0.0, 200);
   EXPECT_NEAR(critic.scoreTrajectory(trajectory), 200.0 / 254.0, 1e-12);
-  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(0.14, 0), straightPath()));
-  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(trajectory), 0.0);
+  const bool real_profile = std::string(GetParam()) == LIMO_MPC_PARAMS_PATH;
+  // Real retains finite repulsion up to the goal; simulation keeps its 15 cm gate.
+  for (const double goal_distance : {0.14, 0.0}) {
+    ASSERT_TRUE(critic.prepare(
+        pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(goal_distance, 0), straightPath()));
+    EXPECT_NEAR(critic.scoreTrajectory(trajectory), real_profile ? 200.0 / 254.0 : 0.0, 1e-12);
+  }
   setCost(0.0, 0.0, nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE);
   EXPECT_NEAR(critic.scoreTrajectory(trajectory), 300.0 / 254.0, 1e-12);
   setCost(0.0, 0.0, nav2_costmap_2d::LETHAL_OBSTACLE);
+  EXPECT_THROW(critic.scoreTrajectory(trajectory), dwb_core::IllegalTrajectoryException);
+  setCost(0.0, 0.0, nav2_costmap_2d::NO_INFORMATION);
   EXPECT_THROW(critic.scoreTrajectory(trajectory), dwb_core::IllegalTrajectoryException);
   clearMap();
   setCost(0.15, 0.1, nav2_costmap_2d::LETHAL_OBSTACLE);
@@ -920,6 +959,34 @@ TEST_F(StructuredPipelineTest, FootprintInteriorAndMotionBetweenStatesAreChecked
   setCost(0.075, 0.025, nav2_costmap_2d::NO_INFORMATION);
   ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2, 0), path));
   EXPECT_THROW(critic.scoreTrajectory(stopped), dwb_core::IllegalTrajectoryException);
+}
+
+TEST_F(StructuredPipelineTest, ReusedCollisionStorageCannotKeepRejectedOrOldCells)
+{
+  limo_dwb_critics::MppiObstacleCritic critic;
+  initialize(critic, "MppiObstacle");
+  const auto path = straightPath();
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2, 0), path);
+    };
+  dwb_msgs::msg::Trajectory2D safe;
+  safe.poses = {pose(0, 0), pose(0.1, 0)};
+  setCost(0.075, 0.025, nav2_costmap_2d::LETHAL_OBSTACLE);
+  ASSERT_TRUE(prepare());
+  EXPECT_THROW(critic.scoreTrajectory(safe), dwb_core::IllegalTrajectoryException);
+  clearMap();
+  ASSERT_TRUE(prepare());
+  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(safe), 0.0);
+  dwb_msgs::msg::Trajectory2D outside;
+  outside.poses = {pose(0, 0), pose(3.0, 0)};
+  EXPECT_THROW(critic.scoreTrajectory(outside), dwb_core::IllegalTrajectoryException);
+  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(safe), 0.0);
+  setCost(0.075, 0.025, nav2_costmap_2d::NO_INFORMATION);
+  ASSERT_TRUE(prepare());
+  EXPECT_THROW(critic.scoreTrajectory(safe), dwb_core::IllegalTrajectoryException);
+  clearMap();
+  ASSERT_TRUE(prepare());
+  EXPECT_DOUBLE_EQ(critic.scoreTrajectory(safe), 0.0);
 }
 
 TEST_F(StructuredPipelineTest, NoCollisionFreeCandidateRaisesRatherThanReusingACommand)

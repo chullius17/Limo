@@ -179,6 +179,26 @@ labels to the point-cloud node. Detector runtime parameters are under `/lane_nod
 
 ## Robot and desktop
 
+For the direct Ethernet connection (PC `10.74.48.1`, LIMO `10.74.48.2`),
+an optional Fast DDS profile restricts UDP to the cable and loopback while
+preserving local shared memory. It avoids using a weak Wi-Fi interface for
+DDS traffic. It does not change Linux network settings or existing processes.
+From the workspace root, after sourcing ROS, run this in **every** robot and
+desktop terminal before starting bringup, CV, the application, viewers or teleop:
+
+```bash
+source src/ros2_ws/user_package/scripts/use_wired_dds.sh
+```
+
+Existing nodes and the ROS CLI daemon must be stopped and restarted with the
+same profile; changing the environment does not update a running participant.
+Use `ros2 daemon stop` before the restart. The helper also works directly from
+the source tree without rebuilding. It sets `FASTRTPS_DEFAULT_PROFILES_FILE`,
+`RMW_IMPLEMENTATION=rmw_fastrtps_cpp`, and `ROS_LOCALHOST_ONLY=0`; it preserves
+`ROS_DOMAIN_ID`. Use a fresh ROS terminal for the usual network configuration.
+This profile requires the cable and these addresses. It addresses network stalls;
+it does not establish that a separate RViz segmentation fault is fixed.
+
 On the physical LIMO, start the sensors and then the application:
 
 ```bash

@@ -4,7 +4,6 @@
 #include <cmath>
 #include <functional>
 #include <limits>
-#include <queue>
 #include <stdexcept>
 #include <utility>
 
@@ -34,7 +33,30 @@ void ObstacleGuidance::update(
   distances_.assign(count, infinity);
   // Include a half-cell diagonal so clearance applies to obstacle cell area.
   const double radius = clearance / resolution + std::sqrt(0.5);
-  const int cells = static_cast<int>(std::ceil(radius));
+  if (clearance_radius_ != radius) {
+    clearance_offsets_.clear();
+    const int cells = static_cast<int>(std::ceil(radius));
+    for (int dy = -cells; dy <= cells; ++dy) {
+      for (int dx = -cells; dx <= cells; ++dx) {
+        if (std::hypot(dx, dy) <= radius) {clearance_offsets_.push_back({dx, dy});}
+      }
+    }
+    clearance_radius_ = radius;
+  }
+  if (penalty_weight_ != cost_weight) {
+    for (std::size_t cost = 0; cost < penalty_lookup_.size(); ++cost) {
+      penalty_lookup_[cost] = 1.0 + cost_weight * std::min<int>(cost, 252) / 252.0;
+    }
+    penalty_weight_ = cost_weight;
+  }
+  std::size_t neighbor = 0;
+  for (int dy = -1; dy <= 1; ++dy) {
+    for (int dx = -1; dx <= 1; ++dx) {
+      if (!dx && !dy) {continue;}
+      const double length = resolution * std::hypot(dx, dy);
+      neighbors_[neighbor++] = {dx, dy, length, length * 0.5, std::atan2(dy, dx)};
+    }
+  }
   for (unsigned int y = 0; y < height; ++y) {
     for (unsigned int x = 0; x < width; ++x) {
       const auto index = static_cast<std::size_t>(y) * width + x;
@@ -42,19 +64,17 @@ void ObstacleGuidance::update(
         (x + 0.5) * resolution < clearance || (y + 0.5) * resolution < clearance ||
         (width - x - 0.5) * resolution < clearance ||
         (height - y - 0.5) * resolution < clearance;
-      penalties_[index] = 1.0 + cost_weight * std::min<int>(costs[index], 252) / 252.0;
+      penalties_[index] = penalty_lookup_[costs[index]];
       if (costs[index] < 254) {
         continue;
       }
-      for (int dy = -cells; dy <= cells; ++dy) {
-        for (int dx = -cells; dx <= cells; ++dx) {
-          const int nx = static_cast<int>(x) + dx;
-          const int ny = static_cast<int>(y) + dy;
-          if (nx >= 0 && ny >= 0 && nx < static_cast<int>(width) &&
-            ny < static_cast<int>(height) && std::hypot(dx, dy) <= radius)
-          {
-            blocked_[static_cast<std::size_t>(ny) * width + nx] = true;
-          }
+      for (const auto & offset : clearance_offsets_) {
+        const int nx = static_cast<int>(x) + offset.x;
+        const int ny = static_cast<int>(y) + offset.y;
+        if (nx >= 0 && ny >= 0 && nx < static_cast<int>(width) &&
+          ny < static_cast<int>(height))
+        {
+          blocked_[static_cast<std::size_t>(ny) * width + nx] = true;
         }
       }
     }
@@ -74,35 +94,36 @@ bool ObstacleGuidance::setTarget(int x, int y)
   if (!traversable(x, y)) {
     return false;
   }
-  using Entry = std::pair<double, std::size_t>;
-  std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> queue;
+  queue_.clear();
+  const auto order = std::greater<QueueEntry>();
   const auto target = static_cast<std::size_t>(y) * width_ + x;
   distances_[target] = 0.0;
-  queue.emplace(0.0, target);
-  while (!queue.empty()) {
-    const auto entry = queue.top();
-    queue.pop();
+  queue_.emplace_back(0.0, target);
+  while (!queue_.empty()) {
+    std::pop_heap(queue_.begin(), queue_.end(), order);
+    const auto entry = queue_.back();
+    queue_.pop_back();
     if (entry.first > distances_[entry.second]) {
       continue;
     }
     const int cx = entry.second % width_;
     const int cy = entry.second / width_;
-    for (int dy = -1; dy <= 1; ++dy) {
-      for (int dx = -1; dx <= 1; ++dx) {
-        const int nx = cx + dx;
-        const int ny = cy + dy;
-        if ((!dx && !dy) || !traversable(nx, ny) ||
-          (dx && dy && (!traversable(cx + dx, cy) || !traversable(cx, cy + dy))))
-        {
-          continue;
-        }
-        const auto next = static_cast<std::size_t>(ny) * width_ + nx;
-        const double candidate = entry.first + resolution_ * std::hypot(dx, dy) *
-          0.5 * (penalties_[entry.second] + penalties_[next]);
-        if (candidate < distances_[next]) {
-          distances_[next] = candidate;
-          queue.emplace(candidate, next);
-        }
+    for (const auto & step : neighbors_) {
+      const int nx = cx + step.x;
+      const int ny = cy + step.y;
+      if (!traversable(nx, ny) ||
+        (step.x && step.y &&
+        (!traversable(cx + step.x, cy) || !traversable(cx, cy + step.y))))
+      {
+        continue;
+      }
+      const auto next = static_cast<std::size_t>(ny) * width_ + nx;
+      const double candidate = entry.first + step.half_length *
+        (penalties_[entry.second] + penalties_[next]);
+      if (candidate < distances_[next]) {
+        distances_[next] = candidate;
+        queue_.emplace_back(candidate, next);
+        std::push_heap(queue_.begin(), queue_.end(), order);
       }
     }
   }
@@ -172,30 +193,28 @@ double ObstacleGuidance::heading(double x, double y, double current_heading) con
     double best_angle = infinity;
     int step_x = 0;
     int step_y = 0;
-    for (int dy = -1; dy <= 1; ++dy) {
-      for (int dx = -1; dx <= 1; ++dx) {
-        if ((!dx && !dy) || !traversable(cx + dx, cy + dy) ||
-          (dx && dy && (!traversable(cx + dx, cy) || !traversable(cx, cy + dy))))
-        {
-          continue;
-        }
-        const auto next = static_cast<std::size_t>(cy + dy) * width_ + cx + dx;
-        if (distances_[next] >= current) {
-          continue;
-        }
-        const double cost = distances_[next] + resolution_ * std::hypot(dx, dy) *
-          0.5 * (penalties_[index] + penalties_[next]);
-        const double heading = std::atan2(dy, dx);
-        const double angle = std::abs(std::atan2(
-            std::sin(heading - direction), std::cos(heading - direction)));
-        if (cost < best_cost - 1e-9 ||
-          (std::abs(cost - best_cost) <= 1e-9 && angle < best_angle))
-        {
-          best_cost = cost;
-          best_angle = angle;
-          step_x = dx;
-          step_y = dy;
-        }
+    for (const auto & step : neighbors_) {
+      if (!traversable(cx + step.x, cy + step.y) ||
+        (step.x && step.y &&
+        (!traversable(cx + step.x, cy) || !traversable(cx, cy + step.y))))
+      {
+        continue;
+      }
+      const auto next = static_cast<std::size_t>(cy + step.y) * width_ + cx + step.x;
+      if (distances_[next] >= current) {
+        continue;
+      }
+      const double cost = distances_[next] + step.half_length *
+        (penalties_[index] + penalties_[next]);
+      const double angle = std::abs(std::atan2(
+          std::sin(step.heading - direction), std::cos(step.heading - direction)));
+      if (cost < best_cost - 1e-9 ||
+        (std::abs(cost - best_cost) <= 1e-9 && angle < best_angle))
+      {
+        best_cost = cost;
+        best_angle = angle;
+        step_x = step.x;
+        step_y = step.y;
       }
     }
     if (!step_x && !step_y) {

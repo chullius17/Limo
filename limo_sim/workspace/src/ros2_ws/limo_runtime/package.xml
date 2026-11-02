@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>limo_runtime</name>
+  <version>0.0.0</version>
+  <description>Shared low-overhead ROS Python runtime helpers.</description>
+  <maintainer email="giulio.cataldo@studio.unibo.it">Giulio Cataldo</maintainer>
+  <license>Apache-2.0</license>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+  <test_depend>geometry_msgs</test_depend>
+  <test_depend>tf2_msgs</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

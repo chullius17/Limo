@@ -160,6 +160,7 @@ void GaussianLayer::rebuildField(const nav2_costmap_2d::Costmap2D & source)
   const auto size = static_cast<std::size_t>(width_) * height_;
   source_costs_.clear();
   inflated_costs_.clear();
+  broad_has_sources_ = false;
   if (!size) {
     return;
   }
@@ -168,10 +169,20 @@ void GaussianLayer::rebuildField(const nav2_costmap_2d::Costmap2D & source)
   if (geometry_changed || offsets_.empty()) {
     rebuildKernel();
   }
+  if (broad_enabled_) {broad_mask_.resize(size);}
   for (unsigned int y = 0; y < height_; ++y) {
     for (unsigned int x = 0; x < width_; ++x) {
-      const auto peak = source_costs_[y * width_ + x];
-      if (peak == nav2_costmap_2d::NO_INFORMATION || peak < obstacle_cost_threshold_) {
+      const auto index = static_cast<std::size_t>(y) * width_ + x;
+      const auto peak = source_costs_[index];
+      const bool is_source = peak != nav2_costmap_2d::NO_INFORMATION &&
+        peak >= obstacle_cost_threshold_;
+      // Build the broad mask from these same original sources in one scan.
+      // Every byte is overwritten, including free and unknown cells.
+      if (broad_enabled_) {
+        broad_mask_[index] = is_source ? 0 : 255;
+        broad_has_sources_ = broad_has_sources_ || is_source;
+      }
+      if (!is_source) {
         continue;
       }
       for (const auto & offset : kernel(peak)) {
@@ -194,25 +205,17 @@ void GaussianLayer::rebuildField(const nav2_costmap_2d::Costmap2D & source)
 
 void GaussianLayer::applyBroadField()
 {
-  cv::Mat mask(height_, width_, CV_8UC1, cv::Scalar(255));
-  bool has_sources = false;
-  for (unsigned int y = 0; y < height_; ++y) {
-    auto * row = mask.ptr<unsigned char>(y);
-    for (unsigned int x = 0; x < width_; ++x) {
-      const auto cost = source_costs_[y * width_ + x];
-      if (cost != nav2_costmap_2d::NO_INFORMATION && cost >= obstacle_cost_threshold_) {
-        row[x] = 0;
-        has_sources = true;
-      }
-    }
-  }
-  if (!has_sources) {
+  if (!broad_has_sources_) {
     return;
   }
   // All broad sources share one peak and isotropic sigma. Their MAX is exactly
   // the Gaussian of distance to the nearest ORIGINAL source, in O(width*height).
   // Never use inflated_costs_ as seeds: that would inflate the narrow halo again.
-  cv::Mat distances;
+  // Mat headers wrap layer-owned storage. OpenCV create() keeps these buffers
+  // when size/type match, avoiding new mask/output allocations on every update.
+  cv::Mat mask(height_, width_, CV_8UC1, broad_mask_.data());
+  broad_distances_.resize(broad_mask_.size());
+  cv::Mat distances(height_, width_, CV_32FC1, broad_distances_.data());
   cv::distanceTransform(mask, distances, cv::DIST_L2, cv::DIST_MASK_PRECISE);
   for (unsigned int y = 0; y < height_; ++y) {
     const auto * row = distances.ptr<float>(y);
@@ -261,6 +264,9 @@ void GaussianLayer::reset()
   inflated_costs_.clear();
   offsets_.clear();
   broad_costs_.clear();
+  broad_mask_.clear();
+  broad_distances_.clear();
+  broad_has_sources_ = false;
   for (auto & values : kernels_) {
     values.clear();
   }

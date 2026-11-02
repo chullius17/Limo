@@ -81,6 +81,11 @@ controller_server:
         # Like the Humble smoother: continue the command ramp across cycles
         # even when noisy/lagging odometry still reports near-zero motion.
         feedback: "OPEN_LOOP"
+        Timing:
+          enabled: true
+          topic: /limo/control/mpc_timing
+          publish_rate: 1.0
+          log_summary: true
         Debug:
           enabled: true  # MPC telemetry.
           preview_enabled: true  # Start the image renderer; requires telemetry.

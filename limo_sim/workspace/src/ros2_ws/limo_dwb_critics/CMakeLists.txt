@@ -30,6 +30,7 @@ find_package(nav2_util REQUIRED)
 find_package(limo_interfaces REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(limo_inflation REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
   src/ackermann_kinematics_critic.cpp
@@ -38,6 +39,8 @@ add_library(${PROJECT_NAME} SHARED
   src/mppi_cost_critics.cpp
   src/obstacle_guidance.cpp
   src/mpc_debug.cpp
+  src/mpc_timing.cpp
+  src/mpc_prepare_timing.cpp
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -56,6 +59,7 @@ ament_target_dependencies(${PROJECT_NAME}
   limo_interfaces
   nav2_msgs
   limo_inflation
+  diagnostic_msgs
 )
 
 pluginlib_export_plugin_description_file(
@@ -111,9 +115,17 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_obstacle_guidance test/test_obstacle_guidance.cpp)
   target_link_libraries(test_obstacle_guidance ${PROJECT_NAME})
+
+  ament_add_gtest(test_mpc_timing test/test_mpc_timing.cpp
+    ENV ROS_DOMAIN_ID=191 ROS_LOCALHOST_ONLY=1)
+  target_link_libraries(test_mpc_timing ${PROJECT_NAME})
+
+  ament_add_gtest(test_mpc_prepare_timing test/test_mpc_prepare_timing.cpp
+    ENV ROS_DOMAIN_ID=191 ROS_LOCALHOST_ONLY=1)
+  target_link_libraries(test_mpc_prepare_timing ${PROJECT_NAME})
 endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
-ament_export_dependencies(dwb_core dwb_critics dwb_msgs nav2_core nav_2d_utils nav2_costmap_2d pluginlib rclcpp limo_interfaces nav2_msgs limo_inflation)
+ament_export_dependencies(dwb_core dwb_critics dwb_msgs nav2_core nav_2d_utils nav2_costmap_2d pluginlib rclcpp limo_interfaces nav2_msgs limo_inflation diagnostic_msgs)
 ament_package()

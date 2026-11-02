@@ -8,6 +8,7 @@
 #include "dwb_core/trajectory_critic.hpp"
 #include "dwb_critics/obstacle_footprint.hpp"
 #include "limo_dwb_critics/obstacle_guidance.hpp"
+#include "nav2_costmap_2d/costmap_2d.hpp"
 
 namespace limo_dwb_critics
 {
@@ -35,6 +36,9 @@ protected:
   bool full_footprint_check_{false};
   std::vector<std::uint32_t> blocked_prefix_;
   std::vector<geometry_msgs::msg::Point> collision_footprint_;
+  // Reused across all intermediate poses and candidate trajectories.
+  std::vector<nav2_costmap_2d::MapLocation> collision_cells_;
+  std::vector<nav2_costmap_2d::MapLocation> collision_polygon_;
   double footprint_radius_{0.0};
 };
 
@@ -45,6 +49,11 @@ protected:
 class MppiPathCritic : public dwb_core::TrajectoryCritic
 {
 public:
+  void setTimingEnabled(bool enabled) {timing_enabled_ = enabled;}
+  void resetTiming() {guidance_grid_ms_ = 0.0; grid_updated_ = false;}
+  double guidanceGridMs() const {return guidance_grid_ms_;}
+  bool gridUpdated() const {return grid_updated_;}
+  bool detouring() const {return guidance_active_;}
   void setTrackedReference(bool enabled) {tracked_reference_ = enabled;}
   void setStartConnector(bool enabled) {ignore_obstacles_ = enabled;}
   void onInit() override;
@@ -55,6 +64,9 @@ public:
   double scoreTrajectory(const dwb_msgs::msg::Trajectory2D & trajectory) override;
 
 protected:
+  bool timing_enabled_{false};
+  bool grid_updated_{false};
+  double guidance_grid_ms_{0.0};
   bool tracked_reference_{false};
   bool ignore_obstacles_{false};
   double goal_weight_{5.0};
@@ -78,6 +90,7 @@ protected:
   bool guidance_enabled_{false};
   bool guidance_active_{false};
   ObstacleGuidance guidance_;
+  std::vector<geometry_msgs::msg::Point> proximity_footprint_;
   bool use_path_orientations_{true};
   bool forward_preference_{false};
   geometry_msgs::msg::Pose2D goal_;

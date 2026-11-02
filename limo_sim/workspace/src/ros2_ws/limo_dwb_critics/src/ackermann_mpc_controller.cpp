@@ -10,11 +10,11 @@
 #include "dwb_core/illegal_trajectory_tracker.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "limo_dwb_critics/mppi_cost_critics.hpp"
+#include "limo_dwb_critics/mpc_timing_scope.hpp"
 #include "nav_2d_utils/tf_help.hpp"
 
 namespace limo_dwb_critics
 {
-
 void AckermannMPCController::configure(
   const rclcpp_lifecycle::LifecycleNode::SharedPtr & node,
   std::string name, const std::shared_ptr<tf2_ros::Buffer> & tf,
@@ -155,6 +155,17 @@ void AckermannMPCController::configure(
   }
   mpc_ = std::make_unique<SamplingMpc>(config);
   debug_publisher_ = std::make_unique<MpcDebugPublisher>(node, name, costmap_ros, config);
+  timing_publisher_ = std::make_unique<MpcTimingPublisher>(node, name, config.dt * 1000.0);
+  std::vector<std::string> critic_names;
+  critic_names.reserve(critics_.size());
+  for (const auto & critic : critics_) {critic_names.push_back(critic->getName());}
+  timing_publisher_->setCriticNames(critic_names);
+  timing_sample_.critic_prepare.resize(critics_.size());
+  for (const auto & critic : critics_) {
+    if (auto path = std::dynamic_pointer_cast<MppiPathCritic>(critic)) {
+      path->setTimingEnabled(timing_publisher_->enabled());
+    }
+  }
   const auto connector_parameter = name + ".MPC.StartConnector.";
   if (!node->has_parameter(connector_parameter + "ignore_obstacles")) {
     node->declare_parameter(connector_parameter + "ignore_obstacles", false);
@@ -248,39 +259,76 @@ geometry_msgs::msg::TwistStamped AckermannMPCController::computeVelocityCommands
   const geometry_msgs::msg::PoseStamped & pose, const geometry_msgs::msg::Twist & velocity)
 {
   std::lock_guard<std::mutex> lock(connector_mutex_);
-  bool active = false;
-  if (connector_enabled_ && !complete_plan_.poses.empty()) {
-    auto global_pose = pose;
-    if (pose.header.frame_id != complete_plan_.header.frame_id) {
-      const auto transform = tf_->lookupTransform(
-        complete_plan_.header.frame_id, pose.header.frame_id, tf2::TimePointZero);
-      tf2::doTransform(pose, global_pose, transform);
-    }
-    active = connector_gate_.update(
-      global_pose.pose, connector_position_tolerance_, connector_yaw_tolerance_);
-  }
-  if (active != connector_active_) {
-    setTrackingPlan(active ? connector_gate_.prefix() : connector_gate_.normalPlan());
-    connector_active_ = active;
-    RCLCPP_INFO(
-      node_->get_logger(), "%s", active ?
-      "Initial Dubins connector: obstacle collision checks DISABLED" :
-      "Initial connector finished: normal obstacle collision checks restored");
-  }
-  for (const auto & critic : critics_) {
-    if (auto obstacle = std::dynamic_pointer_cast<MppiObstacleCritic>(critic)) {
-      obstacle->setStartConnector(active);
-    }
-    if (auto path = std::dynamic_pointer_cast<MppiPathCritic>(critic)) {
-      path->setStartConnector(active);
+  const bool timing_enabled = timing_publisher_ && timing_publisher_->enabled();
+  const double cpu_start = timing_enabled ? MpcTimingScope::threadCpuMilliseconds() : 0.0;
+  if (timing_enabled) {
+    timing_sample_.reset();
+    timing_cycle_start_ = std::chrono::steady_clock::now();
+    timing_core_started_ = false;
+    timing_sample_active_ = true;
+    for (const auto & critic : critics_) {
+      if (auto path = std::dynamic_pointer_cast<MppiPathCritic>(critic)) {path->resetTiming();}
     }
   }
-  return DWBLocalPlanner::computeVelocityCommands(pose, velocity);
+  const auto record_timing = [&](bool success) noexcept {
+      timing_sample_active_ = false;
+      if (!timing_enabled) {return;}
+      timing_sample_.cycle_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - timing_cycle_start_).count();
+      timing_sample_.thread_cpu_ms = MpcTimingScope::threadCpuMilliseconds() - cpu_start;
+      if (!timing_core_started_) {timing_sample_.prepare_ms = timing_sample_.cycle_ms;}
+      timing_sample_.success = success;
+      for (const auto & critic : critics_) {
+        if (auto path = std::dynamic_pointer_cast<MppiPathCritic>(critic)) {
+          timing_sample_.guidance_grid_ms += path->guidanceGridMs();
+          timing_sample_.grid_updated = timing_sample_.grid_updated || path->gridUpdated();
+          timing_sample_.detouring = timing_sample_.detouring ||
+            (path->gridUpdated() && path->detouring());
+        }
+      }
+      timing_publisher_->finish(timing_sample_);
+    };
+  try {
+    bool active = false;
+    if (connector_enabled_ && !complete_plan_.poses.empty()) {
+      auto global_pose = pose;
+      if (pose.header.frame_id != complete_plan_.header.frame_id) {
+        const auto transform = tf_->lookupTransform(
+          complete_plan_.header.frame_id, pose.header.frame_id, tf2::TimePointZero);
+        tf2::doTransform(pose, global_pose, transform);
+      }
+      active = connector_gate_.update(
+        global_pose.pose, connector_position_tolerance_, connector_yaw_tolerance_);
+    }
+    if (active != connector_active_) {
+      setTrackingPlan(active ? connector_gate_.prefix() : connector_gate_.normalPlan());
+      connector_active_ = active;
+      RCLCPP_INFO(
+        node_->get_logger(), "%s", active ?
+        "Initial Dubins connector: obstacle collision checks DISABLED" :
+        "Initial connector finished: normal obstacle collision checks restored");
+    }
+    for (const auto & critic : critics_) {
+      if (auto obstacle = std::dynamic_pointer_cast<MppiObstacleCritic>(critic)) {
+        obstacle->setStartConnector(active);
+      }
+      if (auto path = std::dynamic_pointer_cast<MppiPathCritic>(critic)) {
+        path->setStartConnector(active);
+      }
+    }
+    auto command = DWBLocalPlanner::computeVelocityCommands(pose, velocity);
+    record_timing(true);
+    return command;
+  } catch (...) {
+    record_timing(false);
+    throw;
+  }
 }
 
 void AckermannMPCController::deactivate()
 {
   if (debug_publisher_) {debug_publisher_->deactivate();}
+  if (timing_publisher_) {timing_publisher_->deactivate();}
   resetPrediction();
   DWBLocalPlanner::deactivate();
 }
@@ -295,6 +343,8 @@ void AckermannMPCController::cleanup()
   connector_gate_ = StartConnectorGate();
   connector_active_ = false;
   debug_publisher_.reset();
+  timing_publisher_.reset();
+  timing_sample_active_ = false;
   tube_layer_.reset();
   resetPrediction();
   mpc_.reset();
@@ -305,6 +355,7 @@ void AckermannMPCController::activate()
 {
   DWBLocalPlanner::activate();
   if (debug_publisher_) {debug_publisher_->activate();}
+  if (timing_publisher_) {timing_publisher_->activate();}
 }
 
 dwb_msgs::msg::Trajectory2D AckermannMPCController::toTrajectory(
@@ -336,6 +387,12 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
   const nav_2d_msgs::msg::Twist2D velocity,
   std::shared_ptr<dwb_msgs::msg::LocalPlanEvaluation> & results)
 {
+  const bool timing_enabled = timing_publisher_ && timing_publisher_->enabled();
+  if (timing_enabled) {
+    timing_core_started_ = true;
+    timing_sample_.prepare_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - timing_cycle_start_).count();
+  }
   if (!mpc_) {
     throw nav2_core::PlannerException("Ackermann MPC is not configured");
   }
@@ -422,12 +479,31 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
     // still measured, so progress and obstacle costs use the actual position.
     initial.control = previous_command_;
   }
-  const auto observer = debug_publisher_ ? debug_publisher_->begin(initial) : MpcObserver();
+  MpcObserver preview_observer;
+  {
+    MpcTimingScope timing(timing_enabled ? &timing_sample_.debug_ms : nullptr);
+    preview_observer = debug_publisher_ ? debug_publisher_->begin(initial) : MpcObserver();
+  }
+  const auto timed_observer = [this, &preview_observer](
+      const MpcRollout & rollout, MpcFamily family, std::size_t id, double cost) {
+        MpcTimingScope timing(&timing_sample_.debug_ms);
+        preview_observer(rollout, family, id, cost);
+      };
+  MpcObserver observer;
+  if (timing_enabled && preview_observer) {
+    // solve is synchronous; reference_wrapper adds no allocation or throwing
+    // copy of the preview callback to the control loop.
+    observer = std::ref(timed_observer);
+  } else {
+    observer = std::move(preview_observer);
+  }
 
   dwb_core::IllegalTrajectoryTracker tracker;
   double best_debug = std::numeric_limits<double>::infinity();
   double worst_debug = -1.0;
   const auto evaluate = [&](const MpcRollout & rollout, double remaining) {
+      MpcTimingScope timing(timing_enabled ? &timing_sample_.scoring_ms : nullptr);
+      if (timing_enabled) {++timing_sample_.evaluated_count;}
       const auto trajectory = toTrajectory(rollout);
       try {
         const double terminal = terminal_cost(rollout);
@@ -457,6 +533,7 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
         }
         return environment_cost;
       } catch (const dwb_core::IllegalTrajectoryException & error) {
+        if (timing_enabled) {++timing_sample_.rejected_count;}
         tracker.addIllegalTrajectory(error);
         if (results) {
           dwb_msgs::msg::TrajectoryScore failed;
@@ -472,9 +549,16 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
       }
     };
   try {
-    const auto solution = mpc_->solve(initial, evaluate, shift, observer);
+    const auto solution = [&]() {
+        MpcTimingScope timing(timing_enabled ? &timing_sample_.solve_ms : nullptr);
+        return mpc_->solve(initial, evaluate, shift, observer);
+      }();
+    if (timing_enabled) {timing_sample_.generated_count = solution.generated_count;}
     if (!std::isfinite(solution.cost)) {
-      if (debug_publisher_) {debug_publisher_->finish(solution);}
+      if (debug_publisher_) {
+        MpcTimingScope timing(timing_enabled ? &timing_sample_.debug_ms : nullptr);
+        debug_publisher_->finish(solution);
+      }
       if (debug_trajectory_details_) {
         RCLCPP_ERROR(node_->get_logger(), "%s", tracker.getMessage().c_str());
         for (const auto & rejection : tracker.getPercentages()) {
@@ -487,21 +571,28 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
     }
     // Score the winner fully: debug short-circuiting may omit later critics
     // only for candidates that cannot win.
-    auto best = scoreTrajectory(toTrajectory(solution.rollout), -1.0);
-    dwb_msgs::msg::CriticScore tube;
-    tube.name = "MpcTerminalTube"; tube.scale = 1.0;
-    tube.raw_score = terminal_cost(solution.rollout);
-    best.scores.push_back(tube);
-    best.total += tube.raw_score;
-    dwb_msgs::msg::CriticScore effort;
-    effort.name = "MpcEffort";
-    effort.scale = 1.0;
-    effort.raw_score = solution.rollout.effort_cost;
-    best.scores.push_back(effort);
-    best.total += solution.rollout.effort_cost;
+    auto best = [&]() {
+        MpcTimingScope timing(timing_enabled ? &timing_sample_.scoring_ms : nullptr);
+        auto score = scoreTrajectory(toTrajectory(solution.rollout), -1.0);
+        dwb_msgs::msg::CriticScore tube;
+        tube.name = "MpcTerminalTube"; tube.scale = 1.0;
+        tube.raw_score = terminal_cost(solution.rollout);
+        score.scores.push_back(tube);
+        score.total += tube.raw_score;
+        dwb_msgs::msg::CriticScore effort;
+        effort.name = "MpcEffort";
+        effort.scale = 1.0;
+        effort.raw_score = solution.rollout.effort_cost;
+        score.scores.push_back(effort);
+        score.total += solution.rollout.effort_cost;
+        return score;
+      }();
     previous_command_ = solution.rollout.states.at(1).control;
     have_command_ = true;
-    if (debug_publisher_) {debug_publisher_->finish(solution);}
+    if (debug_publisher_) {
+      MpcTimingScope timing(timing_enabled ? &timing_sample_.debug_ms : nullptr);
+      debug_publisher_->finish(solution);
+    }
     return best;
   } catch (...) {
     resetPrediction();

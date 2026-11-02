@@ -12,6 +12,7 @@
 #include "nav2_costmap_2d/footprint_collision_checker.hpp"
 #include "limo_inflation/footprint_cells.hpp"
 #include "limo_inflation/path_pose_association.hpp"
+#include "limo_dwb_critics/mpc_timing_scope.hpp"
 #include "pluginlib/class_list_macros.hpp"
 
 namespace limo_dwb_critics
@@ -33,12 +34,13 @@ double angleError(double a, double b)
 bool footprintNearObstacle(
   const geometry_msgs::msg::Pose2D & pose,
   const nav2_costmap_2d::Footprint & footprint,
-  const nav2_costmap_2d::Costmap2D & map, double margin)
+  const nav2_costmap_2d::Costmap2D & map, double margin,
+  nav2_costmap_2d::Footprint & oriented)
 {
   if (margin <= 0.0 || footprint.size() < 3) {
     return false;
   }
-  nav2_costmap_2d::Footprint oriented;
+  oriented.clear();
   nav2_costmap_2d::transformFootprint(pose.x, pose.y, pose.theta, footprint, oriented);
   const double reach = margin + map.getResolution() * std::sqrt(0.5);
   double min_x = oriented.front().x, max_x = min_x;
@@ -148,13 +150,12 @@ double MppiObstacleCritic::scoreTrajectory(const dwb_msgs::msg::Trajectory2D & t
     (costmap_->getSizeInCellsX() + 1) * (costmap_->getSizeInCellsY() + 1))
   {throw dwb_core::IllegalTrajectoryException(name_, "Footprint collision data not prepared");}
   double sum = 0.0;
-  std::vector<nav2_costmap_2d::MapLocation> collision_cells;
   const auto check_footprint = [&](const geometry_msgs::msg::Pose2D & pose) {
       if (!limo_inflation::footprintCells(
           *costmap_, pose, collision_footprint_,
-          collision_cells, &blocked_prefix_))
+          collision_cells_, collision_polygon_, &blocked_prefix_))
       {throw dwb_core::IllegalTrajectoryException(name_, "Footprint outside costmap");}
-      for (const auto & cell : collision_cells) {
+      for (const auto & cell : collision_cells_) {
         if (costmap_->getCost(cell.x, cell.y) >= nav2_costmap_2d::LETHAL_OBSTACLE) {
           throw dwb_core::IllegalTrajectoryException(
                   name_,
@@ -246,6 +247,7 @@ bool MppiPathCritic::prepare(
   const geometry_msgs::msg::Pose2D & pose, const nav_2d_msgs::msg::Twist2D &,
   const geometry_msgs::msg::Pose2D & goal, const nav_2d_msgs::msg::Path2D & path)
 {
+  resetTiming();
   goal_ = goal;
   distance_to_goal_ = distance(pose, goal);
   path_ = path.poses;
@@ -296,9 +298,13 @@ bool MppiPathCritic::prepare(
     // The grid supplies a center reference, not an orientation-independent
     // collision envelope. The full oriented footprint is checked separately.
     const double radius = costmap_ros_->getLayeredCostmap()->getInscribedRadius();
-    guidance_.update(
-      costmap->getSizeInCellsX(), costmap->getSizeInCellsY(), costmap->getResolution(),
-      costmap->getCharMap(), radius + guidance_clearance_margin_, guidance_cost_weight_);
+    {
+      MpcTimingScope timing(timing_enabled_ ? &guidance_grid_ms_ : nullptr);
+      guidance_.update(
+        costmap->getSizeInCellsX(), costmap->getSizeInCellsY(), costmap->getResolution(),
+        costmap->getCharMap(), radius + guidance_clearance_margin_, guidance_cost_weight_);
+      grid_updated_ = true;
+    }
     const auto free_point = [&](const geometry_msgs::msg::Pose2D & point) {
         unsigned int x, y;
         return costmap->worldToMap(point.x, point.y, x, y) && guidance_.traversable(x, y);
@@ -329,7 +335,8 @@ bool MppiPathCritic::prepare(
         // A separate soft trigger anticipates close passes without enlarging
         // the hard clearance grid or preventing escape from the proximity band.
         if (!collision_free(point) ||
-          footprintNearObstacle(point, footprint, *costmap, guidance_trigger_margin_))
+          footprintNearObstacle(
+            point, footprint, *costmap, guidance_trigger_margin_, proximity_footprint_))
         {
           blocked = true;
           break;

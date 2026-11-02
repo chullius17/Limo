@@ -1,0 +1,5 @@
+<library path="limo_rviz_plugins">
+  <class name="limo_rviz_plugins/Polygon" type="limo_rviz_plugins::PolygonDisplay" base_class_type="rviz_common::Display">
+    <description>Polygon display that renders delayed TF messages on the GUI thread.</description>
+  </class>
+</library>

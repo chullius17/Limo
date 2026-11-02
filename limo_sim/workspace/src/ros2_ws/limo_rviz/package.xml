@@ -17,6 +17,7 @@
 
   <!-- Visualization -->
   <exec_depend>rviz2</exec_depend>
+  <exec_depend>limo_rviz_plugins</exec_depend>
   <exec_depend>image_transport</exec_depend>
   <exec_depend>compressed_image_transport</exec_depend>
   <exec_depend>python3-yaml</exec_depend>

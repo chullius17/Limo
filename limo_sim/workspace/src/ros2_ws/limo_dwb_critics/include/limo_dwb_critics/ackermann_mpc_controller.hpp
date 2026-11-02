@@ -9,6 +9,7 @@
 #include "dwb_core/dwb_local_planner.hpp"
 #include "limo_dwb_critics/sampling_mpc.hpp"
 #include "limo_dwb_critics/mpc_debug.hpp"
+#include "limo_dwb_critics/mpc_timing.hpp"
 #include "limo_dwb_critics/start_connector.hpp"
 #include "limo_inflation/path_distance_layer.hpp"
 
@@ -22,6 +23,10 @@ public:
   geometry_msgs::msg::TwistStamped computeVelocityCommands(
     const geometry_msgs::msg::PoseStamped & pose,
     const geometry_msgs::msg::Twist & velocity) override;
+  nav_2d_msgs::msg::Twist2DStamped computeVelocityCommands(
+    const nav_2d_msgs::msg::Pose2DStamped & pose,
+    const nav_2d_msgs::msg::Twist2D & velocity,
+    std::shared_ptr<dwb_msgs::msg::LocalPlanEvaluation> & results) override;
   void configure(
     const rclcpp_lifecycle::LifecycleNode::SharedPtr & node,
     std::string name, const std::shared_ptr<tf2_ros::Buffer> & tf,
@@ -45,6 +50,7 @@ protected:
   double steering_feedback_min_velocity_{0.05};
 
 private:
+  friend class AckermannMPCControllerTestPeer;
   void setTrackingPlan(const nav_msgs::msg::Path & path);
   nav_2d_msgs::msg::Path2D tracking_plan_;
   std::vector<limo_inflation::PathPosePoint> tracking_points_;
@@ -65,6 +71,11 @@ private:
   bool have_command_{false};
   MpcControl previous_command_;
   std::unique_ptr<MpcDebugPublisher> debug_publisher_;
+  std::unique_ptr<MpcTimingPublisher> timing_publisher_;
+  MpcTimingSample timing_sample_;
+  std::chrono::steady_clock::time_point timing_cycle_start_;
+  bool timing_core_started_{false};
+  bool timing_sample_active_{false};
   std::shared_ptr<limo_inflation::PathDistanceLayer> tube_layer_;
   bool tube_required_{false};
   bool tube_start_pending_{true};

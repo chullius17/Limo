@@ -33,6 +33,7 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 from limo_controller.arrival import ArrivalDwell
 from limo_controller.chassis_safety import ChassisSafety
+from limo_runtime.tf_buffer import ConditionalCallbackGroup, QueryTransformBuffer
 
 
 class PathExecutor(Node):
@@ -61,8 +62,11 @@ class PathExecutor(Node):
             angular_limit=self.get_parameter('stopped_angular_velocity').value,
             sample_timeout=self.get_parameter('success_odom_timeout').value)
         self.robot_base_frame = self.get_parameter('robot_base_frame').value
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.declare_parameter('optimize_idle_io', True)
+        self.optimize_idle_io = self.get_parameter('optimize_idle_io').value
+        self.tf_buffer = QueryTransformBuffer(self) if self.optimize_idle_io else Buffer()
+        self.tf_listener = (
+            None if self.optimize_idle_io else TransformListener(self.tf_buffer, self))
         self.success_generation = None
         self.arrival_pending = False
         self.execution_started_ns = None
@@ -109,9 +113,15 @@ class PathExecutor(Node):
         self.path_subscription = self.create_subscription(
             Path, self.get_parameter('path_topic').value,
             self._path_callback, state_qos)
+        self.arrival_callback_group = ConditionalCallbackGroup(
+            lambda: self.control_requested and not self.control_paused
+            and self.control_path is not None
+            and (self.active_control_goal_handle is not None or self.arrival_pending)
+        ) if self.optimize_idle_io else self.default_callback_group
         self.success_odom_subscription = self.create_subscription(
             Odometry, self.get_parameter('success_odom_topic').value,
-            self._arrival_odometry, QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
+            self._arrival_odometry, QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT),
+            callback_group=self.arrival_callback_group)
         self.start_abort_service = self.create_service(
             SetBool, '/limo/control/set_active', self._set_control_active)
         self.pause_resume_service = self.create_service(
@@ -129,6 +139,8 @@ class PathExecutor(Node):
     def destroy_node(self):
         """Release the controller action client before its node handle on Foxy."""
         self.follow_path_client.destroy()
+        if self.optimize_idle_io:
+            self.tf_buffer.close()
         return super().destroy_node()
 
     def _publish_control_state(self, status):
@@ -346,6 +358,10 @@ class PathExecutor(Node):
                 return True
             self.tube_start_approved = None
             self.waiting_for_server = False
+            if self.optimize_idle_io:
+                # Drain the idle TF backlog before the controller can move,
+                # rather than delaying the first active arrival/chassis cycle.
+                self.tf_buffer.refresh()
             request = self._build_follow_path_goal(
                 self._path_for_execution(self.control_path),
                 self.controller_id, self.goal_checker_id)

@@ -116,6 +116,82 @@ def ready_path(executor):
     return path
 
 
+def test_idle_odometry_is_excluded_until_control_needs_arrival_feedback(executor):
+    group = executor.arrival_callback_group
+    subscription = executor.success_odom_subscription
+    assert not group.can_execute(subscription)
+    ready_path(executor)
+    executor.control_requested = True
+    assert not group.can_execute(subscription)  # Action is not accepted yet.
+    executor.active_control_goal_handle = Mock()
+    assert group.can_execute(subscription)
+    executor.control_paused = True
+    assert not group.can_execute(subscription)
+    executor.control_paused = False
+    executor.active_control_goal_handle = None
+    executor.arrival_pending = True
+    assert group.can_execute(subscription)  # Keep checking after action success.
+    executor.control_requested = False
+    assert not group.can_execute(subscription)
+
+
+def test_tf_backlog_is_received_before_sending_a_motion_goal(executor):
+    ready_path(executor)
+    calls = []
+    executor.tf_buffer.refresh = lambda: calls.append('tf')
+    executor.follow_path_client.send_goal_async.side_effect = (
+        lambda *args, **kwargs: calls.append('goal') or Future())
+    assert start(executor).success
+    assert calls == ['tf', 'goal']
+
+
+def test_active_arrival_receives_real_queued_tf_and_odometry(executor):
+    import time
+    from geometry_msgs.msg import TransformStamped
+    from nav_msgs.msg import Odometry
+    from rclpy.executors import SingleThreadedExecutor
+    from rclpy.node import Node
+    from tf2_msgs.msg import TFMessage
+
+    publisher = Node('arrival_feedback_test')
+    tf_pub = publisher.create_publisher(TFMessage, '/tf', 100)
+    odom_pub = publisher.create_publisher(Odometry, '/odometry/filtered', 1)
+    spinner = SingleThreadedExecutor()
+    spinner.add_node(executor)
+    try:
+        deadline = time.monotonic() + 2.0
+        while not (tf_pub.get_subscription_count() and odom_pub.get_subscription_count()):
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        ready_path(executor)
+        handle = Mock()
+        executor.active_control_goal_handle = handle
+        executor.control_requested = True
+        executor.arrival_monitor.duration = 0.08
+        executor.execution_started_ns = executor.get_clock().now().nanoseconds
+        deadline = time.monotonic() + 2.0
+        while executor.control_requested:
+            assert time.monotonic() < deadline
+            stamp = executor.get_clock().now().to_msg()
+            transform = TransformStamped()
+            transform.header.frame_id = 'map'
+            transform.child_frame_id = 'base_link'
+            transform.header.stamp = stamp
+            transform.transform.rotation.w = 1.0
+            tf_pub.publish(TFMessage(transforms=[transform]))
+            odometry = Odometry()
+            odometry.header.stamp = stamp
+            odom_pub.publish(odometry)
+            for _ in range(5):
+                spinner.spin_once(timeout_sec=0.002)
+        handle.cancel_goal_async.assert_called_once()
+        assert executor.success_generation == executor.path_generation
+    finally:
+        spinner.remove_node(executor)
+        spinner.shutdown()
+        publisher.destroy_node()
+
+
 def start(executor):
     return executor._set_control_active(
         SetBool.Request(data=True), SetBool.Response())

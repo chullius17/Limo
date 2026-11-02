@@ -208,6 +208,13 @@ On a PC, to open only RViz connected to LIMO topics:
 ros2 launch online_map_package desktop_online.launch.py
 ~~~
 
+The online RViz process defaults to `__GLVND_DISALLOW_PATCHING=1` as a
+workaround for repeated `libGLdispatch.so` segmentation faults seen with
+the NVIDIA desktop renderer. This disables OpenGL entry-point rewriting,
+while retaining GPU rendering. Runtime stability still needs verification.
+The setting applies only to RViz; use `__GLVND_DISALLOW_PATCHING=0` in the
+launch environment to compare with the previous behavior.
+
 Temporary simulation map or voxel overrides:
 
 ~~~bash

@@ -58,6 +58,11 @@ install(FILES limo_inflation_plugins.xml DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_footprint_cells test/test_footprint_cells.cpp)
+  target_compile_features(test_footprint_cells PUBLIC cxx_std_17)
+  target_include_directories(test_footprint_cells PUBLIC include)
+  ament_target_dependencies(test_footprint_cells nav2_costmap_2d)
+
   ament_add_gtest(test_path_pose_association test/test_path_pose_association.cpp)
   target_compile_features(test_path_pose_association PUBLIC cxx_std_17)
   target_include_directories(test_path_pose_association PUBLIC include)

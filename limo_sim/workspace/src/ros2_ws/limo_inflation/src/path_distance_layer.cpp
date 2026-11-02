@@ -156,7 +156,11 @@ void PathDistanceLayer::rebuildField(
             "Path distance raster exceeds 4M cells; reduce distance_for_max_cost");
   }
   const int margin = static_cast<int>(requested_margin);
-  cv::Mat mask(height + 2 * margin, width + 2 * margin, CV_8UC1, cv::Scalar(255));
+  const auto mask_width = width + 2 * margin;
+  const auto mask_height = height + 2 * margin;
+  mask_storage_.resize(static_cast<std::size_t>(mask_width) * mask_height);
+  std::fill(mask_storage_.begin(), mask_storage_.end(), 255);
+  cv::Mat mask(mask_height, mask_width, CV_8UC1, mask_storage_.data());
   const double cosine = std::cos(transform[2]), sine = std::sin(transform[2]);
   const auto pixel = [&](const geometry_msgs::msg::PoseStamped & pose) {
       const auto & p = pose.pose.position;
@@ -211,7 +215,8 @@ void PathDistanceLayer::rebuildField(
   path_costs_.assign(static_cast<std::size_t>(width) * height, max_cost_);
   path_distances_.assign(path_costs_.size(), std::numeric_limits<float>::infinity());
   if (!intersects) {return;}
-  cv::Mat distances;
+  distance_storage_.resize(mask.total());
+  cv::Mat distances(mask.rows, mask.cols, CV_32FC1, distance_storage_.data());
   cv::distanceTransform(mask, distances, cv::DIST_L2, cv::DIST_MASK_PRECISE);
   const double scale = max_cost_ * resolution_ / distance_for_max_cost_;
   for (unsigned int y = 0; y < height; ++y) {
@@ -281,6 +286,8 @@ void PathDistanceLayer::reset()
   path_costs_.clear();
   path_distances_.clear();
   path_points_.clear();
+  mask_storage_.clear();
+  distance_storage_.clear();
   current_ = true;
 }
 

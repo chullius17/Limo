@@ -288,6 +288,82 @@ TEST_F(GaussianTest, BroadFieldMatchesDirectGaussianMaximumAtEveryCell)
   }
 }
 
+TEST_F(GaussianTest, ReusedBroadBuffersMatchOriginalSourceMaximumAcrossUpdatesAndGeometry)
+{
+  node->declare_parameter("reused.broad_enabled", true);
+  node->declare_parameter("reused.broad_sigma", 0.20);
+  node->declare_parameter("reused.obstacle_cost_threshold", 150);
+  configure("reused");
+  map->resizeMap(41, 29, 0.02, -0.41, -0.29);
+  int update = 0;
+  const auto check = [&](double robot_x, double robot_y) {
+      SCOPED_TRACE("update " + std::to_string(update++));
+      map->updateMap(robot_x, robot_y, 0.0);
+      const auto * grid = map->getCostmap();
+      const auto width = grid->getSizeInCellsX(), height = grid->getSizeInCellsY();
+      const double resolution = grid->getResolution();
+      std::vector<unsigned char> raw(static_cast<std::size_t>(width) * height, 0);
+      for (const auto & source : sources->cells) {
+        ASSERT_LT(std::get<0>(source), width);
+        ASSERT_LT(std::get<1>(source), height);
+        raw[std::get<1>(source) * width + std::get<0>(source)] = std::get<2>(source);
+      }
+      for (unsigned int y = 0; y < height; ++y) {
+        for (unsigned int x = 0; x < width; ++x) {
+          unsigned char expected = raw[y * width + x];
+          if (expected != nav2_costmap_2d::NO_INFORMATION) {
+            for (const auto & source : sources->cells) {
+              const auto peak = std::get<2>(source);
+              if (peak == nav2_costmap_2d::NO_INFORMATION || peak < 150) {continue;}
+              const double nx = (static_cast<double>(x) - std::get<0>(source)) *
+                resolution / 0.02;
+              const double ny = (static_cast<double>(y) - std::get<1>(source)) *
+                resolution / 0.02;
+              const auto narrow = static_cast<unsigned char>(std::min(252L,
+                  std::lround(peak * std::exp(-0.5 * (nx * nx + ny * ny)))));
+              const double bx = nx * 0.02 / 0.20, by = ny * 0.02 / 0.20;
+              const auto broad = static_cast<unsigned char>(std::lround(
+                  100.0 * std::exp(-0.5 * (bx * bx + by * by))));
+              expected = std::max(expected, std::max(narrow, broad));
+            }
+          }
+          ASSERT_EQ(grid->getCost(x, y), expected) << "cell " << x << ", " << y;
+        }
+      }
+    };
+
+  // Warm the reusable buffers with a dense mix of valid, excluded and unknown cells.
+  sources->cells.clear();
+  const unsigned char classes[] = {149, 150, 176, 254, nav2_costmap_2d::NO_INFORMATION};
+  for (unsigned int y = 0; y < 29; ++y) {
+    for (unsigned int x = 0; x < 41; ++x) {
+      if ((x + 2 * y) % 3 == 0) {
+        sources->cells.emplace_back(x, y, classes[(x + y) % 5]);
+      }
+    }
+  }
+  check(0.0, 0.0);
+
+  // No broad seed remains: unknown and a below-threshold class cannot retain a halo.
+  sources->cells = {{2, 2, nav2_costmap_2d::NO_INFORMATION}, {20, 10, 149}};
+  check(0.0, 0.0);
+  sources->cells = {{2, 2, 150}, {40, 28, 254}, {20, 10, nav2_costmap_2d::NO_INFORMATION}};
+  check(0.0, 0.0);
+  check(0.08, -0.06);  // Rolling origin, same dimensions and resolutions.
+
+  map->resizeMap(23, 35, 0.03, -0.30, -0.60);
+  sources->cells = {{0, 34, 176}, {22, 0, 254}, {10, 17, nav2_costmap_2d::NO_INFORMATION}};
+  check(0.0, 0.0);
+  map->resizeMap(57, 19, 0.04, -1.0, -0.4);
+  sources->cells = {{56, 18, 150}, {1, 1, 149}, {30, 8, nav2_costmap_2d::NO_INFORMATION}};
+  check(0.0, 0.0);
+  layer->reset();
+  sources->cells.clear();
+  check(0.0, 0.0);
+  sources->cells = {{28, 9, 254}};
+  check(0.0, 0.0);
+}
+
 TEST_F(GaussianTest, RejectsInvalidBroadParameters)
 {
   node->declare_parameter("zero.broad_sigma", 0.0);

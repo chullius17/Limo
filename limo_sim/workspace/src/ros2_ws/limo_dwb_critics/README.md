@@ -55,6 +55,87 @@ initial actuator state are captured in the same controller cycle. Disabled
 telemetry, or a publisher without subscribers, constructs no snapshot. See the
 [preview settings](../limo_controller/README.md#simulation-mpc-image-preview).
 
+When obstacle guidance is enabled, every ordinary critic preparation refreshes
+its full clearance/cost grid from the current costmap, including free paths.
+The existing initial-connector obstacle bypass, when enabled, still skips it.
+Footprint rasterization and proximity checks reuse per-critic scratch buffers
+across poses and candidates. These are allocation/work reductions; sampling,
+scores, collision thresholds and control frequencies are unchanged. Rebuild
+`limo_inflation` and `limo_dwb_critics`, then restart the application to load
+the updated libraries. Scratch buffers rely on the controller's existing
+serialized scoring; parallel scoring would need independent storage per worker.
+
+Guidance also reuses the search heap and precomputes clearance offsets,
+cost-to-penalty values and the eight neighbor steps. Only scalar/geometric
+work is cached: every update still rebuilds blocked cells and penalties from
+the current map, and every target search recomputes the complete distance field
+with the same heap ordering and diagonal-collision rules.
+
+The Gaussian and path-distance costmap layers reuse mask/output storage for
+their precise OpenCV distance transforms. Gaussian broad-field seeds are filled
+while scanning the original source cells for narrow inflation, avoiding a second
+source scan. The source snapshot, MAX merging, metric distances and costmap lock
+lifetime retain their existing semantics. These changes reduce work under the
+lock; the resulting MPC waiting time must be checked in another robot capture.
+
+### MPC timing telemetry
+
+The real and simulation profiles enable `FollowPath.MPC.Timing.enabled` and
+publish `diagnostic_msgs/DiagnosticArray` on `/limo/control/mpc_timing`, with
+`publish_rate: 1.0` and `log_summary: true`. These parameters are read during
+configuration; the plugin default is disabled. Set `enabled: false` to disable
+timing collection, or `log_summary: false` to retain only the topic. The rate is
+configurable up to 10 Hz. No background timer, image rendering or per-candidate
+messages are added; reports are produced only by active control calls.
+
+Each report contains per-window means and maxima in milliseconds:
+
+| Metric | Measured work |
+| --- | --- |
+| `cycle_ms` | Controller plugin call, inside its serialization lock; excludes timing-report publication and the outer Nav2 loop. |
+| `thread_cpu_ms` | CPU time used by the calling controller thread over the same work; excludes time asleep or descheduled. |
+| `prepare_ms` | Work before the MPC scoring core, including plan transforms, costmap-lock waits and critic preparation. |
+| `plan_prepare_ms` / `plan_prepare_cpu_ms` | Wall / calling-thread CPU time in DWB plan preparation: path projection, pruning and transforms, transformed-plan publication and goal transform. This is not TF waiting alone. |
+| `costmap_lock_wait_ms` | Time acquiring the costmap mutex, before any critic is prepared. |
+| `critics_prepare_ms` / `critics_prepare_cpu_ms` | Wall / calling-thread CPU time preparing all critics, while holding the costmap mutex. |
+| `guidance_grid_ms` | Clearance/cost grid update; included in preparation. |
+| `solve_ms` | Candidate generation, rollout, scoring and preview observer work inside the solver. |
+| `scoring_ms` | Candidate trajectory conversion, terminal checks and critic scoring, plus the winner's final rescore. |
+| `debug_ms` | Preview snapshot capture, candidate observer and final publication; observer work is also included in `solve_ms`. |
+| `debrief_ms` | Stateful critic updates after scoring, still under the costmap mutex. |
+| `dwb_publish_ms` | Local-plan and cost-grid publication after releasing the costmap mutex; excludes the outer evaluation publication. |
+
+Fields use suffixes `_mean` and `_max`, for example `cycle_ms_max`.
+Each configured critic also has `critic_prepare/<name>_ms_mean` / `_max`,
+`critic_prepare_cpu/<name>_ms_mean` / `_max`, and
+`critic_prepare/<name>_calls`. These means count only preparations actually
+entered, including a throwing call; later critics skipped by an exception are
+not treated as zero-duration calls. Buffers and critic names are allocated during
+configuration and reused on every control cycle. A greater wall time than CPU
+time indicates time off CPU; the difference alone does not identify its cause.
+
+The timed 2D preparation boundary follows the Foxy DWB sequence, including its
+mutex lifetime, warning-only false prepare results and `NoLegalTrajectoriesException`
+handling. With collection disabled, it delegates directly to DWB. Plan preparation
+and critic exceptions still propagate with their original semantics; partial
+stage measurements are retained for the failing cycle.
+
+The timings overlap and must not be added together. Counters include `cycles`,
+`failures`, `deadline_misses` (plugin duration strictly above `1000 * model_dt`),
+`candidate_generated` (after deduplication), `candidate_evaluated`,
+`candidate_rejected` (illegal evaluated candidates), `grid_updates` and
+`detour_cycles`. Candidate counts exclude the final winner recheck and do not
+equate effort-pruned or duplicate candidates with collision rejections.
+`budget_ms` is 100 ms in the real profile and 50 ms in simulation. These are
+plugin execution measurements, not command arrival intervals or the complete
+Nav2 loop duration. A window reports after at least one configured interval of
+control samples; lifecycle deactivation discards an incomplete window.
+Diagnostic failures are contained and cannot replace a control result or error.
+
+```bash
+ros2 topic echo /limo/control/mpc_timing
+```
+
 ## Model and parameters
 
 `FollowPath.MPC.model_dt` must equal `1 / controller_frequency`. The prediction
@@ -142,8 +223,8 @@ The simulation YAML uses local steering sampling deviation 0.10 rad; the real
 profile uses 0.20 rad. Simulation uses 768 candidates with 8 velocity samples
 and 15 curvature samples. The real profile uses 128 candidates: 6 x 11
 constant-curvature seeds, braking, warm start and 60 sampled sequences.
-Both retain full-range seeds and broad exploration. The real profile doubles
-the reference obstacle weight to favor
+Both retain full-range seeds and broad exploration. The real profile uses four
+times the reference obstacle weight to favor
 local-costmap clearance relative to path tracking; other critic weights retain
 their reference values.
 
@@ -165,7 +246,7 @@ that reference profile.
 
 | Humble MPPI term | Foxy configuration | Behavior |
 | --- | --- | --- |
-| CostCritic, weight 3 | Real `MppiObstacle.scale: 6`; simulation: 3 | Mean center cost / 254; critical cost 300; ordinary repulsion off below 0.15 m from the goal in both profiles; critical and collision checks remain active |
+| CostCritic, weight 3 | Real `MppiObstacle.scale: 12`; simulation: 3 | Mean center cost / 254; critical cost 300; real repulsion remains active up to the goal, simulation disables it below 0.15 m; critical and collision checks remain active |
 | GoalCritic, weight 5 | `MppiPath.GoalCritic` | Mean distance in meters, enabled within 1 m of the goal |
 | GoalAngleCritic, weight 3 | `MppiPath.GoalAngleCritic` | Mean wrapped yaw error in radians, within 0.5 m |
 | PathAlignCritic, weight 10 | `MppiPath.PathAlignCritic` | Mean path-pose error, with orientations; off within 0.5 m or if local path occupancy exceeds 15% |
@@ -239,9 +320,10 @@ and 40 steps of 0.10 s; simulation uses 768 sequences at 20 Hz and 80 steps
 of 0.05 s. The real local costmap
 updates at 10 Hz and publishes at 2 Hz, with mux commands at 20 Hz. Simulation
 uses 15 Hz, 4 Hz and 50 Hz respectively.
-The real obstacle weight remains 6.0. Both profiles disable ordinary obstacle
-repulsion below 0.15 m from the goal, retaining inflation in the costmap and
-critical/collision checks. Simulation's reverse/direction penalties are not
+The real obstacle weight is 12.0, with semantic boardwalk kept traversable by
+local lethal threshold 100. Real repulsion stays active up to the goal;
+simulation disables ordinary repulsion below 0.15 m. Both retain inflation
+and critical/collision checks. Simulation's reverse/direction penalties are not
 applied to the real profile.
 The larger local map and guidance field add computation; verify the full real
 cycle fits within 100 ms on the Nano. The reduced real candidate budget

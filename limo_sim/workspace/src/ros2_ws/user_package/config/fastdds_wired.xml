@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Opt-in profile for the direct PC (10.74.48.1) / LIMO (10.74.48.2) cable. -->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>limo_wired_udp</transport_id>
+      <type>UDPv4</type>
+      <interfaceWhiteList>
+        <address>127.0.0.1</address>
+        <address>10.74.48.1</address>
+        <address>10.74.48.2</address>
+      </interfaceWhiteList>
+    </transport_descriptor>
+    <transport_descriptor>
+      <transport_id>limo_local_shm</transport_id>
+      <type>SHM</type>
+    </transport_descriptor>
+  </transport_descriptors>
+  <participant profile_name="limo_wired" is_default_profile="true">
+    <rtps>
+      <builtin>
+        <initialPeersList>
+          <locator><udpv4><address>127.0.0.1</address></udpv4></locator>
+          <locator><udpv4><address>10.74.48.1</address></udpv4></locator>
+          <locator><udpv4><address>10.74.48.2</address></udpv4></locator>
+        </initialPeersList>
+      </builtin>
+      <userTransports>
+        <transport_id>limo_wired_udp</transport_id>
+        <transport_id>limo_local_shm</transport_id>
+      </userTransports>
+      <useBuiltinTransports>false</useBuiltinTransports>
+    </rtps>
+  </participant>
+</profiles>

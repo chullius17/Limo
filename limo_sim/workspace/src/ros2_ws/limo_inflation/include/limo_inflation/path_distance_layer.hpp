@@ -56,6 +56,8 @@ private:
   std::vector<float> path_distances_;
   std::vector<PathPosePoint> path_points_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr start_service_;
+  std::vector<std::uint8_t> mask_storage_;
+  std::vector<float> distance_storage_;
 };
 
 }  // namespace limo_inflation

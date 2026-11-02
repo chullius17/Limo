@@ -22,6 +22,18 @@ by the launch. Real control uses a smaller Nano CPU budget, retaining geometry,
 velocity/acceleration limits, the prediction horizon and footprint collision checks.
 The real local costmap updates at 10 Hz and publishes at 2 Hz.
 
+`path_executor` defaults to `optimize_idle_io: true`: it receives current-pose
+TF in idle batches and on demand through `limo_runtime`, and excludes arrival odometry from its
+executor while control is stopped or paused. Arrival checks resume at the
+original odometry rate when needed; chassis monitoring remains active.
+Idle TF maintenance at 5 Hz preserves incoming samples and keeps the buffer
+warm for START; active pose queries drain new TF immediately.
+TF publishers, MPC settings and costmap update rates are unchanged. Set this
+parameter to false at startup for comparison with continuous reception.
+After updating, build `limo_runtime limo_controller traj_package` with
+`colcon build --packages-select limo_runtime limo_controller traj_package
+--symlink-install --executor sequential`, source the install, and restart the app.
+
 `control.launch.py` uses `limo_dwb_critics/limo_controller_server`, which hosts
 the same Nav2 controller server and parameters. On SIGINT it deactivates the
 controller (including its zero-velocity command and costmap thread), then
@@ -65,14 +77,15 @@ the real control cycle; verify the complete cycle still fits within 100 ms on
 the Nano. Different geometry, model timesteps and obstacle weights can produce
 different detours between the real and simulation profiles.
 
-The real profile gives local obstacle costs twice their reference weight:
-`FollowPath.MppiObstacle.scale` is 6.0 instead of 3.0, while path and goal
-weights retain their reference values. This increases the preference for
+The real profile uses strong finite local obstacle repulsion:
+`FollowPath.MppiObstacle.scale` is 12.0, twice its previous value of 6.0
+(the simulation/reference weight is 3.0), while path and goal weights retain
+their reference values. This increases the preference for
 lower-cost routes through the local costmap relative to following the planned
 path; it does not impose an absolute priority between the soft costs.
-Both profiles set `FollowPath.MppiObstacle.near_goal_distance` to 0.15 m, so
-ordinary obstacle repulsion switches off when the current robot position is
-less than 15 cm from the goal. The costmap inflation remains present; critical
+The real profile sets `FollowPath.MppiObstacle.near_goal_distance` to 0.0 m,
+keeping repulsion active up to the goal. Simulation retains 0.15 m, disabling
+ordinary repulsion within the last 15 cm. The costmap inflation remains present; critical
 costs remain active and footprint collisions remain hard rejections at every
 predicted pose. These parameters are read when configuring
 the controller; restart the application after changing the installed YAML.
@@ -138,6 +151,14 @@ desktop workload before supervised physical execution.
 These real/sim profiles are the only built-in controller parameter files.
 
 ## Local lane inflation
+
+The real local costmap uses `lethal_cost_threshold: 100`: semantic boardwalk
+points with source cost 90 become high but traversable Nav2 costs (228).
+They and their Gaussian halos receive the strong finite repulsion above.
+Simulation retains threshold 86 and makes boardwalk cells lethal (254).
+Laser obstacle cells remain lethal in both profiles, with full-footprint
+collision rejection even near the goal.
+The global planner already treats source costs 60 and above as lethal.
 
 Both control profiles configure `limo_inflation::LocalLaneLayer` under
 `local_costmap.local_costmap.ros__parameters.inflation_layer`, currently with
@@ -252,7 +273,7 @@ Tune these in `path_executor.ros__parameters` of `control_sim.yaml` or
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `goal_circle_radius` | 0.20 m | Shared radius for the green circle and arrival detection |
+| `goal_circle_radius` | real: 0.30 m; sim: 0.20 m | Shared radius for the green circle and arrival detection |
 | `success_dwell_time` | 2.0 s | Continuous stopped time, measured on the ROS clock |
 | `stopped_linear_velocity` | 0.01 m/s | Maximum measured planar speed considered stopped |
 | `stopped_angular_velocity` | 0.05 rad/s | Maximum absolute measured yaw rate considered stopped |

@@ -11,6 +11,15 @@ ros2 launch traj_package trajectory.launch.py
 It requires the robot map and transforms. Pass a custom configuration with
 `planner_params_file:=/path/to/parameters.yaml`.
 
+The bridge defaults to `optimize_idle_io: true`. Its private TF receiver is
+drained in idle batches at 5 Hz and immediately when a planning pose is queried,
+avoiding Python executor wakeups for every TF publication while waiting for a
+goal. Batching keeps the TF buffer warm without changing transform timestamps.
+Current poses and bounded TF
+waits still use the normal transform buffer. Set the parameter to false at
+startup to restore continuous reception. Build the shared `limo_runtime`
+package with `traj_package` after this update, then source and restart.
+
 The built-in real and simulation global costmaps use `lethal_cost_threshold: 60`.
 Semantic yellow lines (60), boardwalk (90) and occupied cells (100) become hard
 obstacles for SMAC and start/goal validation; white markings (30) remain soft

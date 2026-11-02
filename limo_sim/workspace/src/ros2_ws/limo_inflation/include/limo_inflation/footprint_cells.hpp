@@ -15,17 +15,19 @@ namespace limo_inflation
 
 // Nav2's convex fill includes the boundary and interior of the robot polygon.
 // An optional integral image skips rasterization if its bounding box is empty.
+// Separate caller-owned buffers retain capacity across repeated footprint checks.
 inline bool footprintCells(
   nav2_costmap_2d::Costmap2D & map, const geometry_msgs::msg::Pose2D & pose,
   const std::vector<geometry_msgs::msg::Point> & footprint,
   std::vector<nav2_costmap_2d::MapLocation> & cells,
+  std::vector<nav2_costmap_2d::MapLocation> & polygon,
   const std::vector<std::uint32_t> * blocked_prefix = nullptr)
 {
   cells.clear();
+  polygon.clear();
   if (footprint.size() < 3 || !std::isfinite(pose.x) || !std::isfinite(pose.y) ||
     !std::isfinite(pose.theta)) {return false;}
   const double c = std::cos(pose.theta), s = std::sin(pose.theta);
-  std::vector<nav2_costmap_2d::MapLocation> polygon;
   polygon.reserve(footprint.size());
   unsigned int min_x = map.getSizeInCellsX(), min_y = map.getSizeInCellsY();
   unsigned int max_x = 0, max_y = 0;
@@ -45,6 +47,16 @@ inline bool footprintCells(
   }
   map.convexFillCells(polygon, cells);
   return !cells.empty();
+}
+
+inline bool footprintCells(
+  nav2_costmap_2d::Costmap2D & map, const geometry_msgs::msg::Pose2D & pose,
+  const std::vector<geometry_msgs::msg::Point> & footprint,
+  std::vector<nav2_costmap_2d::MapLocation> & cells,
+  const std::vector<std::uint32_t> * blocked_prefix = nullptr)
+{
+  std::vector<nav2_costmap_2d::MapLocation> polygon;
+  return footprintCells(map, pose, footprint, cells, polygon, blocked_prefix);
 }
 
 }  // namespace limo_inflation

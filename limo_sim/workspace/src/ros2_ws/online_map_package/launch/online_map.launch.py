@@ -222,6 +222,11 @@ def _launch_online(context):
         actions.append(Node(
             package='rviz2', executable='rviz2', name='rviz2',
             output='screen',
+            # Keep GLVND dispatch stubs intact for the RViz/OpenGL crash workaround.
+            additional_env={
+                '__GLVND_DISALLOW_PATCHING': os.environ.get(
+                    '__GLVND_DISALLOW_PATCHING', '1'),
+            },
             arguments=['-d', rviz_config, '-f', settings['fixed_frame']],
             remappings=settings.get('rviz_remappings', []) + overlay_remappings,
             parameters=[clock]))

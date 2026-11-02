@@ -201,7 +201,8 @@ specifico per questa condizione.
 
 Il raggio condiviso fra cerchio verde e riconoscimento dell'arrivo è
 `path_executor.ros__parameters.goal_circle_radius` nel profilo sim o real:
-il valore iniziale è **0,20 m**. `success_dwell_time` modifica la durata;
+il valore è **0,30 m nel reale** e **0,20 m in simulazione**.
+`success_dwell_time` modifica la durata;
 `stopped_linear_velocity` e `stopped_angular_velocity` modificano le soglie.
 L'odometria arriva da `success_odom_topic`, inizialmente `/odometry/filtered`;
 la posa del centro viene trasformata nel riferimento della traiettoria.

@@ -33,6 +33,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
+from limo_runtime.tf_buffer import QueryTransformBuffer
 
 
 @dataclass
@@ -138,8 +139,11 @@ class RvizGoalBridge(Node):
         )
         self._validate_parameters()
 
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.declare_parameter('optimize_idle_io', True)
+        self.optimize_idle_io = self.get_parameter('optimize_idle_io').value
+        self.tf_buffer = QueryTransformBuffer(self) if self.optimize_idle_io else Buffer()
+        self.tf_listener = (
+            None if self.optimize_idle_io else TransformListener(self.tf_buffer, self))
 
         # This bridge intentionally keeps goal selection graphical: users can
         # choose both position and final heading with RViz's 2D Goal Pose tool
@@ -245,6 +249,8 @@ class RvizGoalBridge(Node):
         """Release the planner action client before its node handle on Foxy."""
         self.compute_path_client.destroy()
         self.destroy_client(self.explicit_start_client)
+        if self.optimize_idle_io:
+            self.tf_buffer.close()
         return super().destroy_node()
 
     def _validate_parameters(self) -> None:

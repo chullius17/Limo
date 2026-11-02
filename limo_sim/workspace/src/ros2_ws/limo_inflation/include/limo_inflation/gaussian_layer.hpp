@@ -60,6 +60,9 @@ private:
   std::vector<std::uint8_t> source_costs_;
   std::vector<std::uint8_t> inflated_costs_;
   std::vector<std::uint8_t> broad_costs_;
+  std::vector<std::uint8_t> broad_mask_;
+  std::vector<float> broad_distances_;
+  bool broad_has_sources_{false};
   rclcpp::Service<nav2_msgs::srv::GetCostmap>::SharedPtr sources_service_;
   rclcpp::Time source_stamp_{0, 0, RCL_ROS_TIME};
   double source_origin_x_{0.0};

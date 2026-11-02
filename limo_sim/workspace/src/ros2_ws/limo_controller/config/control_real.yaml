@@ -34,7 +34,7 @@ controller_server:
       # DWB initializes this compatibility generator; the MPC subclass
       # replaces the search loop and does not use it to generate candidates.
       trajectory_generator_name: "dwb_plugins::StandardTrajectoryGenerator"
-      debug_trajectory_details: false
+      debug_trajectory_details: true  # On failure, log why candidates were rejected.
       publish_evaluation: false  # Enable temporarily to inspect candidate costs.
       publish_global_plan: true
       publish_transformed_plan: true
@@ -81,6 +81,11 @@ controller_server:
         # Like the Humble smoother: continue the command ramp across cycles
         # even when noisy/lagging odometry still reports near-zero motion.
         feedback: "OPEN_LOOP"
+        Timing:
+          enabled: true
+          topic: /limo/control/mpc_timing
+          publish_rate: 1.0
+          log_summary: true
         Debug:
           enabled: true  # MPC telemetry.
           preview_enabled: false  # The PC starts the renderer via desktop_app.launch.py.
@@ -146,14 +151,14 @@ controller_server:
 
       # Reference: origin/humble-navigation, nav_limo_controller/config/
       # mppi_control_params.yaml. Cost powers are 1 in that profile.
-      # Double the reference obstacle weight relative to all path/goal costs.
-      # Obstacle cost = 6 * mean(center_cost / 254), with footprint collision
+      # Finite repulsion: twice the previous real weight of 6.
+      # Obstacle cost = 12 * mean(center_cost / 254), with footprint collision
       # rejection at every pose. This scale is NOT DWB's raw summed cost.
-      MppiObstacle.scale: 6.0
+      MppiObstacle.scale: 12.0
       MppiObstacle.critical_cost: 300.0
       MppiObstacle.full_footprint_check: true  # Interior + edges, including intermediate poses.
-      # Disable ordinary obstacle repulsion below 15 cm; keep critical/collision checks.
-      MppiObstacle.near_goal_distance: 0.15
+      # Keep ordinary repulsion active all the way to the goal.
+      MppiObstacle.near_goal_distance: 0.0
 
       # Match Humble's weights and goal-distance gates in meters/radians.
       # Collisions/kinematic violations remain hard constraints, so there is
@@ -189,8 +194,8 @@ controller_server:
           max_angle_to_furthest: 1.0
           forward_preference: false
 
-# Laser observations stay lethal and receive Nav2 inflation. Semantic boardwalk
-# costs (90) stay soft, including their source-grid repulsion band.
+# Laser observations remain lethal. Semantic boardwalk (90) and its Gaussian
+# halos are traversable, with strong finite repulsion in the obstacle critic.
 local_costmap:
   local_costmap:
     ros__parameters:
@@ -211,7 +216,7 @@ local_costmap:
       track_unknown_space: false
       always_send_full_costmap: false
       trinary_costmap: false
-      lethal_cost_threshold: 100  # Boardwalk 90 is repulsive, never a hard collision.
+      lethal_cost_threshold: 100  # Semantic boardwalk 90 stays soft; laser cells stay lethal.
       unknown_cost_value: 255
       use_maximum: true
 
@@ -283,7 +288,7 @@ twist_mux:
 # Never take chassis ownership back automatically from the phone/remote.
 path_executor:
   ros__parameters:
-    goal_circle_radius: 0.20  # Shared with the preview's green circle (meters).
+    goal_circle_radius: 0.30  # Shared with the preview's green circle (meters).
     success_dwell_time: 2.0  # Continuous measured stop inside the circle (ROS seconds).
     stopped_linear_velocity: 0.01  # m/s; measured planar speed.
     stopped_angular_velocity: 0.05  # rad/s; measured yaw rate.

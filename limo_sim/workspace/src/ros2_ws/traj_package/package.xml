@@ -35,6 +35,7 @@
 
   <!-- Custom interfaces -->
   <depend>limo_interfaces</depend>
+  <exec_depend>limo_runtime</exec_depend>
 
   <!-- Python deps -->
   <exec_depend>python3-numpy</exec_depend>
