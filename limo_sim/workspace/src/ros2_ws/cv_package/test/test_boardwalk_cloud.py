@@ -14,6 +14,8 @@ from geometry_msgs.msg import TransformStamped
 from std_msgs.msg import Header
 
 from cv_package.visual_ptcld.boardwalk import BOARDWALK_COUNTS, BOARDWALK_TIMINGS, BoardwalkClassifier
+from cv_package.visual_ptcld.cloud_message import DEBUG_CLOUD_DTYPE
+from cv_package.visual_ptcld import visual_ptcld as node_module
 from cv_package.visual_ptcld.visual_ptcld import VisualPtcld
 from cv_package.visual_ptcld.cloud_cpu import RayCache
 
@@ -43,6 +45,9 @@ def detector_stub(enabled=True):
         tf_buffer=SimpleNamespace(lookup_transform=lambda *args: transform),
         quaternion_to_rotation=VisualPtcld.quaternion_to_rotation,
         pointcloud_pub=SimpleNamespace(publish=published.append),
+        before_kdtree_pub=SimpleNamespace(
+            get_subscription_count=lambda: 0,
+            publish=lambda cloud: pytest.fail('Unsubscribed debug cloud was published')),
         get_logger=lambda: SimpleNamespace(warning=lambda *args, **kwargs: None),
     )
     for name in ('LABEL_ROAD', 'LABEL_YELLOW', 'LABEL_BACKGROUND',
@@ -53,6 +58,15 @@ def detector_stub(enabled=True):
         lambda points, class_ids: VisualPtcld.voxelize_bev_cloud(
             detector, points, class_ids))
     return detector, published
+
+
+def enable_before_kdtree_debug(detector):
+    """Subscribe to the optional debug cloud without starting ROS."""
+    published = []
+    detector.enable_debug_publications = True
+    detector.before_kdtree_pub = SimpleNamespace(
+        get_subscription_count=lambda: 1, publish=published.append)
+    return published
 
 
 def test_metric_voxelization_reduces_every_class_separately():
@@ -118,6 +132,7 @@ def test_projected_cloud_preserves_geometry_and_serializes_class_four(enabled):
 
 def test_missing_depth_does_not_record_a_zero_classification_sample():
     detector, published = detector_stub()
+    debug_clouds = enable_before_kdtree_debug(detector)
     detector.depth_image = None
     empty = np.empty((0, 2), dtype=np.int32)
     result = VisualPtcld.publish_pointcloud(
@@ -125,16 +140,137 @@ def test_missing_depth_does_not_record_a_zero_classification_sample():
     assert result[0] is None
     assert result[-1] == {}
     assert not published
+    assert not debug_clouds
 
 
 def test_empty_cloud_is_published_with_zero_workload():
     detector, published = detector_stub()
+    debug_clouds = enable_before_kdtree_debug(detector)
     empty = np.empty((0, 2), dtype=np.int32)
     result = VisualPtcld.publish_pointcloud(
         detector, empty, empty, empty, 4, 1, Header(frame_id='camera'))
     assert published[0].width == 0
+    assert len(debug_clouds) == 1
+    assert debug_clouds[0].width == debug_clouds[0].row_step == 0
+    assert len(debug_clouds[0].data) == 0
+    assert debug_clouds[0].header == published[0].header
     assert result[-1]['boardwalk_final_count'] == 0
     assert result[-1]['boardwalk_blue_query_ms'] == 0
+
+
+@pytest.mark.parametrize('debug_enabled', [False, True])
+@pytest.mark.parametrize('subscribers', [0, 1])
+def test_before_kdtree_serialization_requires_debug_and_subscriber(
+        monkeypatch, debug_enabled, subscribers):
+    detector, published = detector_stub()
+    debug_clouds = enable_before_kdtree_debug(detector)
+    detector.enable_debug_publications = debug_enabled
+    detector.before_kdtree_pub.get_subscription_count = lambda: subscribers
+    serialized = []
+    original_serializer = node_module.make_pointcloud2
+
+    def serialize(*args, **kwargs):
+        serialized.append(kwargs.get('include_rgb', False))
+        return original_serializer(*args, **kwargs)
+
+    monkeypatch.setattr(node_module, 'make_pointcloud2', serialize)
+    VisualPtcld.publish_pointcloud(
+        detector, np.array([[0, 0]]), np.array([[0, 3]]),
+        np.array([[0, 1], [0, 2]]), 4, 1, Header(frame_id='camera'))
+
+    expected_debug = int(debug_enabled and subscribers > 0)
+    assert serialized.count(True) == len(debug_clouds) == expected_debug
+    assert serialized.count(False) == len(published) == 1
+    final = np.frombuffer(published[0].data, dtype=VisualPtcld.CLOUD_DTYPE)
+    np.testing.assert_array_equal(final['class_id'], [1, 2, 4, 6])
+
+
+def test_before_kdtree_preserves_original_labels_colors_and_transformed_geometry():
+    detector, published = detector_stub()
+    debug_clouds = enable_before_kdtree_debug(detector)
+    transform = TransformStamped()
+    transform.transform.rotation.z = transform.transform.rotation.w = np.sqrt(0.5)
+    transform.transform.translation.x = 1.0
+    transform.transform.translation.y = -2.0
+    detector.tf_buffer.lookup_transform = lambda *args: transform
+    header = Header(frame_id='camera')
+    header.stamp.sec, header.stamp.nanosec = 42, 123
+
+    VisualPtcld.publish_pointcloud(
+        detector, np.array([[0, 0]]), np.array([[0, 3]]),
+        np.array([[0, 1], [0, 2]]), 4, 1, header,
+        interior_blue_points=np.array([[0, 3]]))
+
+    assert len(debug_clouds) == len(published) == 1
+    debug_cloud = debug_clouds[0]
+    debug = np.frombuffer(debug_cloud.data, dtype=DEBUG_CLOUD_DTYPE)
+    final = np.frombuffer(published[0].data, dtype=VisualPtcld.CLOUD_DTYPE)
+    np.testing.assert_array_equal(debug['class_id'], [1, 2, 3, 3, 5])
+    np.testing.assert_array_equal(final['class_id'], [1, 2, 4, 6, 5])
+    np.testing.assert_array_equal(
+        debug['rgb'], [0x0000FF, 0x00FFFF, 0xFFFFFF, 0xFFFFFF, 0x000080])
+    np.testing.assert_allclose(debug['x'], np.ones(5), atol=1e-7)
+    np.testing.assert_allclose(debug['y'], [-2.0, -1.625, -1.875, -1.75, -1.625])
+    np.testing.assert_array_equal(debug['z'], np.zeros(5))
+    for coordinate in ('x', 'y', 'z'):
+        np.testing.assert_array_equal(debug[coordinate], final[coordinate])
+    assert debug_cloud.header.frame_id == 'base_link'
+    assert debug_cloud.header.stamp == header.stamp
+    assert debug_cloud.header == published[0].header
+    assert header.frame_id == 'camera'
+    assert debug_cloud.width == 5
+    assert debug_cloud.height == 1
+    assert debug_cloud.point_step == 20
+    assert debug_cloud.row_step == len(debug_cloud.data) == 100
+    fields = {field.name: field for field in debug_cloud.fields}
+    assert set(fields) == {'x', 'y', 'z', 'class_id', 'rgb'}
+    assert fields['rgb'].offset == 16
+    assert fields['rgb'].datatype == fields['rgb'].UINT32
+    assert fields['rgb'].count == 1
+    assert published[0].point_step == 16
+    assert {field.name for field in published[0].fields} == {'x', 'y', 'z', 'class_id'}
+
+
+def test_before_kdtree_precedes_metric_voxelization_and_class_filtering():
+    detector, published = detector_stub()
+    debug_clouds = enable_before_kdtree_debug(detector)
+    detector.camera_intrinsics = (100.0, 100.0, 0.0, 0.0, 4, 1)
+    detector.pointcloud_voxel_size = 0.2
+    detector.road_boardwalk_only = True
+    detector.blue_radius_min, detector.blue_radius_max = 0.015, 0.025
+    detector.boardwalk_propagation_radius = 0.0
+    VisualPtcld.publish_pointcloud(
+        detector, np.array([[0, 0], [0, 1]]), np.array([[0, 3]]),
+        np.array([[0, 2], [0, 3]]), 4, 1, Header(frame_id='camera'),
+        interior_blue_points=np.array([[0, 3]]))
+
+    debug = np.frombuffer(debug_clouds[0].data, dtype=DEBUG_CLOUD_DTYPE)
+    final = np.frombuffer(published[0].data, dtype=VisualPtcld.CLOUD_DTYPE)
+    np.testing.assert_array_equal(debug['class_id'], [1, 1, 2, 3, 3, 5])
+    np.testing.assert_allclose(debug['x'], [0.0, 0.01, 0.03, 0.02, 0.03, 0.03])
+    # Both original boundary points and the filtered yellow/background survive
+    # in debug; only the final cloud merges road points and filters classes.
+    np.testing.assert_array_equal(final['class_id'], [1, 4, 5])
+    np.testing.assert_allclose(final['x'], [0.005, 0.03, 0.03])
+
+
+@pytest.mark.parametrize('last_depth,expected_x', [(1.0, [0.375]), (np.inf, [])])
+def test_before_kdtree_filters_invalid_depth_and_clears_all_invalid_cloud(
+        last_depth, expected_x):
+    detector, published = detector_stub()
+    debug_clouds = enable_before_kdtree_debug(detector)
+    detector.depth_image[:] = [np.nan, 0.0, 3.0, last_depth]
+    empty = np.empty((0, 2), dtype=np.int32)
+    VisualPtcld.publish_pointcloud(
+        detector, empty, empty, np.array([[0, 0], [0, 1], [0, 2], [0, 3]]),
+        4, 1, Header(frame_id='camera'))
+
+    assert len(debug_clouds) == len(published) == 1
+    debug = np.frombuffer(debug_clouds[0].data, dtype=DEBUG_CLOUD_DTYPE)
+    np.testing.assert_allclose(debug['x'], expected_x)
+    np.testing.assert_array_equal(debug['class_id'], [3] * len(expected_x))
+    np.testing.assert_array_equal(debug['rgb'], [0xFFFFFF] * len(expected_x))
+    assert debug_clouds[0].width == published[0].width == len(expected_x)
 
 
 @pytest.mark.parametrize('profile_name', [None, 'real', 'sim'])

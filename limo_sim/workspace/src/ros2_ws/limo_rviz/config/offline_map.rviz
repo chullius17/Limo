@@ -56,6 +56,26 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /limo/map_package/offline/map/combined_grid
     - Alpha: 1
+      Class: rviz_default_plugins/PointCloud2
+      Color Transformer: RGB8
+      Decay Time: 0
+      Enabled: false
+      Name: CV Points Before KD-tree
+      Position Transformer: XYZ
+      Queue Size: 2
+      Selectable: true
+      Size (Pixels): 4
+      Size (m): 0.03
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /limo/cv_package/visual_ptcld/points_before_kdtree
+      Use Fixed Frame: true
+      Value: false
+    - Alpha: 1
       Autocompute Intensity Bounds: false
       Autocompute Value Bounds:
         Max Value: 6

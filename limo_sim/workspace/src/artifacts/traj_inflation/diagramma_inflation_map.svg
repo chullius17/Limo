@@ -1,0 +1,365 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<!-- Created with matplotlib (https://matplotlib.org/) -->
+<svg height="648pt" version="1.1" viewBox="0 0 1152 648" width="1152pt" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+ <defs>
+  <style type="text/css">
+*{stroke-linecap:butt;stroke-linejoin:round;}
+  </style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 648 
+L 1152 648 
+L 1152 0 
+L 0 0 
+z
+" style="fill:#f7f9fc;"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path clip-path="url(#p0b5b78e360)" d="M 51.84 312.984 
+L 236.16 312.984 
+Q 251.136 312.984 251.136 304.56 
+L 251.136 187.92 
+Q 251.136 179.496 236.16 179.496 
+L 51.84 179.496 
+Q 36.864 179.496 36.864 187.92 
+L 36.864 304.56 
+Q 36.864 312.984 51.84 312.984 
+z
+" style="fill:#eaf2fc;stroke:#aac9e9;stroke-linejoin:miter;stroke-width:1.3;"/>
+   </g>
+   <g id="patch_3">
+    <path clip-path="url(#p0b5b78e360)" d="M 266.959266 136.08 
+Q 289.150839 136.08 309.329951 136.08 
+" style="fill:none;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+    <path clip-path="url(#p0b5b78e360)" d="M 303.729951 133.28 
+L 309.329951 136.08 
+L 303.729951 138.88 
+L 303.729951 133.28 
+z
+" style="fill:#8d9eb0;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+   </g>
+   <g id="patch_4">
+    <path clip-path="url(#p0b5b78e360)" d="M 266.959266 349.92 
+Q 289.150839 349.92 309.329951 349.92 
+" style="fill:none;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+    <path clip-path="url(#p0b5b78e360)" d="M 303.729951 347.12 
+L 309.329951 349.92 
+L 303.729951 352.72 
+L 303.729951 347.12 
+z
+" style="fill:#8d9eb0;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+   </g>
+   <g id="patch_5">
+    <path clip-path="url(#p0b5b78e360)" d="M 328.32 187.92 
+L 783.36 187.92 
+Q 798.336 187.92 798.336 179.496 
+L 798.336 100.44 
+Q 798.336 92.016 783.36 92.016 
+L 328.32 92.016 
+Q 313.344 92.016 313.344 100.44 
+L 313.344 179.496 
+Q 313.344 187.92 328.32 187.92 
+z
+" style="fill:#ffffff;stroke:#d3dde8;stroke-linejoin:miter;stroke-width:1.3;"/>
+   </g>
+   <g id="patch_6">
+    <path clip-path="url(#p0b5b78e360)" d="M 328.32 484.704 
+L 783.36 484.704 
+Q 798.336 484.704 798.336 476.28 
+L 798.336 220.32 
+Q 798.336 211.896 783.36 211.896 
+L 328.32 211.896 
+Q 313.344 211.896 313.344 220.32 
+L 313.344 476.28 
+Q 313.344 484.704 328.32 484.704 
+z
+" style="fill:#edf5fc;stroke:#bed4e8;stroke-linejoin:miter;stroke-width:1.3;"/>
+   </g>
+   <g id="patch_7">
+    <path clip-path="url(#p0b5b78e360)" d="M 351.36 307.152 
+L 760.32 307.152 
+Q 775.296 307.152 775.296 298.728 
+L 775.296 251.424 
+Q 775.296 243 760.32 243 
+L 351.36 243 
+Q 336.384 243 336.384 251.424 
+L 336.384 298.728 
+Q 336.384 307.152 351.36 307.152 
+z
+" style="fill:#ffffff;stroke:#d0dfec;stroke-linejoin:miter;"/>
+   </g>
+   <g id="patch_8">
+    <path clip-path="url(#p0b5b78e360)" d="M 351.36 379.08 
+L 760.32 379.08 
+Q 775.296 379.08 775.296 370.656 
+L 775.296 323.352 
+Q 775.296 314.928 760.32 314.928 
+L 351.36 314.928 
+Q 336.384 314.928 336.384 323.352 
+L 336.384 370.656 
+Q 336.384 379.08 351.36 379.08 
+z
+" style="fill:#ffffff;stroke:#d0dfec;stroke-linejoin:miter;"/>
+   </g>
+   <g id="patch_9">
+    <path clip-path="url(#p0b5b78e360)" d="M 351.36 451.008 
+L 760.32 451.008 
+Q 775.296 451.008 775.296 442.584 
+L 775.296 395.28 
+Q 775.296 386.856 760.32 386.856 
+L 351.36 386.856 
+Q 336.384 386.856 336.384 395.28 
+L 336.384 442.584 
+Q 336.384 451.008 351.36 451.008 
+z
+" style="fill:#ffffff;stroke:#d0dfec;stroke-linejoin:miter;"/>
+   </g>
+   <g id="patch_10">
+    <path clip-path="url(#p0b5b78e360)" d="M 552.96 303.964682 
+Q 552.96 308.771076 552.96 312.124026 
+" style="fill:none;stroke:#1769aa;stroke-linecap:round;stroke-width:1.3;"/>
+    <path clip-path="url(#p0b5b78e360)" d="M 555.76 306.524026 
+L 552.96 312.124026 
+L 550.16 306.524026 
+L 555.76 306.524026 
+z
+" style="fill:#1769aa;stroke:#1769aa;stroke-linecap:round;stroke-width:1.3;"/>
+   </g>
+   <g id="patch_11">
+    <path clip-path="url(#p0b5b78e360)" d="M 552.96 375.892682 
+Q 552.96 380.699076 552.96 384.052026 
+" style="fill:none;stroke:#1769aa;stroke-linecap:round;stroke-width:1.3;"/>
+    <path clip-path="url(#p0b5b78e360)" d="M 555.76 378.452026 
+L 552.96 384.052026 
+L 550.16 378.452026 
+L 555.76 378.452026 
+z
+" style="fill:#1769aa;stroke:#1769aa;stroke-linecap:round;stroke-width:1.3;"/>
+   </g>
+   <g id="patch_12">
+    <path clip-path="url(#p0b5b78e360)" d="M 826.831055 233.28 
+Q 847.295931 233.28 865.748345 233.28 
+" style="fill:none;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+    <path clip-path="url(#p0b5b78e360)" d="M 860.148345 230.48 
+L 865.748345 233.28 
+L 860.148345 236.08 
+L 860.148345 230.48 
+z
+" style="fill:#8d9eb0;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+   </g>
+   <g id="patch_13">
+    <path clip-path="url(#p0b5b78e360)" d="M 884.736 287.064 
+L 1093.248 287.064 
+Q 1108.224 287.064 1108.224 278.64 
+L 1108.224 187.92 
+Q 1108.224 179.496 1093.248 179.496 
+L 884.736 179.496 
+Q 869.76 179.496 869.76 187.92 
+L 869.76 278.64 
+Q 869.76 287.064 884.736 287.064 
+z
+" style="fill:#e9f4ef;stroke:#acd0be;stroke-linejoin:miter;stroke-width:1.3;"/>
+   </g>
+   <g id="patch_14">
+    <path clip-path="url(#p0b5b78e360)" d="M 988.992 283.877789 
+Q 988.992 300.024577 988.992 314.158904 
+" style="fill:none;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+    <path clip-path="url(#p0b5b78e360)" d="M 991.792 308.558904 
+L 988.992 314.158904 
+L 986.192 308.558904 
+L 991.792 308.558904 
+z
+" style="fill:#8d9eb0;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+   </g>
+   <g id="patch_15">
+    <path clip-path="url(#p0b5b78e360)" d="M 884.736 395.28 
+L 1093.248 395.28 
+Q 1108.224 395.28 1108.224 386.856 
+L 1108.224 325.944 
+Q 1108.224 317.52 1093.248 317.52 
+L 884.736 317.52 
+Q 869.76 317.52 869.76 325.944 
+L 869.76 386.856 
+Q 869.76 395.28 884.736 395.28 
+z
+" style="fill:#ffffff;stroke:#d3dde8;stroke-linejoin:miter;stroke-width:1.3;"/>
+   </g>
+   <g id="patch_16">
+    <path clip-path="url(#p0b5b78e360)" d="M 988.992 392.09814 
+Q 988.992 409.211353 988.992 424.312105 
+" style="fill:none;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+    <path clip-path="url(#p0b5b78e360)" d="M 991.792 418.712105 
+L 988.992 424.312105 
+L 986.192 418.712105 
+L 991.792 418.712105 
+z
+" style="fill:#8d9eb0;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+   </g>
+   <g id="patch_17">
+    <path clip-path="url(#p0b5b78e360)" d="M 884.736 513.216 
+L 1093.248 513.216 
+Q 1108.224 513.216 1108.224 504.792 
+L 1108.224 436.104 
+Q 1108.224 427.68 1093.248 427.68 
+L 884.736 427.68 
+Q 869.76 427.68 869.76 436.104 
+L 869.76 504.792 
+Q 869.76 513.216 884.736 513.216 
+z
+" style="fill:#eaf2fc;stroke:#aac9e9;stroke-linejoin:miter;stroke-width:1.3;"/>
+   </g>
+   <g id="patch_18">
+    <path clip-path="url(#p0b5b78e360)" d="M 51.84 598.104 
+L 783.36 598.104 
+Q 798.336 598.104 798.336 589.68 
+L 798.336 523.584 
+Q 798.336 515.16 783.36 515.16 
+L 51.84 515.16 
+Q 36.864 515.16 36.864 523.584 
+L 36.864 589.68 
+Q 36.864 598.104 51.84 598.104 
+z
+" style="fill:#ffffff;stroke:#d3dde8;stroke-linejoin:miter;stroke-width:1.3;"/>
+   </g>
+   <g id="line2d_1">
+    <path clip-path="url(#p0b5b78e360)" d="M 241.92 246.24 
+L 264.96 246.24 
+L 264.96 136.08 
+" style="fill:none;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+   </g>
+   <g id="line2d_2">
+    <path clip-path="url(#p0b5b78e360)" d="M 264.96 246.24 
+L 264.96 349.92 
+" style="fill:none;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+   </g>
+   <g id="line2d_3">
+    <defs>
+     <path d="M 0 2.5 
+C 0.663008 2.5 1.29895 2.236584 1.767767 1.767767 
+C 2.236584 1.29895 2.5 0.663008 2.5 0 
+C 2.5 -0.663008 2.236584 -1.29895 1.767767 -1.767767 
+C 1.29895 -2.236584 0.663008 -2.5 0 -2.5 
+C -0.663008 -2.5 -1.29895 -2.236584 -1.767767 -1.767767 
+C -2.236584 -1.29895 -2.5 -0.663008 -2.5 0 
+C -2.5 0.663008 -2.236584 1.29895 -1.767767 1.767767 
+C -1.29895 2.236584 -0.663008 2.5 0 2.5 
+z
+" id="me7f3dd89d7" style="stroke:#8d9eb0;"/>
+    </defs>
+    <g clip-path="url(#p0b5b78e360)">
+     <use style="fill:#8d9eb0;stroke:#8d9eb0;" x="264.96" xlink:href="#me7f3dd89d7" y="246.24"/>
+    </g>
+   </g>
+   <g id="line2d_4">
+    <path clip-path="url(#p0b5b78e360)" d="M 789.12 136.08 
+L 824.832 136.08 
+L 824.832 233.28 
+" style="fill:none;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+   </g>
+   <g id="line2d_5">
+    <path clip-path="url(#p0b5b78e360)" d="M 789.12 419.256 
+L 824.832 419.256 
+L 824.832 233.28 
+" style="fill:none;stroke:#8d9eb0;stroke-linecap:round;stroke-width:1.8;"/>
+   </g>
+   <g id="text_1">
+    <text style="fill:#172c43;font-family:DejaVu Sans;font-size:27px;font-style:normal;font-weight:bold;text-anchor:start;" transform="rotate(-0, 51.84, 49.194844)" x="51.84" y="49.194844">Inflation map: il flusso nel traj_package</text>
+   </g>
+   <g id="text_2">
+    <text style="fill:#52657a;font-family:DejaVu Sans;font-size:15px;font-style:normal;font-weight:normal;text-anchor:start;" transform="rotate(-0, 51.84, 79.955063)" x="51.84" y="79.955063">Stessa mappa sorgente; StaticLayer precede BorderFollowLayer</text>
+   </g>
+   <g id="text_3">
+    <text style="fill:#1769aa;font-family:DejaVu Sans;font-size:16px;font-style:normal;font-weight:bold;text-anchor:middle;" transform="rotate(-0, 144, 218.1925)" x="144" y="218.1925">OccupancyGrid</text>
+   </g>
+   <g id="text_4">
+    <text style="fill:#172c43;font-family:DejaVu Sans;font-size:13px;font-style:normal;font-weight:normal;text-anchor:middle;" transform="rotate(-0, 144, 248.350406)" x="144" y="248.350406">map_topic</text>
+   </g>
+   <g id="text_5">
+    <text style="fill:#52657a;font-family:DejaVu Sans;font-size:12px;font-style:normal;font-weight:normal;" transform="translate(102.975 275.160844)">mappa online</text>
+    <text style="fill:#52657a;font-family:DejaVu Sans;font-size:12px;font-style:normal;font-weight:normal;" transform="translate(98.278125 291.333656)">o /map (ideale)</text>
+   </g>
+   <g id="text_6">
+    <text style="fill:#1769aa;font-family:DejaVu Sans;font-size:15px;font-style:normal;font-weight:bold;text-anchor:start;" transform="rotate(-0, 347.904, 123.960469)" x="347.904" y="123.960469">StaticLayer  ·  costo della mappa di base</text>
+   </g>
+   <g id="text_7">
+    <text style="fill:#172c43;font-family:DejaVu Sans;font-size:13.5px;font-style:normal;font-weight:normal;text-anchor:start;" transform="rotate(-0, 347.904, 149.525156)" x="347.904" y="149.525156">Sorgente ≥ 60  →  ostacolo letale (254)</text>
+   </g>
+   <g id="text_8">
+    <text style="fill:#52657a;font-family:DejaVu Sans;font-size:11.5px;font-style:normal;font-weight:normal;text-anchor:start;" transform="rotate(-0, 347.904, 172.301281)" x="347.904" y="172.301281">I valori intermedi mantengono un costo semantico</text>
+   </g>
+   <g id="text_9">
+    <text style="fill:#1769aa;font-family:DejaVu Sans;font-size:15px;font-style:normal;font-weight:bold;text-anchor:start;" transform="rotate(-0, 347.904, 242.544469)" x="347.904" y="242.544469">BorderFollowLayer  ·  costo geometrico</text>
+   </g>
+   <g id="text_10">
+    <text style="fill:#1769aa;font-family:DejaVu Sans;font-size:14px;font-style:normal;font-weight:bold;text-anchor:start;" transform="rotate(-0, 367.488, 274.079125)" x="367.488" y="274.079125">1</text>
+   </g>
+   <g id="text_11">
+    <text style="fill:#172c43;font-family:DejaVu Sans;font-size:12.7px;font-style:normal;font-weight:bold;text-anchor:start;" transform="rotate(-0, 399.744, 271.128406)" x="399.744" y="271.128406">Maschera binaria</text>
+   </g>
+   <g id="text_12">
+    <text style="fill:#52657a;font-family:DejaVu Sans;font-size:10.7px;font-style:normal;font-weight:normal;text-anchor:start;" transform="rotate(-0, 399.744, 291.312531)" x="399.744" y="291.312531">Sorgente ≥ 10 → 0; altre celle → 255</text>
+   </g>
+   <g id="text_13">
+    <text style="fill:#1769aa;font-family:DejaVu Sans;font-size:14px;font-style:normal;font-weight:bold;text-anchor:start;" transform="rotate(-0, 367.488, 346.007125)" x="367.488" y="346.007125">2</text>
+   </g>
+   <g id="text_14">
+    <text style="fill:#172c43;font-family:DejaVu Sans;font-size:12.7px;font-style:normal;font-weight:bold;text-anchor:start;" transform="rotate(-0, 399.744, 343.056406)" x="399.744" y="343.056406">Distanza euclidea esatta</text>
+   </g>
+   <g id="text_15">
+    <text style="fill:#52657a;font-family:DejaVu Sans;font-size:10.7px;font-style:normal;font-weight:normal;text-anchor:start;" transform="rotate(-0, 399.744, 362.997273)" x="399.744" y="362.997273">OpenCV: DIST_L2 + DIST_MASK_PRECISE</text>
+   </g>
+   <g id="text_16">
+    <text style="fill:#1769aa;font-family:DejaVu Sans;font-size:14px;font-style:normal;font-weight:bold;text-anchor:start;" transform="rotate(-0, 367.488, 417.935125)" x="367.488" y="417.935125">3</text>
+   </g>
+   <g id="text_17">
+    <text style="fill:#172c43;font-family:DejaVu Sans;font-size:12.7px;font-style:normal;font-weight:bold;text-anchor:start;" transform="rotate(-0, 399.744, 414.984406)" x="399.744" y="414.984406">Distanza in metri → profilo C(d)</text>
+   </g>
+   <g id="text_18">
+    <text style="fill:#52657a;font-family:DejaVu Sans;font-size:10.7px;font-style:normal;font-weight:normal;text-anchor:start;" transform="rotate(-0, 399.744, 435.168531)" x="399.744" y="435.168531">d = distanza in pixel × risoluzione della mappa</text>
+   </g>
+   <g id="text_19">
+    <text style="fill:#52657a;font-family:DejaVu Sans;font-size:10.8px;font-style:normal;font-weight:normal;text-anchor:start;" transform="rotate(-0, 347.904, 470.836125)" x="347.904" y="470.836125">C(d) solo su celle note con valore sorgente &lt; 10</text>
+   </g>
+   <g id="text_20">
+    <text style="fill:#218a64;font-family:DejaVu Sans;font-size:22px;font-style:normal;font-weight:bold;text-anchor:middle;" transform="rotate(-0, 988.992, 213.430625)" x="988.992" y="213.430625">MAX</text>
+   </g>
+   <g id="text_21">
+    <text style="fill:#172c43;font-family:DejaVu Sans;font-size:12.5px;font-style:normal;font-weight:normal;text-anchor:middle;" transform="rotate(-0, 988.992, 240.617219)" x="988.992" y="240.617219">max(costo base, C(d))</text>
+   </g>
+   <g id="text_22">
+    <text style="fill:#52657a;font-family:DejaVu Sans;font-size:10.8px;font-style:normal;font-weight:normal;text-anchor:middle;" transform="rotate(-0, 988.992, 264.772125)" x="988.992" y="264.772125">Celle unknown conservate</text>
+   </g>
+   <g id="text_23">
+    <text style="fill:#1769aa;font-family:DejaVu Sans;font-size:12px;font-style:normal;font-weight:bold;text-anchor:middle;" transform="rotate(-0, 988.992, 358.248375)" x="988.992" y="358.248375">/global_costmap/costmap</text>
+   </g>
+   <g id="text_24">
+    <text style="fill:#52657a;font-family:DejaVu Sans;font-size:10.5px;font-style:normal;font-weight:normal;text-anchor:middle;" transform="rotate(-0, 988.992, 380.681344)" x="988.992" y="380.681344">costmap globale risultante</text>
+   </g>
+   <g id="text_25">
+    <text style="fill:#1769aa;font-family:DejaVu Sans;font-size:16px;font-style:normal;font-weight:bold;text-anchor:middle;" transform="rotate(-0, 988.992, 461.1925)" x="988.992" y="461.1925">SMAC Hybrid A*</text>
+   </g>
+   <g id="text_26">
+    <text style="fill:#172c43;font-family:DejaVu Sans;font-size:11.8px;font-style:normal;font-weight:normal;" transform="translate(921.432391 484.344738)">Valuta costi e collisioni</text>
+    <text style="fill:#172c43;font-family:DejaVu Sans;font-size:11.8px;font-style:normal;font-weight:normal;" transform="translate(917.868422 499.351387)">per scegliere il percorso</text>
+   </g>
+   <g id="text_27">
+    <text style="fill:#172c43;font-family:DejaVu Sans;font-size:12.5px;font-style:normal;font-weight:bold;text-anchor:start;" transform="rotate(-0, 65.664, 547.072391)" x="65.664" y="547.072391">Le sorgenti ≥ 10 includono anche le linee bianche (30).</text>
+   </g>
+   <g id="text_28">
+    <text style="fill:#52657a;font-family:DejaVu Sans;font-size:11.8px;font-style:normal;font-weight:normal;text-anchor:start;" transform="rotate(-0, 65.664, 572.200063)" x="65.664" y="572.200063">C(d) = 0 non cancella il costo di base; la cresta C(d) = 100 è attraversabile.</text>
+   </g>
+   <g id="text_29">
+    <text style="fill:#52657a;font-family:DejaVu Sans;font-size:10.5px;font-style:normal;font-weight:normal;text-anchor:start;" transform="rotate(-0, 51.84, 628.071328)" x="51.84" y="628.071328">Configurazione: traj_sim.yaml  •  Costi interni Nav2 (0–254), distinti dai valori OccupancyGrid (0–100)</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p0b5b78e360">
+   <rect height="648" width="1152" x="0" y="0"/>
+  </clipPath>
+ </defs>
+</svg>

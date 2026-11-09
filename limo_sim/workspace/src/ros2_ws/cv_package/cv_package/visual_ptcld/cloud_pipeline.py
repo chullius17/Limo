@@ -110,7 +110,8 @@ def build_semantic_cloud(
         point_groups, depth, intrinsics, width, height, input_crop_y_min,
         ray_cache, rotation, translation, cloud_min_depth, cloud_max_depth,
         boardwalk_classifier, blue_radius_min, blue_radius_max,
-        boardwalk_propagation_radius, road_boardwalk_only, voxel_size):
+        boardwalk_propagation_radius, road_boardwalk_only, voxel_size,
+        before_classification=None):
     """Project labeled pixels, classify boardwalk and reduce the outgoing cloud."""
     projection_started_at = time.perf_counter()
     nonempty_groups = [
@@ -152,6 +153,11 @@ def build_semantic_cloud(
     bev_points = transform_xy(x, y, z, rotation, translation)
     transform_ms = (
         time.perf_counter() - transform_started_at) * 1000.0
+
+    # The observer must consume/copy these arrays before classification mutates
+    # the labels and before output filtering or metric voxelization runs.
+    if before_classification is not None:
+        before_classification(bev_points, class_ids)
 
     stats = {}
     if boardwalk_classifier is not None:
@@ -201,3 +207,4 @@ def build_semantic_cloud(
 # | `boardwalk_propagation_radius` | Radius used to propagate the boardwalk classification. |
 # | `road_boardwalk_only` | If `True`, keeps only the blue, interior blue, boardwalk, and interior boardwalk classes. |
 # | `voxel_size` | Cell size used to downsample points in the BEV plane, separately for each class. |
+# | `before_classification` | Optional observer of projected points and original labels, before in-place classification and output reduction. |

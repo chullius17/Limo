@@ -248,6 +248,11 @@ class VisualPtcld(Node):
             self.get_parameter('pointcloud_topic').value,
             cloud_qos,
         )
+        self.before_kdtree_pub = self.create_publisher(
+            PointCloud2,
+            'limo/cv_package/visual_ptcld/points_before_kdtree',
+            cloud_qos,
+        )
 
         self.sensor_lock = threading.Lock()
         self.depth_image = None
@@ -821,6 +826,19 @@ class VisualPtcld(Node):
             point_groups.append(
                 (interior_blue_points, self.LABEL_INTERIOR_ROAD))
 
+        debug_cloud = None
+        debug_serialize_ms = 0.0
+
+        def capture_before_kdtree(points, class_ids):
+            nonlocal debug_cloud, debug_serialize_ms
+            started_at = time.perf_counter()
+            debug_cloud = make_pointcloud2(
+                points, class_ids, header, self.bev_frame, include_rgb=True)
+            debug_serialize_ms = (time.perf_counter() - started_at) * 1000.0
+
+        publish_before_kdtree = (
+            self.enable_debug_publications
+            and self.before_kdtree_pub.get_subscription_count() > 0)
         (
             bev_points, class_ids, point_count_before_voxel,
             boardwalk_stats, projection_ms, transform_ms, voxel_ms,
@@ -846,6 +864,8 @@ class VisualPtcld(Node):
             boardwalk_propagation_radius=self.boardwalk_propagation_radius,
             road_boardwalk_only=self.road_boardwalk_only,
             voxel_size=self.pointcloud_voxel_size,
+            before_classification=(
+                capture_before_kdtree if publish_before_kdtree else None),
         )
         math_ms = projection_ms + transform_ms
 
@@ -853,7 +873,7 @@ class VisualPtcld(Node):
         cloud = make_pointcloud2(
             bev_points, class_ids, header, self.bev_frame)
         serialize_ms = (
-            time.perf_counter() - serialize_started_at) * 1000.0
+            time.perf_counter() - serialize_started_at) * 1000.0 + debug_serialize_ms
         math_ms += serialize_ms
         boardwalk_stats.update({
             'step8_projection': projection_ms,
@@ -865,6 +885,8 @@ class VisualPtcld(Node):
             time.perf_counter() - prepare_started_at) * 1000.0
         publish_started_at = time.perf_counter()
         self.pointcloud_pub.publish(cloud)
+        if debug_cloud is not None:
+            self.before_kdtree_pub.publish(debug_cloud)
         publish_ms = (
             time.perf_counter() - publish_started_at) * 1000.0
         return (

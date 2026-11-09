@@ -48,6 +48,17 @@ under `/limo/cv_package/detection/` already publish on subscription. Depth debug
 images are also available without an additional enable flag. Use `rqt_image_view`
 to inspect them and restart CV after changing its profile.
 
+The same debug flag exposes the `PointCloud2` topic
+`/limo/cv_package/visual_ptcld/points_before_kdtree` only while it has subscribers.
+It projects the sampled image points into the same metric BEV frame as the final
+cloud, before KD-tree classification, semantic filtering and metric voxelization.
+The debug cloud has `x`, `y`, `z`, `class_id` and `rgb` fields: border road (1) is
+blue, yellow lines (2) are cyan, background (3) is white, and interior road (5) is
+dark blue, matching the debug image. In the simulation CV, offline-map and
+online-map RViz profiles, check **CV Points Before KD-tree** to view it; the
+display starts disabled. Its color transformer is **RGB8**. The final cloud keeps
+its existing field layout and remains the topic used by mapping.
+
 `cv_real.yaml` enables `visual_ptcld.road_boardwalk_only`. The outgoing cloud
 `/limo/cv_package/visual_ptcld/points` contains only these semantic classes:
 
