@@ -10,7 +10,6 @@
 #include "limo_dwb_critics/sampling_mpc.hpp"
 #include "limo_dwb_critics/mpc_debug.hpp"
 #include "limo_dwb_critics/mpc_timing.hpp"
-#include "limo_dwb_critics/start_connector.hpp"
 #include "limo_inflation/path_distance_layer.hpp"
 
 namespace limo_dwb_critics
@@ -55,14 +54,8 @@ private:
   nav_2d_msgs::msg::Path2D tracking_plan_;
   std::vector<limo_inflation::PathPosePoint> tracking_points_;
   limo_inflation::PathProgressTracker progress_tracker_;
-  std::mutex connector_mutex_;
-  StartConnectorGate connector_gate_;
+  std::mutex plan_mutex_;
   nav_msgs::msg::Path complete_plan_;
-  bool connector_enabled_{false};
-  bool connector_active_{false};
-  double connector_position_tolerance_{0.05};
-  double connector_yaw_tolerance_{0.10};
-  rclcpp::Subscription<limo_interfaces::msg::StartConnector>::SharedPtr connector_subscription_;
   void resetPrediction();
   dwb_msgs::msg::Trajectory2D toTrajectory(const MpcRollout & rollout) const;
   std::int64_t last_time_ns_{0};

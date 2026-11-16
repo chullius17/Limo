@@ -13,7 +13,6 @@ from ...include.python_ver.ackermann_mpc_controller import AckermannMPCParameter
 from ...include.python_ver.sampling_mpc import MpcConfig, MpcControl, MpcState
 from ...include.python_ver.mpc_timing import MpcTimingSample, CriticPrepareTiming
 from ...include.python_ver.mpc_timing_scope import MpcTimingScope
-from ...include.python_ver.start_connector import StartConnectorGate
 from ...include.python_ver.nav2_compat import PathProgressTracker, pathPosePoints
 from ...include.python_ver.ros_compat import (
     Path, Path2D, Pose2D, Pose2DStamped, Header, Twist, Twist2D, TwistStamped,
@@ -38,11 +37,10 @@ class AckermannMPCController:
             AckermannKinematicsCritic(name='AckermannKinematics'),
             MppiObstacleCritic(name='MppiObstacle'), MppiPathCritic(name='MppiPath')]
         self.mpc_ = self.debug_publisher_ = self.timing_publisher_ = self.tube_layer_ = None
-        self.connector_subscription_ = None
         self.previous_command_ = MpcControl()
         self.tracking_plan_, self.global_plan_, self.complete_plan_ = Path2D(), Path2D(), Path()
         self.tracking_points_, self.progress_tracker_ = [], PathProgressTracker()
-        self.connector_mutex_, self.connector_gate_ = threading.RLock(), StartConnectorGate()
+        self.plan_mutex_ = threading.RLock()
         self.timing_sample_, self.timing_cycle_start_ = MpcTimingSample(), 0.0
 
     def configure(self, node, name, tf, costmap_ros):
@@ -131,23 +129,9 @@ class AckermannMPCController:
         for critic in self.critics_:
             if isinstance(critic, MppiPathCritic):
                 critic.setTimingEnabled(self.timing_publisher_.enabled())
-        prefix = name + '.MPC.StartConnector.'
-        self.connector_enabled_ = read_parameter(node, prefix + 'ignore_obstacles', False)
-        topic = read_parameter(node, prefix + 'topic', '/limo/planning/start_connector')
-        if self.tube_required_ and self.connector_enabled_:
-            raise ValueError('Tube MPC requires StartConnector.ignore_obstacles=false')
-        self.connector_position_tolerance_ = read_double('MPC.StartConnector.position_tolerance', 0.05)
-        self.connector_yaw_tolerance_ = read_double('MPC.StartConnector.yaw_tolerance', 0.10)
-        if (not math.isfinite(self.connector_position_tolerance_) or self.connector_position_tolerance_ <= 0 or
-                not math.isfinite(self.connector_yaw_tolerance_) or self.connector_yaw_tolerance_ <= 0):
-            raise ValueError('StartConnector tolerances must be positive and finite')
-
-        def receive_metadata(metadata):
-            with self.connector_mutex_:
-                self.connector_gate_.setMetadata(metadata)
-        self.connector_subscription_ = node.create_subscription(topic, receive_metadata, qos=1)
         self.resetPrediction()
 
+    # To reset the MPC memory in case of reference path change
     def resetPrediction(self):
         if self.mpc_ is not None:
             self.mpc_.reset()
@@ -158,13 +142,11 @@ class AckermannMPCController:
         return time.monotonic_ns()
 
     def setPlan(self, path):
-        with self.connector_mutex_:
-            self.complete_plan_ = deepcopy(path)
-            self.connector_gate_.setPlan(path)
-            self.connector_active_ = False
+        with self.plan_mutex_:
+            self.complete_plan_ = deepcopy(path)    # Copy of the complete path
             self.resetPrediction()
-            self.tube_start_pending_ = True
-            self.setTrackingPlan(path if self.tube_required_ else self.connector_gate_.normalPlan())
+            self.tube_start_pending_ = True         # To verify if the robot is in the tube
+            self.setTrackingPlan(path)
 
     def setTrackingPlan(self, path):
         plan = pathToPath2D(path)
@@ -196,7 +178,7 @@ class AckermannMPCController:
         # Python dispatch replaces C++'s geometry-msg and nav-2d overloads.
         if isinstance(pose.pose, Pose2D):
             return compute_velocity_commands_2d(self, pose, velocity, results)
-        with self.connector_mutex_:
+        with self.plan_mutex_:
             enabled = self.timing_publisher_ is not None and self.timing_publisher_.enabled()
             cpu_start = MpcTimingScope.threadCpuMilliseconds() if enabled else 0.0
             if enabled:
@@ -224,22 +206,7 @@ class AckermannMPCController:
                         s.detouring = s.detouring or (critic.gridUpdated() and critic.detouring())
                 self.timing_publisher_.finish(s)
             try:
-                active = False
                 planar_pose = Pose2DStamped(deepcopy(pose.header), poseToPose2D(pose.pose))
-                if self.connector_enabled_ and self.complete_plan_.poses:
-                    global_pose = deepcopy(pose)
-                    if pose.header.frame_id != self.complete_plan_.header.frame_id:
-                        # The TF adapter must support both PoseStamped and Pose2DStamped.
-                        global_pose = self.dwb_.transformPose(self, pose, self.complete_plan_.header.frame_id)
-                    active = self.connector_gate_.update(global_pose.pose, self.connector_position_tolerance_, self.connector_yaw_tolerance_)
-                if active != self.connector_active_:
-                    self.setTrackingPlan(self.connector_gate_.prefix() if active else self.connector_gate_.normalPlan())
-                    self.connector_active_ = active
-                    self.node_.get_logger().info('Initial Dubins connector: obstacle collision checks DISABLED' if active else
-                        'Initial connector finished: normal obstacle collision checks restored')
-                for critic in self.critics_:
-                    if isinstance(critic, (MppiObstacleCritic, MppiPathCritic)):
-                        critic.setStartConnector(active)
                 # External DWB's 3D wrapper normally converts these messages.
                 command = compute_velocity_commands_2d(self, planar_pose,
                     Twist2D(velocity.linear.x, velocity.linear.y, velocity.angular.z), results)
@@ -259,12 +226,8 @@ class AckermannMPCController:
         self.dwb_.deactivate(self)
 
     def cleanup(self):
-        if self.connector_subscription_ is not None and hasattr(self.node_, 'subscriptions'):
-            self.node_.subscriptions = {k: v for k, v in self.node_.subscriptions.items() if v is not self.connector_subscription_}
-        self.connector_subscription_ = None
         self.complete_plan_, self.tracking_plan_, self.tracking_points_ = Path(), Path2D(), []
         self.progress_tracker_.reset()
-        self.connector_gate_, self.connector_active_ = StartConnectorGate(), False
         self.debug_publisher_ = self.timing_publisher_ = self.tube_layer_ = None
         self.timing_sample_active_ = False
         self.resetPrediction()

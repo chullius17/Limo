@@ -72,12 +72,6 @@ controller_server:
       # 40 * 0.10 = 4.0 s horizon. Only the first reachable command is sent;
       # the remaining sequence is shifted and reoptimized at the next cycle.
       MPC:
-        StartConnector:
-          # Keep physical obstacle collision checks on the initial prefix too.
-          ignore_obstacles: false
-          topic: /limo/planning/start_connector
-          position_tolerance: 0.05
-          yaw_tolerance: 0.10
         # Like the Humble smoother: continue the command ramp across cycles
         # even when noisy/lagging odometry still reports near-zero motion.
         feedback: "OPEN_LOOP"

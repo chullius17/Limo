@@ -12,10 +12,6 @@ from .ros_compat import Path, Pose2D
 class AckermannMPCParameters:
     open_loop_: bool = True
     steering_feedback_min_velocity_: float = 0.05
-    connector_enabled_: bool = False
-    connector_active_: bool = False
-    connector_position_tolerance_: float = 0.05
-    connector_yaw_tolerance_: float = 0.10
     last_time_ns_: int = 0
     last_ros_time_ns_: int = 0
     have_time_: bool = False

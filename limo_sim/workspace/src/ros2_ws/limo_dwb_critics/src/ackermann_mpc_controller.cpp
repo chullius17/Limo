@@ -166,31 +166,6 @@ void AckermannMPCController::configure(
       path->setTimingEnabled(timing_publisher_->enabled());
     }
   }
-  const auto connector_parameter = name + ".MPC.StartConnector.";
-  if (!node->has_parameter(connector_parameter + "ignore_obstacles")) {
-    node->declare_parameter(connector_parameter + "ignore_obstacles", false);
-  }
-  if (!node->has_parameter(connector_parameter + "topic")) {
-    node->declare_parameter(connector_parameter + "topic", "/limo/planning/start_connector");
-  }
-  connector_enabled_ = node->get_parameter(connector_parameter + "ignore_obstacles").as_bool();
-  if (tube_required_ && connector_enabled_) {
-    throw std::invalid_argument("Tube MPC requires StartConnector.ignore_obstacles=false");
-  }
-  connector_position_tolerance_ = read_double("MPC.StartConnector.position_tolerance", 0.05);
-  connector_yaw_tolerance_ = read_double("MPC.StartConnector.yaw_tolerance", 0.10);
-  if (!std::isfinite(connector_position_tolerance_) || connector_position_tolerance_ <= 0.0 ||
-    !std::isfinite(connector_yaw_tolerance_) || connector_yaw_tolerance_ <= 0.0)
-  {
-    throw std::invalid_argument("StartConnector tolerances must be positive and finite");
-  }
-  connector_subscription_ = node->create_subscription<limo_interfaces::msg::StartConnector>(
-    node->get_parameter(connector_parameter + "topic").as_string(),
-    rclcpp::QoS(1).reliable().transient_local(),
-    [this](const limo_interfaces::msg::StartConnector::SharedPtr metadata) {
-      std::lock_guard<std::mutex> lock(connector_mutex_);
-      connector_gate_.setMetadata(*metadata);
-    });
   resetPrediction();
 }
 
@@ -212,13 +187,11 @@ std::int64_t AckermannMPCController::controlTimeNs() const
 
 void AckermannMPCController::setPlan(const nav_msgs::msg::Path & path)
 {
-  std::lock_guard<std::mutex> lock(connector_mutex_);
+  std::lock_guard<std::mutex> lock(plan_mutex_);
   complete_plan_ = path;
-  connector_gate_.setPlan(path);
-  connector_active_ = false;
   resetPrediction();
   tube_start_pending_ = true;
-  setTrackingPlan(tube_required_ ? path : connector_gate_.normalPlan());
+  setTrackingPlan(path);
 }
 
 void AckermannMPCController::setTrackingPlan(const nav_msgs::msg::Path & path)
@@ -258,7 +231,7 @@ nav_2d_msgs::msg::Path2D AckermannMPCController::transformGlobalPlan(
 geometry_msgs::msg::TwistStamped AckermannMPCController::computeVelocityCommands(
   const geometry_msgs::msg::PoseStamped & pose, const geometry_msgs::msg::Twist & velocity)
 {
-  std::lock_guard<std::mutex> lock(connector_mutex_);
+  std::lock_guard<std::mutex> lock(plan_mutex_);
   const bool timing_enabled = timing_publisher_ && timing_publisher_->enabled();
   const double cpu_start = timing_enabled ? MpcTimingScope::threadCpuMilliseconds() : 0.0;
   if (timing_enabled) {
@@ -289,33 +262,6 @@ geometry_msgs::msg::TwistStamped AckermannMPCController::computeVelocityCommands
       timing_publisher_->finish(timing_sample_);
     };
   try {
-    bool active = false;
-    if (connector_enabled_ && !complete_plan_.poses.empty()) {
-      auto global_pose = pose;
-      if (pose.header.frame_id != complete_plan_.header.frame_id) {
-        const auto transform = tf_->lookupTransform(
-          complete_plan_.header.frame_id, pose.header.frame_id, tf2::TimePointZero);
-        tf2::doTransform(pose, global_pose, transform);
-      }
-      active = connector_gate_.update(
-        global_pose.pose, connector_position_tolerance_, connector_yaw_tolerance_);
-    }
-    if (active != connector_active_) {
-      setTrackingPlan(active ? connector_gate_.prefix() : connector_gate_.normalPlan());
-      connector_active_ = active;
-      RCLCPP_INFO(
-        node_->get_logger(), "%s", active ?
-        "Initial Dubins connector: obstacle collision checks DISABLED" :
-        "Initial connector finished: normal obstacle collision checks restored");
-    }
-    for (const auto & critic : critics_) {
-      if (auto obstacle = std::dynamic_pointer_cast<MppiObstacleCritic>(critic)) {
-        obstacle->setStartConnector(active);
-      }
-      if (auto path = std::dynamic_pointer_cast<MppiPathCritic>(critic)) {
-        path->setStartConnector(active);
-      }
-    }
     auto command = DWBLocalPlanner::computeVelocityCommands(pose, velocity);
     record_timing(true);
     return command;
@@ -335,13 +281,10 @@ void AckermannMPCController::deactivate()
 
 void AckermannMPCController::cleanup()
 {
-  connector_subscription_.reset();
   complete_plan_ = nav_msgs::msg::Path();
   tracking_plan_ = nav_2d_msgs::msg::Path2D();
   tracking_points_.clear();
   progress_tracker_.reset();
-  connector_gate_ = StartConnectorGate();
-  connector_active_ = false;
   debug_publisher_.reset();
   timing_publisher_.reset();
   timing_sample_active_ = false;

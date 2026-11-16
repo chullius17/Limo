@@ -1,6 +1,6 @@
 <library path="limo_smac_planner">
   <class name="limo_smac_planner/ExplicitStartPlanner"
          type="limo_smac_planner::ExplicitStartPlanner" base_class_type="nav2_core::GlobalPlanner">
-    <description>SMAC with explicit-start service and a forward Dubins recovery connector.</description>
+    <description>SMAC with an explicit-start planning service.</description>
   </class>
 </library>

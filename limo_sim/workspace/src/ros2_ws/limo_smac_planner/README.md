@@ -14,7 +14,7 @@ deactivation.
 It exposes `/compute_path_with_start`, whose
 [request](../limo_interfaces/srv/ComputePathWithStart.srv) contains:
 
-- `real_start`: the actual robot pose, used for the optional connector;
+- `real_start`: the measured robot pose, used to identify an adjusted start;
 - `start`: the selected planning start;
 - `goal`: the selected target pose.
 
@@ -25,33 +25,12 @@ its footprint when the start has been adjusted. It then calls
 
 For an adjusted start, it restores the quantized start as the first path pose,
 since Foxy's SMAC backtrace omits the initial node. It returns the path,
-quantized planning start and diagnostics, or a failure reason. When requested,
-it also prepends the connector described below.
+quantized planning start, or a failure reason. The path begins at the selected
+planning start and all planning uses the normal obstacle checks.
 
 Candidate generation and result publication belong to `rviz_goal_bridge` in
 [traj_package](../traj_package/README.md).
 
-## `dubins_connector.cpp`
-
-[This file](src/dubins_connector.cpp) implements `dubinsConnector()`, the
-optional **actual robot pose → virtual start** prefix for the SMAC path.
-It is called when the selected start differs from the actual pose and
-`connect_adjusted_start: true`.
-
-It uses OMPL to construct a Dubins curve from circular arcs and straight
-segments, with forward motion only and the configured `minimum_turning_radius`.
-It rejects non-finite or excessive lengths, samples the curve and returns a
-`nav_msgs/Path` with exact endpoints.
-
-Defaults, also used by the real and simulation profiles:
-
-| Parameter under `GridBased` | Value |
-| --- | --- |
-| `connect_adjusted_start` | `false` |
-| `start_connector_sample_step` | `0.02` m |
-| `start_connector_max_length` | `2.0` m |
-
-The connector performs no costmap or collision checks. The wrapper validates
-the virtual endpoint, and SMAC retains its collision checks for the suffix.
-The connector is currently disabled: paths start at the selected planning pose,
-without a prefix from the actual robot pose.
+The initial connector has been removed. The legacy connector fields in the
+service response remain zero/false for interface compatibility. Controller
+START validation still applies when the selected pose differs from the robot.

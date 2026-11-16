@@ -19,7 +19,6 @@ namespace limo_dwb_critics
 class MppiObstacleCritic : public dwb_critics::ObstacleFootprintCritic
 {
 public:
-  void setStartConnector(bool enabled) {ignore_obstacles_ = enabled;}
   void onInit() override;
   bool prepare(
     const geometry_msgs::msg::Pose2D & pose, const nav_2d_msgs::msg::Twist2D & velocity,
@@ -29,7 +28,6 @@ public:
   bool enforcesFullFootprint() const {return full_footprint_check_;}
 
 protected:
-  bool ignore_obstacles_{false};
   double critical_cost_{300.0};
   double near_goal_distance_{0.5};
   bool near_goal_{false};
@@ -55,7 +53,6 @@ public:
   bool gridUpdated() const {return grid_updated_;}
   bool detouring() const {return guidance_active_;}
   void setTrackedReference(bool enabled) {tracked_reference_ = enabled;}
-  void setStartConnector(bool enabled) {ignore_obstacles_ = enabled;}
   void onInit() override;
   void reset() override {guidance_active_ = false;}
   bool prepare(
@@ -68,7 +65,6 @@ protected:
   bool grid_updated_{false};
   double guidance_grid_ms_{0.0};
   bool tracked_reference_{false};
-  bool ignore_obstacles_{false};
   double goal_weight_{5.0};
   double goal_angle_weight_{3.0};
   double align_weight_{10.0};

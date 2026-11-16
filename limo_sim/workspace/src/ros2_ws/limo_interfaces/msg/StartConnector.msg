@@ -1,4 +1,4 @@
-# The complete path binds this exception to one plan, including its SMAC suffix.
-# An empty path or end_index == 0 disables the exception.
+# Deprecated compatibility message. The initial connector is no longer generated
+# or consumed by the planner and controller.
 nav_msgs/Path path
 uint32 end_index

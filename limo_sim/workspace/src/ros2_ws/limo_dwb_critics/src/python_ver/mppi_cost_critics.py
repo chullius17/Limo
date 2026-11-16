@@ -66,7 +66,6 @@ class MppiObstacleCritic(TrajectoryCritic):
         super().__init__(*args, **kwargs)
         self.__dict__.update(vars(MppiObstacleParameters()))
 
-    def setStartConnector(self, enabled): self.ignore_obstacles_ = enabled
     def getScale(self): return self.scale_
     def enforcesFullFootprint(self): return self.full_footprint_check_
 
@@ -102,8 +101,6 @@ class MppiObstacleCritic(TrajectoryCritic):
         poses, grid = trajectory.poses, self.costmap_
         if len(poses) < 2:
             raise IllegalTrajectoryException(self.name_, 'Empty prediction')
-        if self.ignore_obstacles_:
-            return 0.0  # Only the plan-bound initial Dubins prefix enables this.
         if self.full_footprint_check_ and len(self.blocked_prefix_) != (grid.getSizeInCellsX() + 1) * (grid.getSizeInCellsY() + 1):
             raise IllegalTrajectoryException(self.name_, 'Footprint collision data not prepared')
 
@@ -158,7 +155,6 @@ class MppiPathCritic(TrajectoryCritic):
     def gridUpdated(self): return self.grid_updated_
     def detouring(self): return self.guidance_active_
     def setTrackedReference(self, enabled): self.tracked_reference_ = enabled
-    def setStartConnector(self, enabled): self.ignore_obstacles_ = enabled
     def reset(self): self.guidance_active_ = False
 
     def onInit(self):
@@ -202,9 +198,6 @@ class MppiPathCritic(TrajectoryCritic):
         while (self.target_index_ + 1 < len(self.path_) and
                 self.path_lengths_[self.target_index_] - self.path_lengths_[self.start_index_] < self.lookahead_distance_):
             self.target_index_ += 1
-        if self.ignore_obstacles_:
-            self.path_blocked_ = self.apply_path_angle_ = False
-            return True
         grid = self.costmap_ros_.getCostmap()
         occupied = 0
         for point in self.path_[self.start_index_:self.target_index_ + 1]:
@@ -272,8 +265,6 @@ class MppiPathCritic(TrajectoryCritic):
     def scoreTrajectory(self, trajectory):
         if not self.path_ or len(trajectory.poses) < 2:
             raise IllegalTrajectoryException(self.name_, 'Missing path or prediction')
-        if self.ignore_obstacles_ and trajectory.velocity.x < -1e-6:
-            raise IllegalTrajectoryException(self.name_, 'Initial Dubins connector is forward only')
         goal_cost = goal_angle_cost = align_cost = traveled = 0.0
         index = self.start_index_
         for t in range(1, len(trajectory.poses)):
@@ -287,7 +278,7 @@ class MppiPathCritic(TrajectoryCritic):
                 goal_cost += distance(pose, self.goal_)
             if not self.guidance_active_ and self.distance_to_goal_ < self.goal_angle_distance_:
                 goal_angle_cost += angleError(pose.theta, self.goal_.theta)
-            if not self.path_blocked_ and (self.distance_to_goal_ > self.align_distance_ or self.ignore_obstacles_):
+            if not self.path_blocked_ and self.distance_to_goal_ > self.align_distance_:
                 traveled += distance(pose, trajectory.poses[t - 1])
                 end = index + 1
                 while (end < len(self.path_) and

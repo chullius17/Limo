@@ -1,11 +1,11 @@
 # Python translations of limo_dwb_critics
 
-These files translate all nine C++ sources in `src/` and all nine headers in
+These files translate all nine C++ sources in `src/` and all eight headers in
 `include/limo_dwb_critics/` into Python for reading and standalone experiments.
 Comments and docstrings are in English. The existing C++ sources and build
 configuration remain the implementation used by ROS.
 
-The model, candidate generation, costs, grid guidance, connector gate, telemetry
+The model, candidate generation, costs, grid guidance, telemetry
 and controller state transitions are implemented. External ROS/Nav2 services
 use explicit adapters: these Python classes are not loadable C++ plugins.
 
@@ -36,7 +36,6 @@ original file stems and public method names, including camelCase.
 | `mpc_debug.hpp` and `.cpp` | `include/python_ver/mpc_debug.py` | `src/python_ver/mpc_debug.py` |
 | `mpc_timing.hpp` and `.cpp` | `include/python_ver/mpc_timing.py` | `src/python_ver/mpc_timing.py` |
 | `mpc_timing_scope.hpp` | `include/python_ver/mpc_timing_scope.py`, including its inline implementation | Header-only in C++ |
-| `start_connector.hpp` | `include/python_ver/start_connector.py`, including its inline implementation | Header-only in C++ |
 | `mpc_prepare_timing.cpp` | Uses the controller and timing declarations | `src/python_ver/mpc_prepare_timing.py` |
 | `controller_server_main.cpp` | Backend protocol is in the implementation module | `src/python_ver/controller_server_main.py` |
 
@@ -121,9 +120,9 @@ registered in the existing plugin XML files or build configuration.
 
 ## Verification
 
-The local suite checks all 18 translated modules can be imported, model limits,
+The local suite checks all 17 translated modules can be imported, model limits,
 value-copy behavior, reversal, failure resets, structured and startup families,
-deduplication, grid routing, collision rejection, path detours, connector handoff,
+deduplication, grid routing, collision rejection, path detours,
 debug snapshots, timing and controller lifecycle behavior.
 
 A separate direct comparison compiled the original `sampling_mpc.cpp` and

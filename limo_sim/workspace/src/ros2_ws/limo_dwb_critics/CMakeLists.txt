@@ -29,6 +29,7 @@ find_package(rclcpp_action REQUIRED)
 find_package(nav2_util REQUIRED)
 find_package(limo_interfaces REQUIRED)
 find_package(nav2_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(limo_inflation REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 
@@ -58,6 +59,7 @@ ament_target_dependencies(${PROJECT_NAME}
   rclcpp
   limo_interfaces
   nav2_msgs
+  nav_msgs
   limo_inflation
   diagnostic_msgs
 )
@@ -110,9 +112,6 @@ if(BUILD_TESTING)
     LIMO_MPC_SIM_PARAMS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../limo_controller/config/control_sim.yaml"
     LIMO_MPC_SNAPSHOT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/online_obstacle_costmap.txt")
 
-  ament_add_gtest(test_start_connector test/test_start_connector.cpp)
-  target_link_libraries(test_start_connector ${PROJECT_NAME})
-
   ament_add_gtest(test_obstacle_guidance test/test_obstacle_guidance.cpp)
   target_link_libraries(test_obstacle_guidance ${PROJECT_NAME})
 
@@ -127,5 +126,5 @@ endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
-ament_export_dependencies(dwb_core dwb_critics dwb_msgs nav2_core nav_2d_utils nav2_costmap_2d pluginlib rclcpp limo_interfaces nav2_msgs limo_inflation diagnostic_msgs)
+ament_export_dependencies(dwb_core dwb_critics dwb_msgs nav2_core nav_2d_utils nav2_costmap_2d pluginlib rclcpp limo_interfaces nav2_msgs nav_msgs limo_inflation diagnostic_msgs)
 ament_package()

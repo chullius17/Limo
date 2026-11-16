@@ -69,7 +69,6 @@ protected:
       override("FollowPath.MPC.batch_size", rclcpp::ParameterValue(simulation ? 768 : 128));
       override("FollowPath.MPC.control_segments", rclcpp::ParameterValue(5));
       override("FollowPath.MPC.Debug.samples_per_family", rclcpp::ParameterValue(6));
-      override("FollowPath.MPC.StartConnector.ignore_obstacles", rclcpp::ParameterValue(simulation));
       override("FollowPath.MppiObstacle.full_footprint_check", rclcpp::ParameterValue(false));
       override("FollowPath.min_vel_x", rclcpp::ParameterValue(simulation ? -0.1 : 0.0));
     }
@@ -178,11 +177,6 @@ TEST_F(MppiCostsTest, GuidanceGridTracksOffPathChangesEvenWhileReferenceIsFree)
   clearMap();
   prepare();
   EXPECT_TRUE(critic.guidanceTraversable(x, y));
-  critic.setStartConnector(true);
-  ASSERT_TRUE(critic.prepare(
-      pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2, 0), path));
-  EXPECT_FALSE(critic.gridUpdated());
-  EXPECT_DOUBLE_EQ(critic.guidanceGridMs(), 0.0);
 }
 
 TEST_F(MppiCostsTest, PathCriticDisambiguatesNearbyPosesUsingChassisHeading)
@@ -270,37 +264,27 @@ TEST_F(MppiCostsTest, DwbLocalReferenceKeepsTheCompletedLapEvenAfterRepublishing
   controller.cleanup();
 }
 
-TEST_F(MppiOnlineCostsTest, InitialConnectorBypassesCollisionsAndDetoursOnlyUntilDisabled)
+TEST_F(MppiOnlineCostsTest, ObstaclesRejectCollidingPredictionsWhileDetourGuidanceRemainsEnabled)
 {
   addCube();
   limo_dwb_critics::MppiObstacleCritic obstacle;
   InspectableMppiPathCritic path;
   initialize(obstacle, "MppiObstacle");
   initialize(path, "MppiPath");
-  obstacle.setStartConnector(true);
-  path.setStartConnector(true);
   const auto reference = pathBehindCube();
   ASSERT_TRUE(obstacle.prepare(pose(0.0, 0.0), nav_2d_msgs::msg::Twist2D(),
     reference.poses.back(), reference));
   ASSERT_TRUE(path.prepare(pose(0.0, 0.0), nav_2d_msgs::msg::Twist2D(),
     reference.poses.back(), reference));
-  EXPECT_FALSE(path.detouring());
+  EXPECT_TRUE(path.detouring());
   dwb_msgs::msg::Trajectory2D trajectory;
   trajectory.velocity.x = 0.1;
   trajectory.poses = {pose(1.0, 0.0), pose(1.1, 0.0)};
-  EXPECT_DOUBLE_EQ(obstacle.scoreTrajectory(trajectory), 0.0);
-  EXPECT_TRUE(std::isfinite(path.scoreTrajectory(trajectory)));
-  trajectory.velocity.x = -0.1;
-  EXPECT_THROW(path.scoreTrajectory(trajectory), dwb_core::IllegalTrajectoryException);
-  obstacle.setStartConnector(false);
-  path.setStartConnector(false);
   EXPECT_THROW(obstacle.scoreTrajectory(trajectory), dwb_core::IllegalTrajectoryException);
-  ASSERT_TRUE(path.prepare(pose(0.0, 0.0), nav_2d_msgs::msg::Twist2D(),
-    reference.poses.back(), reference));
-  EXPECT_TRUE(path.detouring());
+  EXPECT_THROW(path.scoreTrajectory(trajectory), dwb_core::IllegalTrajectoryException);
 }
 
-TEST_F(MppiOnlineCostsTest, ControllerRestoresFootprintChecksAtTheVirtualStart)
+TEST_F(MppiOnlineCostsTest, ControllerKeepsCollisionChecksThroughoutThePlan)
 {
   limo_dwb_critics::AckermannMPCController controller;
   auto tf = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
@@ -315,24 +299,11 @@ TEST_F(MppiOnlineCostsTest, ControllerRestoresFootprintChecksAtTheVirtualStart)
     point.pose.orientation.w = 1.0;
     plan.poses.push_back(point);
   }
-  limo_interfaces::msg::StartConnector metadata;
-  metadata.path = plan;
-  metadata.end_index = 20;
-  auto sender = std::make_shared<rclcpp::Node>("start_connector_test_sender");
-  auto publisher = sender->create_publisher<limo_interfaces::msg::StartConnector>(
-    "/limo/planning/start_connector", rclcpp::QoS(1).reliable().transient_local());
-  publisher->publish(metadata);
-  for (int i = 0; i < 30; ++i) {
-    rclcpp::spin_some(node_->get_node_base_interface());
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  // Executor changes pose timestamps for TF, preserving the plan identity.
-  for (auto & point : plan.poses) {point.header.stamp.sec = 0;}
   controller.setPlan(plan);
   controller.activate();
   setCost(0.0, 0.0, nav2_costmap_2d::LETHAL_OBSTACLE);
-  EXPECT_GT(controller.computeVelocityCommands(
-    plan.poses.front(), geometry_msgs::msg::Twist()).twist.linear.x, 0.0);
+  EXPECT_THROW(controller.computeVelocityCommands(
+    plan.poses.front(), geometry_msgs::msg::Twist()), dwb_core::NoLegalTrajectoriesException);
   clearMap();
   for (std::size_t i = 1; i < 20; ++i) {
     EXPECT_NO_THROW(controller.computeVelocityCommands(plan.poses[i], geometry_msgs::msg::Twist()));

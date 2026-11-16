@@ -132,12 +132,6 @@ class LocalPlanEvaluation:
 
 
 @dataclass
-class StartConnector:
-    path: Path = field(default_factory=Path)
-    end_index: int = 0
-
-
-@dataclass
 class KeyValue:
     key: str = ""
     value: str = ""

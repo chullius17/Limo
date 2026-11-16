@@ -57,7 +57,6 @@ telemetry, or a publisher without subscribers, constructs no snapshot. See the
 
 When obstacle guidance is enabled, every ordinary critic preparation refreshes
 its full clearance/cost grid from the current costmap, including free paths.
-The existing initial-connector obstacle bypass, when enabled, still skips it.
 Footprint rasterization and proximity checks reuse per-critic scratch buffers
 across poses and candidates. These are allocation/work reductions; sampling,
 scores, collision thresholds and control frequencies are unchanged. Rebuild

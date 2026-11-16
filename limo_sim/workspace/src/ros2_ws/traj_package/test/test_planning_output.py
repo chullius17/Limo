@@ -35,6 +35,7 @@ def bridge():
     rclpy.init()
     node = RvizGoalBridge()
     node.path_publisher = Mock()
+    node.visualization_path_publisher = Mock()
     node.planning_status_publisher = Mock()
     yield node
     node.destroy_node()
@@ -58,7 +59,6 @@ def test_success_publishes_path_without_controller(bridge):
 
 def test_new_goal_invalidates_path_even_when_planner_is_unavailable(bridge):
     bridge.planning_log = 'Previous search log\n'
-    bridge.rejected_starts.add(123)
     bridge.compute_path_client.wait_for_server = Mock(return_value=False)
     bridge.tf_buffer.can_transform = Mock(return_value=True)
     old_goal = Mock()
@@ -67,6 +67,8 @@ def test_new_goal_invalidates_path_even_when_planner_is_unavailable(bridge):
     pose.header.frame_id = 'map'
     bridge._goal_callback(pose)
     assert bridge.path_publisher.publish.call_args[0][0].poses == []
+    assert bridge.visualization_path_publisher.publish.call_args[0][0].poses == []
+    assert bridge.visualization_path_publisher.publish.call_args[0][0].header.frame_id == 'map'
     old_goal.cancel_goal_async.assert_called_once()
     assert bridge.search_generation == 1
     assert bridge.planning_status_publisher.publish.call_args[0][0].data == (
@@ -74,7 +76,6 @@ def test_new_goal_invalidates_path_even_when_planner_is_unavailable(bridge):
     assert 'Previous search log' not in bridge.planning_log
     assert 'NEW SEARCH #1' in bridge.planning_log
     assert 'planner server unavailable' in bridge.planning_log
-    assert not bridge.rejected_starts
 
 
 def test_missing_localization_explains_how_to_activate_planning(bridge):
@@ -113,33 +114,46 @@ def test_foxy_service_sends_real_and_virtual_starts(bridge):
     assert request.start.pose.position.x == 0.5
 
 
-def test_service_success_publishes_bound_metadata_and_ignores_stale_results(bridge):
-    bridge.connector_publisher = Mock()
+def test_service_success_publishes_bound_endpoints_and_ignores_stale_results(bridge):
     bridge.adjusted_goal_publisher = Mock()
     bridge.adjusted_start_publisher = Mock()
     path = Path()
     path.header.stamp.sec = 42
     path.header.stamp.nanosec = 7
-    path.poses = [PoseStamped(), PoseStamped()]
-    path.poses[1].pose.position.x = 2.0
-    candidate = GoalCandidate(PoseStamped(), 0.0, 0.0, 0.0)
+    path.poses = [PoseStamped(), PoseStamped(), PoseStamped()]
+    start = PoseStamped()
+    start.pose.position.x = 2.0
+    candidate = GoalCandidate(start, 0.0, 0.0, 0.0)
     future = Mock()
     future.result.return_value = SimpleNamespace(
-        success=True, path=path, connector_end_index=1)
+        success=True, path=path)
     bridge._explicit_start_result(future, 0, candidate, candidate)
-    metadata = bridge.connector_publisher.publish.call_args[0][0]
-    assert metadata.path == path
-    assert metadata.end_index == 1
     adjusted = bridge.adjusted_goal_publisher.publish.call_args[0][0]
     assert adjusted.header.stamp == path.header.stamp
     selected_start = bridge.adjusted_start_publisher.publish.call_args[0][0]
     assert selected_start.header.stamp == path.header.stamp
-    assert selected_start.pose == path.poses[1].pose
+    assert selected_start.pose == start.pose
     bridge.path_publisher.publish.assert_called_once_with(path)
+    bridge.visualization_path_publisher.publish.assert_called_once_with(path)
     bridge.search_generation = 1
     stale = Mock()
     bridge._explicit_start_result(stale, 0, candidate, candidate)
     stale.result.assert_not_called()
+
+
+@pytest.mark.parametrize('planning_start', [None, PoseStamped()])
+def test_selected_start_falls_back_to_candidate_without_a_valid_planner_pose(
+        bridge, planning_start):
+    path = Path()
+    path.header.frame_id = 'map'
+    path.poses = [PoseStamped(), PoseStamped(), PoseStamped()]
+    start = PoseStamped()
+    start.pose.position.x = 0.5
+    candidate = GoalCandidate(start, 0.0, 0.0, 0.0)
+    bridge.adjusted_start_publisher = Mock()
+    bridge._publish_success(candidate, candidate, path, planning_start)
+    selected = bridge.adjusted_start_publisher.publish.call_args[0][0]
+    assert selected.pose == start.pose
 
 
 def prepare_logged_search(bridge, count):
@@ -167,8 +181,8 @@ def test_attempt_log_records_each_pair_and_failure_until_success(bridge):
     planned.poses = [PoseStamped(), PoseStamped()]
     responses = [
         SimpleNamespace(success=False, path=Path(), error='Virtual start or goal is occupied'),
-        SimpleNamespace(success=False, path=Path(), error='Initial Dubins connector exceeds 2 m'),
-        SimpleNamespace(success=True, path=planned, error='', connector_end_index=0),
+        SimpleNamespace(success=False, path=Path(), error='SMAC found no path'),
+        SimpleNamespace(success=True, path=planned, error=''),
     ]
     futures = [Mock() for _ in responses]
     for future, response in zip(futures, responses):
@@ -188,7 +202,7 @@ def test_attempt_log_records_each_pair_and_failure_until_success(bridge):
     assert 'x=+2.100 m' in transcript
     assert 'x=+2.200 m' in transcript
     assert 'FAILED: Virtual start or goal is occupied' in transcript
-    assert 'FAILED: Initial Dubins connector exceeds 2 m' in transcript
+    assert 'FAILED: SMAC found no path' in transcript
     assert transcript.count('SUCCESS:') == 1
     assert 'Actual start:' in transcript
     assert transcript.index('ATTEMPT 1/3') < transcript.index('FAILED:')
@@ -253,7 +267,7 @@ def test_synchronous_service_error_is_logged_as_a_failed_attempt(bridge):
     assert 'ERROR:' in bridge.planning_log
 
 
-def test_rejected_connector_skips_same_start_and_refills_attempt_budget(bridge):
+def test_failed_pairs_preserve_diagonal_order_and_attempt_budget(bridge):
     prepare_logged_search(bridge, 3)
     other_pose = copy.deepcopy(bridge.real_start)
     other_pose.pose.position.x = 1.5
@@ -261,18 +275,12 @@ def test_rejected_connector_skips_same_start_and_refills_attempt_budget(bridge):
     bridge.max_planning_attempts = 3
     bridge.planning_pair_limit = 3
     bridge.planning_pairs = bridge._build_planning_pairs(2, 3)
-    quantized = copy.deepcopy(bridge.real_start)
-    quantized.pose.position.x = 1.025
     planned = Path()
     planned.poses = [PoseStamped(), PoseStamped()]
     responses = [
-        SimpleNamespace(
-            success=False, path=Path(), error='Initial Dubins connector exceeds limit',
-            start_rejected=True, connector_checked=True, connector_required=True,
-            planning_start=quantized, connector_length=4.5, connector_max_length=2.0),
-        SimpleNamespace(
-            success=False, path=Path(), error='SMAC found no path', start_rejected=False),
-        SimpleNamespace(success=True, path=planned, error='', connector_end_index=0),
+        SimpleNamespace(success=False, path=Path(), error='Virtual start is occupied'),
+        SimpleNamespace(success=False, path=Path(), error='SMAC found no path'),
+        SimpleNamespace(success=True, path=planned, error=''),
     ]
     futures = [Mock() for _ in responses]
     for future, response in zip(futures, responses):
@@ -282,29 +290,24 @@ def test_rejected_connector_skips_same_start_and_refills_attempt_budget(bridge):
     for future in futures:
         future.add_done_callback.call_args[0][0](future)
     requests = [call[0][0] for call in bridge.explicit_start_client.call_async.call_args_list]
-    assert [request.start.pose.position.x for request in requests] == [1.0, 1.5, 1.5]
-    assert [request.goal.pose.position.x for request in requests] == [2.0, 2.0, 2.1]
+    assert [request.start.pose.position.x for request in requests] == [1.0, 1.0, 1.5]
+    assert [request.goal.pose.position.x for request in requests] == [2.0, 2.1, 2.0]
     assert bridge.planning_attempts == 3
-    assert bridge.candidate_index == 5  # Two cached pairs were skipped, without requests.
-    assert id(bridge.start_candidates[0]) in bridge.rejected_starts
-    assert id(bridge.start_candidates[1]) not in bridge.rejected_starts
+    assert bridge.candidate_index == 3
     assert bridge.planning_log.count('  Robot start: ') == 3
-    assert 'Quantized virtual start: x=+1.025 m' in bridge.planning_log
-    assert 'Connector length: 4.500 m' in bridge.planning_log
-    assert 'Connector limit: 2.000 m' in bridge.planning_log
-    assert 'SMAC was not run for this attempt' in bridge.planning_log
     assert 'ATTEMPT 3/3' in bridge.planning_log
     assert 'SUCCESS:' in bridge.planning_log
     assert 'ATTEMPT 4/' not in bridge.planning_log
 
 
-def test_all_cached_starts_finish_without_sending_more_requests(bridge):
+def test_reaching_attempt_budget_finishes_without_sending_more_requests(bridge):
     prepare_logged_search(bridge, 2)
-    bridge.rejected_starts.add(id(bridge.start_candidates[0]))
+    bridge.planning_attempts = 1
+    bridge.planning_pair_limit = 1
     bridge.explicit_start_client.call_async = Mock()
     bridge._send_next_candidate(bridge.search_generation)
     bridge.explicit_start_client.call_async.assert_not_called()
-    assert bridge.planning_attempts == 0
+    assert bridge.planning_attempts == 1
     assert 'ERROR:' in bridge.planning_log
 
 
@@ -316,15 +319,12 @@ def test_pair_search_is_lazy_and_keeps_diagonal_order(bridge):
     assert list(bridge._build_planning_pairs(1, 2)) == [(0, 0), (0, 1)]
 
 
-def test_exact_start_diagnostic_reports_zero_connector_length(bridge):
-    bridge._log_connector_diagnostics(SimpleNamespace(
-        planning_start=PoseStamped(), connector_checked=True, connector_required=False,
-        connector_length=0.0, connector_max_length=2.0))
-    assert 'Connector length: 0.000 m' in bridge.planning_log
-    assert 'Connector not needed: original start.' in bridge.planning_log
+def test_missing_planning_start_does_not_invent_pose_diagnostics(bridge):
+    bridge._log_planning_start(SimpleNamespace(planning_start=PoseStamped()))
+    assert bridge.planning_log == ''
 
 
-def test_virtual_start_success_uses_quantized_pose_without_a_connector(bridge):
+def test_virtual_start_success_uses_quantized_pose(bridge):
     prepare_logged_search(bridge, 1)
     requested_start = copy.deepcopy(bridge.real_start)
     requested_start.pose.position.y = 0.212
@@ -336,22 +336,15 @@ def test_virtual_start_success_uses_quantized_pose_without_a_connector(bridge):
     planned.header.stamp.sec = 42
     planned.poses = [quantized, bridge.candidates[0].pose]
     response = SimpleNamespace(
-        success=True, path=planned, error='', connector_end_index=0,
-        planning_start=quantized, connector_checked=False, connector_required=False,
-        start_rejected=False, connector_length=0.0, connector_max_length=2.0)
+        success=True, path=planned, error='', planning_start=quantized)
     future = Mock()
     future.result.return_value = response
     bridge.explicit_start_client.call_async = Mock(return_value=future)
     bridge.adjusted_start_publisher = Mock()
-    bridge.connector_publisher = Mock()
     bridge._send_next_candidate(bridge.search_generation)
     future.add_done_callback.call_args[0][0](future)
     actual_start = bridge.adjusted_start_publisher.publish.call_args[0][0]
     assert actual_start.pose.position.y == 0.225
     assert actual_start.header.stamp == planned.header.stamp
-    assert bridge.connector_publisher.publish.call_args[0][0].end_index == 0
-    assert 'Connector not required: the path starts at the virtual start.' in bridge.planning_log
-    assert 'Connector length:' not in bridge.planning_log
-    assert 'Connector limit:' not in bridge.planning_log
+    assert 'Quantized virtual start:' in bridge.planning_log
     assert 'SUCCESS:' in bridge.planning_log
-    assert not bridge.rejected_starts

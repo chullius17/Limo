@@ -9,10 +9,9 @@ from unittest.mock import patch
 from ...include.python_ver.sampling_mpc import MpcConfig, MpcControl, MpcState, MpcFamily
 from ...include.python_ver.ros_compat import (
     Costmap2D, Costmap2DROS, LocalNode, Header, Point, Pose, Pose2D, PoseStamped,
-    Path, Path2D, Twist, Twist2D, Trajectory2D, StartConnector, IllegalTrajectoryException,
+    Path, Path2D, Twist, Twist2D, Trajectory2D, IllegalTrajectoryException,
     NoLegalTrajectoriesException, PlannerException,
 )
-from ...include.python_ver.start_connector import StartConnectorGate
 from ...include.python_ver.mpc_timing import MpcTimingSample, CriticPrepareTiming
 from ...include.python_ver.mpc_timing_scope import MpcTimingScope
 from .sampling_mpc import SamplingMpc
@@ -195,7 +194,7 @@ class TranslationTests(unittest.TestCase):
         with self.assertRaises(IllegalTrajectoryException):
             critic.scoreTrajectory(Trajectory2D(poses=[Pose2D(), Pose2D(0.2, 0)]))
 
-    def test_path_cost_and_forward_connector_constraint(self):
+    def test_path_cost_prefers_reference_and_allows_configured_reverse(self):
         host = grid_host()
         critic = MppiPathCritic(costmap_ros=host)
         critic.onInit()
@@ -204,10 +203,8 @@ class TranslationTests(unittest.TestCase):
         on_path = Trajectory2D(poses=[Pose2D(), Pose2D(0.5, 0)])
         off_path = Trajectory2D(poses=[Pose2D(), Pose2D(0.5, 0.4)])
         self.assertLess(critic.scoreTrajectory(on_path), critic.scoreTrajectory(off_path))
-        critic.setStartConnector(True)
         on_path.velocity.x = -0.1
-        with self.assertRaises(IllegalTrajectoryException):
-            critic.scoreTrajectory(on_path)
+        self.assertTrue(math.isfinite(critic.scoreTrajectory(on_path)))
 
     def test_live_obstacle_activates_path_guidance_and_clear_map_restores_alignment(self):
         host = grid_host()
@@ -226,28 +223,6 @@ class TranslationTests(unittest.TestCase):
         grid.costs[:] = [0] * (80 * 80)
         critic.prepare(Pose2D(), Twist2D(), path.poses[-1], path)
         self.assertFalse(critic.detouring())
-
-    def test_connector_requires_matching_metadata_and_hands_off_once(self):
-        path = line_path()
-        gate = StartConnectorGate()
-        gate.setPlan(path)
-        self.assertFalse(gate.update(path.poses[0].pose, 0.01, 0.1))
-        gate.setMetadata(StartConnector(deepcopy(path), 20))
-        for i in range(20):
-            self.assertTrue(gate.update(path.poses[i].pose, 0.01, 0.1))
-        self.assertFalse(gate.update(path.poses[20].pose, 0.01, 0.1))
-        self.assertEqual(len(gate.normalPlan().poses), 11)
-        gate.setPlan(path)
-        self.assertFalse(gate.update(path.poses[0].pose, 0.01, 0.1))
-
-    def test_connector_cannot_skip_loop_with_nearby_endpoint(self):
-        path = line_path()
-        path.poses[20].pose = deepcopy(path.poses[0].pose)
-        path.poses[20].pose.position.y = 0.01
-        gate = StartConnectorGate()
-        gate.setPlan(path)
-        gate.setMetadata(StartConnector(path, 20))
-        self.assertTrue(gate.update(path.poses[0].pose, 0.05, 0.1))
 
     def test_timing_windows_count_only_called_critics(self):
         clock = [0.0]

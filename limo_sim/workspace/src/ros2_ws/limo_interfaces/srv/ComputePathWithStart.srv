@@ -1,4 +1,4 @@
-# Explicit-start planning for Foxy. Only the initial Dubins connector ignores obstacles.
+# Explicit-start planning for Foxy with ordinary obstacle checks.
 geometry_msgs/PoseStamped real_start
 geometry_msgs/PoseStamped start
 geometry_msgs/PoseStamped goal
@@ -6,9 +6,8 @@ geometry_msgs/PoseStamped goal
 bool success
 string error
 nav_msgs/Path path
+# Legacy connector fields are retained for interface compatibility and stay zero/false.
 uint32 connector_end_index
-# Geometry-only rejection: the bridge can skip this start for all other goals
-# in the same search. Obstacle, goal and SMAC failures never set this flag.
 bool start_rejected
 bool connector_checked
 bool connector_required

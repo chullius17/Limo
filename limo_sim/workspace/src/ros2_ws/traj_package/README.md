@@ -130,51 +130,18 @@ pairs. Exact starts retain normal obstacle checks.
 Both `traj_real.yaml` and `traj_sim.yaml` enable this start adjustment, searching
 within 0.75 m at 0.10 m steps and 22.5 degree heading increments.
 
-Both profiles set `GridBased.connect_adjusted_start: false`, also the plugin
-default. A virtual start can be beside the robot and need not be reachable from
-the measured pose. The wrapper quantizes it to SMAC's grid and heading bins,
-validates its footprint and plans from there. Foxy's backtrace omits the initial
-node, so the wrapper restores the quantized start as the path's first pose.
-No real-to-virtual prefix is generated, and `start_connector_max_length` does
-not constrain the virtual start. The measured real pose is diagnostic context.
+The path starts at the selected planning pose. The wrapper quantizes that
+pose to SMAC's grid and heading bins and checks its footprint. Foxy's backtrace
+omits the initial node, so the wrapper restores the quantized start at the
+beginning of an adjusted path. It generates no initial connector and applies
+ordinary obstacle checks throughout planning and control.
 
 The service returns the quantized planning start, which is also published on
-`/adjusted_start_pose`. The planning log shows the measured pose, selected start
-and quantized start, and states that no connector is requested. The path starts
-at the virtual pose; execution retains the controller's START and tracking
-checks.
-
-For an explicitly requested robot-to-start connection, set
-`GridBased.connect_adjusted_start: true`. In that optional mode the wrapper
-checks and samples one forward-only Dubins prefix before SMAC, using
-`minimum_turning_radius`, `start_connector_sample_step` (0.02 m) and
-`start_connector_max_length` (2.0 m). The prefix deliberately ignores obstacles;
-its endpoint and SMAC suffix retain collision checks. The service and log then
-include the measured connector length and limit.
-
-Only this optional connector mode can set the typed `start_rejected` flag for
-a non-finite or over-limit Dubins length. The bridge skips that start's other
-goals for the current search. Collision, goal and SMAC failures do not poison
-the cache. Pair generation remains lazy and diagonal, with up to the configured
-number of actual requests. A new goal resets the exclusions.
-
-The service response has new diagnostic fields. Rebuild `limo_interfaces`,
-`limo_smac_planner` and `traj_package`, source the workspace and restart the
-application so the service provider and client use the same interface:
-
-```bash
-colcon build --symlink-install --packages-select limo_interfaces limo_smac_planner traj_package
-source install/setup.bash
-```
-
-The bridge publishes the complete path and `/limo/planning/start_connector`
-(`limo_interfaces/StartConnector`). Its `end_index` is zero by default, disabling
-the connector exception. In optional connector mode, metadata binds the prefix
-to the complete path geometry and unique timestamp. The executor preserves
-that identity while using zero pose timestamps for latest TF. A new goal clears
-both outputs; stale service results are ignored. Controller obstacle bypass on
-a declared prefix additionally requires its own `MPC.StartConnector.ignore_obstacles`
-setting; the current controller profiles leave that setting false.
+`/adjusted_start_pose` and included in the planning log. The bridge publishes
+the validated path on `/limo/planning/path`; a new goal clears it and stale
+service results are ignored. Execution retains the controller's START and
+tracking checks, including the requirement to start inside the Tube MPC path
+corridor.
 
 Execution belongs to `limo_controller`: its `path_executor` node receives the
 path and handles START, pause, resume, and cancellation through

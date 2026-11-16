@@ -2,7 +2,6 @@
 #include <mutex>
 #include <stdexcept>
 #include "limo_interfaces/srv/compute_path_with_start.hpp"
-#include "limo_smac_planner/dubins_connector.hpp"
 #include "nav2_core/global_planner.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
 #include "nav2_costmap_2d/footprint_collision_checker.hpp"
@@ -24,22 +23,6 @@ public:
   {
     clock_ = node->get_clock();
     costmap_ = costmap;
-    const auto read = [&](const std::string & key, double value) {
-        nav2_util::declare_parameter_if_not_declared(
-          node, name + "." + key,
-          rclcpp::ParameterValue(value));
-        const double result = node->get_parameter(name + "." + key).as_double();
-        if (!std::isfinite(result) || result <= 0.0) {
-          throw std::invalid_argument("Invalid connector parameter: " + key);
-        }
-        return result;
-      };
-    radius_ = read("minimum_turning_radius", 0.7);
-    step_ = read("start_connector_sample_step", 0.02);
-    max_length_ = read("start_connector_max_length", 2.0);
-    nav2_util::declare_parameter_if_not_declared(
-      node, name + ".connect_adjusted_start", rclcpp::ParameterValue(false));
-    connect_adjusted_start_ = node->get_parameter(name + ".connect_adjusted_start").as_bool();
     loader_ = std::make_unique<pluginlib::ClassLoader<nav2_core::GlobalPlanner>>(
       "nav2_core", "nav2_core::GlobalPlanner");
     planner_ = loader_->createSharedInstance("smac_planner/SmacPlanner");
@@ -53,7 +36,6 @@ public:
       [this](const std::shared_ptr<limo_interfaces::srv::ComputePathWithStart::Request> request,
       std::shared_ptr<limo_interfaces::srv::ComputePathWithStart::Response> response) {
         std::lock_guard<std::mutex> lock(mutex_);
-        response->connector_max_length = max_length_;
         try {
           if (!active_) {throw std::runtime_error("Planner is inactive");}
           std::unique_lock<nav2_costmap_2d::Costmap2D::mutex_t> map_lock(
@@ -83,7 +65,7 @@ public:
               throw std::runtime_error("Virtual start or goal is occupied");
             }
           };
-          validate(request->real_start, false, connect_adjusted_start_);
+          validate(request->real_start, false, false);
           validate(request->start, true);
           auto & virtual_start = response->planning_start;
           virtual_start = request->start;
@@ -103,21 +85,6 @@ public:
           tf2::getYaw(request->start.pose.orientation);
           const bool adjusted = translation > 1e-6 ||
           std::abs(std::atan2(std::sin(yaw), std::cos(yaw))) > 1e-6;
-          response->connector_required = adjusted && connect_adjusted_start_;
-          response->connector_checked = !adjusted || response->connector_required;
-          nav_msgs::msg::Path connector;
-          if (response->connector_required) {
-            // Check and sample the prefix BEFORE spending time in SMAC. As
-            // before, only this real-to-virtual prefix ignores collisions.
-            try {
-              connector = dubinsConnector(
-                request->real_start, virtual_start,
-                radius_, step_, max_length_, &response->connector_length);
-            } catch (const DubinsLengthError &) {
-              response->start_rejected = true;
-              throw;
-            }
-          }
           if (adjusted) {
             nav2_costmap_2d::FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *> checker(map);
             const double footprint_cost = checker.footprintCostAtPose(
@@ -132,13 +99,8 @@ public:
           if (path.poses.empty()) {throw std::runtime_error("SMAC found no path");}
           if (adjusted) {
             // Foxy backtrace omits the initial node. Restore its grid/yaw pose
-            // at the join, then keep the original collision-checked SMAC suffix.
+            // before the original collision-checked SMAC path.
             path.poses.insert(path.poses.begin(), virtual_start);
-          }
-          if (response->connector_required) {
-            response->connector_end_index = connector.poses.size() - 1;
-            connector.poses.insert(connector.poses.end(), path.poses.begin() + 1, path.poses.end());
-            path = std::move(connector);
           }
           const auto now = clock_->now();
           last_plan_stamp_ = std::max(last_plan_stamp_ + 1, now.nanoseconds());
@@ -186,8 +148,6 @@ public:
 private:
   std::mutex mutex_;
   bool active_{false};
-  bool connect_adjusted_start_{false};
-  double radius_{0.7}, step_{0.02}, max_length_{2.0};
   int angle_bins_{72};
   rclcpp::Clock::SharedPtr clock_;
   std::int64_t last_plan_stamp_{0};

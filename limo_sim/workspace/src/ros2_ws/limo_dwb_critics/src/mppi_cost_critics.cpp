@@ -143,9 +143,6 @@ double MppiObstacleCritic::scoreTrajectory(const dwb_msgs::msg::Trajectory2D & t
   if (trajectory.poses.size() < 2) {
     throw dwb_core::IllegalTrajectoryException(name_, "Empty prediction");
   }
-  if (ignore_obstacles_) {
-    return 0.0;  // Explicitly authorized only on a plan-bound initial Dubins prefix.
-  }
   if (full_footprint_check_ && blocked_prefix_.size() !=
     (costmap_->getSizeInCellsX() + 1) * (costmap_->getSizeInCellsY() + 1))
   {throw dwb_core::IllegalTrajectoryException(name_, "Footprint collision data not prepared");}
@@ -275,11 +272,6 @@ bool MppiPathCritic::prepare(
   {
     ++target_index_;
   }
-  if (ignore_obstacles_) {
-    path_blocked_ = false;
-    apply_path_angle_ = false;
-    return true;  // No obstacle detour may replace the initial Dubins reference.
-  }
   auto * costmap = costmap_ros_->getCostmap();
   std::size_t occupied = 0;
   for (std::size_t i = start_index_; i <= target_index_; ++i) {
@@ -392,9 +384,6 @@ double MppiPathCritic::scoreTrajectory(const dwb_msgs::msg::Trajectory2D & traje
   if (path_.empty() || trajectory.poses.size() < 2) {
     throw dwb_core::IllegalTrajectoryException(name_, "Missing path or prediction");
   }
-  if (ignore_obstacles_ && trajectory.velocity.x < -1e-6) {
-    throw dwb_core::IllegalTrajectoryException(name_, "Initial Dubins connector is forward only");
-  }
   double goal_cost = 0.0;
   double goal_angle_cost = 0.0;
   double align_cost = 0.0;
@@ -415,7 +404,7 @@ double MppiPathCritic::scoreTrajectory(const dwb_msgs::msg::Trajectory2D & traje
     if (!guidance_active_ && distance_to_goal_ < goal_angle_distance_) {
       goal_angle_cost += angleError(pose.theta, goal_.theta);
     }
-    if (!path_blocked_ && (distance_to_goal_ > align_distance_ || ignore_obstacles_)) {
+    if (!path_blocked_ && distance_to_goal_ > align_distance_) {
       traveled += distance(pose, trajectory.poses[t - 1]);
       // Monotone, distance-limited association avoids jumping far ahead onto
       // a different branch when a path folds back near the robot.
