@@ -35,7 +35,7 @@ ros2 launch traj_package planning_gui.launch.py
 
 The Qt window shows the global planner costmap from above, updating as complete
 grids arrive. The image keeps its aspect ratio when resized, with positive grid
-Y upward. Free cells are white, increasing costs yellow to red, inscribed
+Y upward. Free cells are white, increasing costs light to dark purple, inscribed
 obstacles purple, lethal obstacles black and unknown cells gray. The lower,
 resizable, read-only log panel lists every attempted start/goal pair in order:
 attempt number, start and arrival positions in meters, yaw in degrees and frame,
@@ -43,6 +43,18 @@ followed by the planner's failure reason or success. It also reports the actual
 selected start on success, including virtual-start quantization. The transcript
 starts over for each new goal and ends at the first success or exhausted search.
 Preflight errors such as unavailable localization or planner are shown too.
+
+A compact legend below the map shows the actual white-to-purple cost palette,
+separate color cells for inscribed obstacles, lethal obstacles and unknown
+space, and colored symbols for the path, goal arrows, robot footprint and axes.
+The map itself has no text labels covering the robot or planning endpoints.
+
+The validated path on `/limo/planning/path` is drawn as a thick turquoise line
+with a dark outline, above the costmap and below the robot and endpoint arrows.
+It follows the map origin's translation and orientation, and uses timestamped
+TF if the path and displayed grid have different frames. A new goal or an empty
+path clears the line; retained paths older than the current goal stay hidden.
+The path is also included in the compressed PNG preview.
 
 The bridge publishes the entire current transcript on `/limo/planning/log`
 (`std_msgs/String`, reliable/transient-local, depth 1), so reopening the GUI
@@ -67,7 +79,7 @@ arrow until planning succeeds again. Green and blue arrows use different
 lengths so both remain visible when the two poses coincide. The selected goal
 is received live; the accepted goal and path also support retained delivery.
 
-A second blue arrow labeled `Start pianificato` shows `/adjusted_start_pose`,
+A second blue arrow shows `/adjusted_start_pose`,
 the start selected for that validated path. With start adjustment enabled, this
 is the actual quantized virtual start where the published path begins. It
 stays at the planning pose while the robot moves, and disappears when the path
@@ -188,9 +200,23 @@ simulation time for sim; `use_sim_time` can override the clock without changing
 the selected profile. The application launches pass their profile automatically.
 
 Both files configure SMAC, the global costmap and `rviz_goal_bridge`, including
-its goal-search budget and validation footprint. Planner tuning is preserved:
-both profiles initially retain the conservative 0.7 m turning radius, and their
-footprints match their controller costmaps. The files can now be tuned separately.
+its goal-search budget and validation footprint. The profiles are tuned
+separately. Their current geometry, together with the corresponding
+`limo_controller/config/control_real.yaml` and `control_sim.yaml` profiles, is:
+
+| Parameter | Real | Simulation |
+| --- | --- | --- |
+| Planner minimum turning radius | 0.50 m | 0.70 m |
+| Global planner footprint, length × width | 0.322 × 0.200 m | 0.322 × 0.220 m |
+| Bridge validation footprint, length × width | 0.322 × 0.220 m | 0.322 × 0.220 m |
+| Controller collision footprint after padding, length × width | 0.322 × 0.220 m | 0.342 × 0.240 m |
+
+Both global planner costmaps use `footprint_padding: 0.0`. In the real profile,
+the planner footprint is 0.020 m narrower than the bridge validation and
+controller footprints. In simulation, the planner, bridge and controller share
+the same base footprint, but the controller adds `footprint_padding: 0.01`
+(0.01 m per side), producing the effective collision footprint listed above.
+The real controller uses zero padding.
 
 An explicit `planner_params_file` takes precedence over the selected default.
 `map_topic` continues to rewrite both the static-map and border-follow inputs.

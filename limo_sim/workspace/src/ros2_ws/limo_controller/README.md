@@ -298,6 +298,11 @@ Restart the control application after changing these parameters.
 
 ## MPC telemetry and optional image preview
 
+The preview Python code is grouped in `limo_controller/mpc_preview/`:
+`node.py` handles ROS subscriptions and image publication, `render.py` draws
+the preview, and `sources.py` decodes laser and semantic observations.
+The ROS executable is `mpc_preview`.
+
 `FollowPath.MPC.Debug.enabled` enables telemetry on `/limo/control/mpc_debug`.
 It is explicitly `true` in both `control_sim.yaml` and `control_real.yaml`.
 The control GUI contains only the control buttons and current status label; it does

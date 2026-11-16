@@ -31,12 +31,12 @@ from sensor_msgs.msg import CompressedImage, LaserScan, PointCloud2
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from limo_interfaces.msg import MpcDebug
-from limo_controller.mpc_preview_render import (
+from limo_controller.mpc_preview.render import (
     Candidate, DEFAULT_COLORS, FAMILIES, PreviewBackground, PreviewFrame, PreviewSources,
     RenderOptions,
     render_preview, world_to_base,
 )
-from limo_controller.mpc_preview_sources import laser_points, semantic_points, transform_points
+from limo_controller.mpc_preview.sources import laser_points, semantic_points, transform_points
 
 
 class MpcPreview(Node):

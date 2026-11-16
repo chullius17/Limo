@@ -1,0 +1,1879 @@
+\documentclass[a4paper,11pt,oneside]{book}
+
+% ==========================================
+% PACKAGES
+% ==========================================
+
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{xurl}
+\usepackage{hyperref}
+
+\graphicspath{{figures/}}
+\setlength{\emergencystretch}{3em}
+
+% ==========================================
+% DOCUMENT INFORMATION
+% ==========================================
+
+\title{VISUAL-BASED CONTROL OF AN AGILEX LIMO}
+\author{Giulio Cataldo}
+\date{\today}
+
+\begin{document}
+
+\frontmatter
+
+\hypersetup{pageanchor=false}
+\maketitle
+\hypersetup{pageanchor=true}
+\tableofcontents
+
+\mainmatter
+
+% ==========================================
+% CHAPTER 1 - INTRODUCTION
+% ==========================================
+
+\chapter{Introduction}
+
+In May 2026, I started a six-month internship at CRAN (Centre de Recherche en Automatique de Nancy), a research laboratory affiliated with the University of Lorraine in Nancy, France.
+
+The project consisted of two main tasks. Given an AgileX LIMO mobile robot and a scaled-down urban environment, my first objective was to set up a suitable software environment to facilitate future students' work on the platform.
+
+The second and more challenging objective was to develop a complete planning and control pipeline capable of autonomously navigating the robot from a starting point to a designated destination, while avoiding physical obstacles and complying with basic traffic rules.
+
+The main outcomes achieved at the end of the internship are summarized as follows:
+
+\begin{enumerate}
+    \item \textbf{Gazebo Simulation Environment:}
+    Development of a high-fidelity Gazebo simulation framework featuring a digital model of the LIMO robot and a virtual replica of the laboratory's test track.
+
+    \item \textbf{Autonomous Navigation Pipeline:}
+    Implementation of an end-to-end software architecture integrating global mapping, sensor-fused localization, trajectory generation, and optimal control, allowing the robot to reach designated waypoints while avoiding both physical barriers and visual road obstacles.
+
+    \item \textbf{System Documentation and Deployment:}
+    Compilation of a detailed, step-by-step setup guide to streamline the installation of all necessary ROS 2 packages, sensor configurations, and system launch procedures via custom scripts and launch parameters.
+\end{enumerate}
+
+% ==========================================
+% CHAPTER 2 - SYSTEM OVERVIEW
+% ==========================================
+
+\chapter{System Overview}
+
+\section{The AgileX LIMO Robot}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\linewidth]{limo.png}
+    \caption{The Limo Robot}
+    \label{fig:limo_robot}
+\end{figure}
+\subsection{Vehicle Specifications}
+
+The AgileX LIMO is a compact mobile robotic platform designed
+for educational and research applications. Its main technical
+specifications are summarized in Table~\ref{tab:limo_specs}.
+
+
+
+\begin{table}[H]
+    \centering
+    \caption{Main technical specifications of the AgileX LIMO.}
+    \label{tab:limo_specs}
+
+    \begin{tabular}{ll}
+        \toprule
+        \textbf{Parameter} & \textbf{Specification} \\
+        \midrule
+        Weight & 4.2 kg \\
+        Dimensions & $322 \times 215 \times 247$ mm \\
+        Run time & 40 minutes \\
+        Standby time & 2 hours \\
+        Operating system & Ubuntu 18.04 \\
+        Maximum climbable slope & $25^\circ$ \\
+        Operating temperature & $-10^\circ$C to $40^\circ$C \\
+        Charging interface & 5.5 $\times$ 2.1 mm DC barrel jack \\
+        CPU & ARM64 Quad-Core 1.43 GHz (Cortex-A57) \\
+        GPU & 128-core NVIDIA Maxwell (921 MHz) \\
+        Battery & 12 V Li-ion, 5600 mAh \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The AgileX LIMO platform supports multiple locomotion modalities;
+for this project, the \textbf{Ackermann steering mode} was selected
+to closely replicate standard automotive kinematics.
+Under this configuration, the vehicle features a minimum turning
+radius of $0.4\,\mathrm{m}$.
+
+\subsection{Onboard Computing Hardware}
+
+The robot's primary compute unit is an \textbf{NVIDIA Jetson Nano (4GB)}.
+It is worth noting that the onboard CPU exhibits limited computational
+capabilities, making it a critical constraint for resource-intensive
+processes. While the integrated GPU can support hardware-accelerated
+tasks---such as lightweight neural network inference or visualization
+rendering---it was not directly utilized within the scope of the
+developed software pipeline, leaving the execution to rely entirely
+on CPU-side optimizations.
+
+\subsection{Software Architecture}
+
+The original software environment used to operate the robot and
+implement control algorithms was based on a hybrid architecture
+combining \textbf{ROS 1 Melodic} and \textbf{ROS 2 Eloquent}.
+Communication between the two distributions was established through
+the \texttt{ros1\_bridge} package, which enabled the exchange of
+messages across their respective topics.
+
+The robot description files and primary launch configurations were
+provided by the official AgileX repository, originally
+developed for ROS 1. Consequently, the robot's initialization
+and hardware configuration had to be performed within the ROS 1
+environment, while additional nodes could be developed in ROS 2
+and connected to the existing system through the bridge.
+
+However, this architecture presented significant limitations,
+primarily due to the communication overhead introduced by the bridge
+and the outdated software distributions.
+
+In particular, the transmission of large messages, such as camera
+images, resulted in reduced message frequency and increased temporal
+jitter on the ROS 2 side. These limitations made the architecture
+unsuitable for the reliable execution of real-time computer vision
+algorithms.
+
+Furthermore, the \texttt{ros1\_bridge} process consumed a
+considerable portion of the Jetson Nano's already limited CPU
+resources, significantly restricting the computational capacity
+available for more advanced navigation and control algorithms.
+
+
+(source: \url{https://github.com/agilexrobotics/limo-doc/blob/master/Limo\%20user\%20manual(EN).md})
+(source: \url{https://github.com/agilexrobotics/limo_ros})
+(source: \url{https://docs.trossenrobotics.com/agilex_limo_docs/specifications/limo.html})
+
+\section{Sensor Overview}
+
+The AgileX LIMO is equipped with several sensors that provide
+information about the robot's motion and its surrounding
+environment. The main sensors employed in this project are
+an inertial measurement unit (IMU), a 2D LiDAR, and an
+RGB-D camera.
+
+\subsection{Inertial Measurement Unit (IMU)}
+
+The robot is equipped with an \textbf{MPU6050 IMU}, which
+integrates a three-axis accelerometer and a three-axis
+gyroscope.
+
+The accelerometer measures the specific force acting on
+the robot, while the gyroscope provides its angular
+velocity.
+
+In the proposed architecture, the IMU measurements are
+combined with wheel odometry through an Extended Kalman
+Filter (EKF) to improve the estimation of the robot's
+motion.
+
+\subsection{LiDAR}
+
+The robot is equipped with an \textbf{EAI X2L 2D LiDAR},
+which measures the distance to surrounding objects
+by scanning the environment in a horizontal plane.
+
+\begin{table}[H]
+    \centering
+    \caption{Main technical specifications of the EAI X2L LiDAR.}
+    \label{tab:lidar_specs}
+    
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Parameter} & \textbf{Minimum} & \textbf{Default} & \textbf{Maximum} & \textbf{Unit} \\
+        \midrule
+        Ranging frequency & -- & 3000 & -- & Hz \\
+        Scanning frequency & 5 & 6 & 8 & Hz \\
+        Ranging range & 0.12 & -- & 8 & m \\
+        Scanning angle & -- & 0--360 & -- & $^\circ$ \\
+        Absolute tolerance & -- & 2 & -- & cm \\
+        Relative tolerance & -- & 3.5 & -- & \% \\
+        Pitch angle & 0.25 & 1 & 1.75 & $^\circ$ \\
+        Angular resolution & 0.60 (5 Hz) & 0.72 (6 Hz) & 0.96 (8 Hz) & $^\circ$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{RGB-D Camera}
+
+The \textbf{Orbbec DaBai Stereo Depth Camera} provides
+both color images and depth measurements of the
+surrounding environment.
+
+The camera employs structured-light technology to
+estimate depth by projecting an infrared pattern
+onto the environment and analyzing its deformation
+in the acquired images.
+
+However, this sensing technology presents several
+limitations. In particular, surfaces with low
+infrared reflectivity, strong ambient illumination,
+and interference from other structured-light cameras
+may result in missing or unreliable depth
+measurements.
+
+These limitations must be considered when using
+depth information for obstacle detection and
+environment mapping.
+
+\begin{table}[H]
+    \centering
+    \caption{Main technical specifications of the Orbbec DaBai Stereo Depth Camera.}
+    \label{tab:camera_specs}
+
+    \begin{tabular}{ll}
+        \toprule
+        \textbf{Parameter} & \textbf{Specification} \\
+        \midrule
+        Infrared camera baseline & 40 mm \\
+        Depth range & 0.3--3 m \\
+        Depth resolution & $640 \times 400$ @ 30 FPS \\
+                         & $320 \times 200$ @ 30 FPS \\
+        RGB resolution & $1920 \times 1080$ @ 30 FPS \\
+                       & $1280 \times 720$ @ 30 FPS \\
+                       & $640 \times 480$ @ 30 FPS \\
+        Depth accuracy & 6 mm at 1 m \\
+        Depth horizontal FOV & $67.9^\circ$ \\
+        Depth vertical FOV & $53^\circ$ \\
+        RGB horizontal FOV & $71^\circ$ \\
+        RGB vertical FOV & $43.7^\circ$ \\
+        Latency & 30--45 ms \\
+        Data transmission & USB 2.0 or higher \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+(source: \url{https://www.digikey.fr/fr/products/detail/tdk-invensense/MPU-6050/4038009?srsltid=AYCX9vLdGtob9dv5gB5Dq7AO9A5o5Ce9G7mWNG-w6T4ix5jYLCnoezjk})
+(source: \url{https://virtuale.unibo.it/pluginfile.php/2664001/mod_resource/content/3/sensors_overview.pdf})
+(source: \url{https://robotics.growbotics.ai/suppliers/products/orbbec-dabai-depth-camera})
+
+\section{Laboratory Circuit}
+
+The robot is designed to navigate within a laboratory test track
+developed by Quanser, featuring approximate dimensions of
+$5 \times 6\,\mathrm{m}$.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{circuit.png}
+    \caption{Plan of the circuit}
+    \label{fig:laboratory_circuit_plan}
+\end{figure}
+
+Since the track is entirely flat, compliance with traffic regulations strictly requires the integration of computer vision capabilities. Furthermore, the platform perimeter is bounded by walls on only three of its four sides. 
+
+This partial enclosure presents both advantages and technical challenges for the localization subsystem:
+\begin{itemize}
+    \item \textbf{Geometric anchors:} Irregularities along the perimeter provide unique features that enhance LiDAR-based localization accuracy.
+    \item \textbf{Environmental noise:} Conversely, the open sections of the circuit introduce inconsistent features into the spatial map---as detailed in the section on map creation---rendering the localization process inherently unstable.
+\end{itemize}
+
+To mitigate these instability issues and prevent mapping artifacts, uniform white obstacles were positioned to mask the critical outer corners.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\linewidth]{blank.png}
+    \caption{Real circuit environment}
+    \label{fig:real_circuit_environment}
+\end{figure}
+
+The circuit presents in addition a very reflective surface that, combined with the lack of proper coverage from sunlight and poor dynamic range of the camera, yields either relevant lighting variations or directly to partial blindness of the vision.
+
+% ==========================================
+% CHAPTER 3 - ENVIRONMENT SETUP
+% ==========================================
+
+\chapter{Environment Setup}
+In this section we will explain the changes actuated for the optimization of the robot's software, the configuration of the sensors and the creation of an independent simulation environment.
+
+\section{Robot Software Upgrade}
+The first challenge addressed was the presence of the \texttt{ros1\_bridge}. Operating exclusively within ROS 1 presented significant limitations: as an outdated framework, relying solely on this stack did not align with personal skill development goals and, above all, proved counterproductive to the educational and technical objectives of the project. 
+
+On the other hand, transitioning directly to ROS 2 Eloquent was unfeasible, as the lack of supported package repositories to initialize the system for that release made a comprehensive system upgrade necessary.
+
+Fortunately, a practical solution was found in a custom Ubuntu 20.04 system image developed and publicly released by Qengineering. This provided a reliable path for upgrading the Jetson Nano's operating system while fully preserving compatibility with the NVIDIA software stack and drivers. 
+
+This upgrade enabled a complete migration from the hybrid ROS 1--ROS 2 architecture to \textbf{ROS 2 Foxy}, a distribution that shares core architectural principles and key components with more recent LTS releases such as ROS 2 Humble.
+
+\section{Robot and Sensor Bringup}
+
+\subsection{Sensor Configuration}
+
+To properly bring up the robot and its sensors, the official AgileX ROS 2 repository was used as a starting point.
+
+(source: \url{https://github.com/agilexrobotics/limo_ros2/tree/foxy})
+
+Additionally, the software packages provided by the sensor manufacturers were used to establish communication with the LiDAR and the RGB-D camera.
+
+(source: \url{https://github.com/orbbec/ros2_astra_camera}, \url{https://github.com/orbbec/ros2_astra_camera/tree/master/astra_camera/openni2_redist/arm64})
+
+Despite the use of official drivers, several configuration adjustments and minor source code modifications remained necessary to ensure the proper operation of the robotic platform and its sensor suite. Furthermore, the source code was refactored to make topic names fully configurable, thereby guaranteeing greater consistency and seamless interoperability between the physical robot and the simulation environment.
+
+\subsection{Odometry and IMU Fusion}
+
+Another critical enhancement implemented is the sensor fusion pipeline, which combines wheel odometry and IMU measurements via an Extended Kalman Filter (EKF) provided by the official \texttt{robot\_localization} package. The following boolean table shows if the contribution of the sensor is enabled for the estimation of the kinematic quantities.
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lcc}
+        \toprule
+        \textbf{Quantity} & \textbf{Odom (\texttt{/odom})}
+                         & \textbf{IMU (\texttt{/limo/imu})} \\
+        \midrule
+        Position $x, y$                       & Yes & No \\
+        Yaw angle $\psi$                      & Yes & No \\
+        Linear velocities $v_x, v_y$          & Yes & No \\
+        Yaw rate $\dot{\psi}$                 & No  & Yes\\
+        Height $z$, roll and pitch            & No  & No \\
+        Vertical velocity                    & No  & No \\
+        Roll and pitch rates                 & No  & No \\
+        Accelerations $a_x, a_y, a_z$          & No  & No \\
+        \bottomrule
+    \end{tabular}
+    \caption{Quantities used from the odometry and IMU messages.}
+    \label{tab:odom_imu}
+\end{table}
+
+\section{Simulation Setup}
+
+\subsection{Robot model completion}
+
+The main challenge of working on a ROS~2 Foxy platform was the lack
+of suitable robot description files for launching a simulation
+environment.
+
+To solve this problem, the \texttt{limo\_car} folder and the
+\path{limo_start.launch.py} launch file were imported from the
+Humble branch of the LIMO repository and adapted to the Foxy
+workspace.
+
+\subsection{Ackermann model compatibility}
+
+Furthermore, an auxiliary ROS~2 node,
+\texttt{gazebo\_twist\_adapter.py}, was introduced to ensure
+compatibility between the velocity commands generated by
+\texttt{teleop\_twist\_keyboard} and the Ackermann steering plugin
+used in Gazebo.
+
+While the teleoperation node publishes linear and angular velocity
+commands, the Ackermann plugin requires longitudinal velocity and
+steering angle as inputs. Therefore, an intermediate conversion
+is necessary.
+
+The adapter performs this conversion using the kinematic bicycle
+model.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{blank.png}
+    \caption{Command conversion node and associated ROS topics.}
+    \label{fig:twist_adapter}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{blank.png}
+    \caption{Ackermann steering configuration and equivalent
+    kinematic bicycle model.}
+    \label{fig:ackermann_bicycle}
+\end{figure}
+
+Figure~\ref{fig:ackermann_bicycle} illustrates the relationship
+between the Ackermann steering configuration and the kinematic
+bicycle model. In this representation, $\omega$ denotes the yaw
+rate, $v$ the longitudinal velocity, $\delta$ the equivalent
+front-wheel steering angle, and $L$ the wheelbase, i.e., the
+distance between the front and rear axles.
+
+The relationship between the yaw rate and the steering angle is
+\begin{equation}
+    \dot{\theta} = \omega = \frac{v}{L}\tan\delta.
+    \label{eq:bicycle_yaw_rate}
+\end{equation}
+
+Rearranging Equation~\eqref{eq:bicycle_yaw_rate} yields the steering
+angle required by the Ackermann plugin:
+\begin{equation}
+    \delta_{\mathrm{plugin}}
+    = \arctan\left(\frac{L\omega}{v}\right).
+    \label{eq:ackermann_steering_angle}
+\end{equation}
+
+source:
+\begin{quote}
+    \url{https://virtuale.unibo.it/pluginfile.php/2494729/mod_resource/content/1/MoMfA_1_Introduction.pdf}
+\end{quote}
+
+\subsection{Gazebo Environment}
+
+The simulated robot operates within a
+\textbf{virtual road network} with approximate dimensions of
+$12 \times 7\,\mathrm{m}$, manually designed using Inkscape to
+reproduce the main features of the experimental track available
+in the laboratory. For simplicity, the simulated environment is
+enclosed by uniformly shaped walls, providing a simplified
+representation of the physical boundaries.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{simulation_circuit_no_obst.png}
+    \caption{Simulated road network in Gazebo.}
+    \label{fig:gazebo_track}
+\end{figure}
+
+In addition to this Gazebo environment, a second version was
+developed by introducing a few physical obstacles along the track.
+This alternative configuration was designed to evaluate the
+navigation system's ability to simultaneously handle physical
+obstacles detected by the LiDAR and road markings identified
+through computer vision.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{simulation_circuit_obst.png}
+    \caption{Simulated road network with additional physical obstacles.}
+    \label{fig:gazebo_track_obstacles}
+\end{figure}
+
+\subsection{Extended Kalman Filter in Simulation}
+
+The Extended Kalman Filter (EKF) was also implemented in the simulation environment to maintain consistency with the real robot's localization architecture. However, its introduction did not lead to significant improvements in odometry estimation, as Gazebo provides idealized odometry measurements under the adopted simulation configuration.
+
+\section{Environment Validation}
+
+Thanks to these changes, both the real robot and the simulation can start up properly and, most importantly, by aligning the names of the two environments, the same code can now be used in both simulation and on the physical robot, provided that computational limitations are not taken into account.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{blank.png}
+    \caption{Grafo dei topic e dei frame in simulazione e nella realtà.}
+    \label{fig:environment_topics_frames}
+\end{figure}
+
+\subsection{Workspace Preparation for Laboratory Courses}
+
+The procedure described above can then be applied to each robot in the laboratory, providing students with a consistent platform for experimentation. To support this process, all required files have been uploaded to the University of Lorraine's GitLab instance, together with shell scripts (\texttt{.sh}) that automate dependency installation, sensor configuration, and the creation of convenient command aliases.
+
+% ==========================================
+% PART I - SIMULATION
+% ==========================================
+
+\part{Simulation}
+
+% ==========================================
+% CHAPTER 4 - AUTONOMOUS NAVIGATION
+% ==========================================
+
+\chapter{Simulation Pipeline}
+\label{chap:simulation_pipeline}
+
+This chapter presents the development of a complete simulation
+pipeline comprising mapping, localization, path planning, and
+control. The pipeline operates in the simulated environments
+introduced previously, using data from the simulated camera
+and LiDAR.
+
+\section{General Control Architecture}
+
+The general control architecture of the mobile robot is shown
+in Figure~\ref{fig:general_control_scheme}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{gen_ctrl_scheme.png}
+    \caption{General control architecture of the mobile robot.}
+    \label{fig:general_control_scheme}
+\end{figure}
+
+The user assigns a task to the robot, such as reaching a desired
+target pose. Based on this objective and the available sensor
+information, the planner generates a reference path for the robot
+to follow. The controller then computes the appropriate control
+commands based on the reference path and the estimated robot state.
+
+These commands are sent to the robot's actuators, producing changes
+in its position and orientation. The resulting motion is measured
+by the onboard sensors, allowing the robot's state estimate and
+control commands to be continuously updated. This feedback loop
+continues until the assigned task is completed.
+
+\section{Implemented Navigation Pipeline}
+
+The navigation pipeline implemented in simulation is illustrated
+in Figure~\ref{fig:simulation_pipeline}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Overview of the navigation pipeline implemented
+    in simulation.}
+    \label{fig:simulation_pipeline}
+\end{figure}
+
+Semantic labels extracted from camera images are combined with
+depth data to generate a three-dimensional semantic point cloud,
+in which each point carries both spatial coordinates and a semantic
+class. During mapping, these observations are integrated with the
+LiDAR-based occupancy map to construct a global representation of
+the environment, capturing both obstacle geometry and semantic
+traversability information.
+
+Navigation begins when the user specifies a target pose, comprising
+position and orientation. The global planner then computes a
+reference path using \textbf{Smac Hybrid A*} with a
+\textbf{Dubins motion model}, accounting for the robot's Ackermann
+steering geometry and minimum turning radius. During navigation,
+incoming semantic observations and LiDAR scans continuously update
+a local costmap, representing nearby obstacles and changes in
+the environment.
+
+The reference path, local costmap, and estimated robot state are
+provided to a \textbf{sampling-based nonlinear Model Predictive
+Controller (MPC)}. At each control cycle, the controller evaluates
+candidate sequences of velocities and steering angles by predicting
+the resulting robot motion over a finite horizon. It selects the
+best admissible sequence among the evaluated candidates according
+to path-tracking, obstacle-avoidance, and control-effort costs,
+and applies its first reachable command.
+
+This process repeats until the robot reaches the target within
+the specified position and orientation tolerances, or navigation
+is interrupted by an error or a stop request.
+
+The following sections describe and justify each component of
+the pipeline, presenting its inputs, outputs, and corresponding
+experimental results.
+
+\section{Image Processing}
+\label{sec:computer_vision_pipeline}
+
+The main objective of the project, as previously mentioned, is to
+enable the robot to navigate the experimental track while complying
+with a simplified set of traffic rules. Achieving this objective
+requires the robot to recognize and interpret road markings, making
+computer vision a fundamental component of the navigation system.
+
+Furthermore, since the experimental track is assumed to be flat,
+the geometric relationship between camera observations and the
+ground plane can be exploited to simplify the spatial reconstruction
+of the detected road markings.
+
+The image-processing system was implemented within the ROS~2 package
+\texttt{cv\_package}. It consists of several interconnected nodes
+forming a dedicated perception pipeline that processes RGB-D images
+and converts the extracted semantic information into a representation
+compatible with the LiDAR-based navigation system.
+
+The overall architecture of this subsystem is illustrated in
+Figure~\ref{fig:cv_pipeline}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Architecture of the computer vision pipeline
+    implemented in \texttt{cv\_package}.}
+    \label{fig:cv_pipeline}
+\end{figure}
+
+The following sections describe each processing node, focusing on
+its operating principles, input and output data, and implementation
+choices.
+
+\subsection{Image Thresholding: \texttt{lane\_detector.py}}
+\label{subsec:lane_detector}
+
+Four main semantic elements can be distinguished in both the
+simulated and real tracks: the dark grey road surface, visual
+obstacles (typically white or grey), yellow lines, and white dashed
+lines. Due to the robot's limited onboard computational resources,
+a lightweight colour-based detection algorithm was selected
+instead of a deep neural network.
+
+The adopted strategy first isolates the road surface and yellow
+lines. These features exhibit distinctive and relatively consistent
+colour profiles in both environments, making them easier to
+identify than the remaining elements, which are extracted in
+subsequent processing stages.
+
+The purpose of this node is therefore to process incoming camera
+frames and generate semantic masks for dark grey and yellow regions
+with minimal computational overhead.
+
+\subsubsection{Input and Preprocessing}
+
+The node receives RGB images with a resolution of
+$320 \times 240$ pixels at a frequency of $20\,\mathrm{Hz}$ through
+the \texttt{/rgb/image\_raw} topic.
+
+The upper half of each image is
+discarded, as it contains no relevant road information. Depending
+on the camera, a configurable number of bottom rows may also be
+excluded, since these can contain consistently black pixels.
+These operations reduce the computational load of subsequent
+processing stages and prevent image artefacts from affecting
+the segmentation.
+
+The retained image region is then converted from RGB to HSV.
+Separating hue, saturation, and brightness facilitates the
+identification of yellow regions and allows dark pixels to be
+selected according to their brightness. 
+
+\subsubsection{Colour Segmentation}
+
+The HSV thresholds used for segmentation are reported in
+Table~\ref{tab:lane_detector_thresholds}. Hue values follow the
+OpenCV convention, ranging from 0 to 179, while saturation and
+value range from 0 to 255.
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Class} & \textbf{H} & \textbf{S} & \textbf{V} \\
+        \midrule
+        Dark pixels & Any & Any & $0$--$150$ \\
+        Yellow      & $15$--$35$ & $80$--$255$ & $80$--$255$ \\
+        \bottomrule
+    \end{tabular}
+    \caption{HSV thresholds used by \texttt{lane\_detector.py}.}
+    \label{tab:lane_detector_thresholds}
+\end{table}
+
+Dark pixels are classified as road candidates, while pixels within
+the yellow colour range are identified as yellow markings.
+All remaining valid pixels are assigned to the background class.
+
+\subsubsection{Output Representation}
+
+The segmentation results are encoded in a single-channel grayscale
+image, with each semantic label represented by a distinct intensity
+value. The output classes are listed in
+Table~\ref{tab:lane_detector_labels}.
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lp{0.53\textwidth}}
+        \toprule
+        \textbf{Label} & \textbf{Description} \\
+        \midrule
+        \texttt{LABEL\_INVALID}
+        & Ignored pixels in the excluded bottom rows. \\
+
+        \texttt{LABEL\_ROAD}
+        & Dark pixels identified as road. \\
+
+        \texttt{LABEL\_YELLOW}
+        & Pixels identified as yellow markings. \\
+
+        \texttt{LABEL\_BACKGROUND}
+        & All other valid pixels. \\
+        \bottomrule
+    \end{tabular}
+    \caption{Semantic labels produced by \texttt{lane\_detector.py}.}
+    \label{tab:lane_detector_labels}
+\end{table}
+
+\subsection{Depth Data Processing: \texttt{Depth\_correction.py}}
+\label{subsec:depth_correction}
+
+This helper node adapts the depth images to the dimensions and
+cropping applied to the semantic images produced by
+\texttt{lane\_detector.py}.
+
+The input depth image is cropped and downsampled to obtain the
+required output resolution. No interpolation is performed.
+Instead, the minimum depth within each downsampling region is
+retained, preserving the closest observed surface.
+
+% TODO: Validate and describe the exact cropping, downsampling,
+% treatment of invalid depth values, and pixel correspondence
+% with the semantic images.
+
+\subsection{Spatial Representation: \texttt{visual\_ptcld.py}}
+\label{subsec:visual_ptcld}
+
+The semantic images identify the road surface and yellow markings,
+but do not yet distinguish white dashed lines from visually similar
+obstacles. Moreover, the image coordinates alone do not directly
+provide the metric spatial information required for mapping.
+
+The purpose of \texttt{visual\_ptcld.py} is therefore to combine
+semantic labels with depth measurements to reconstruct spatial
+points that can be integrated with LiDAR observations for global
+and local mapping. The resulting spatial representation is also
+used to distinguish the boardwalk from white dashed lines.
+
+\subsubsection{Reprojection and Ground-Plane Approximation}
+
+The procedure first separates interior road pixels from pixels
+along the boundary between the road and background classes.
+The selected pixels are then downsampled and associated with
+the corresponding measurements in the aligned depth image.
+
+Using the intrinsics of the camera, these observations are reprojected
+into three-dimensional points in the camera frame. The points
+are subsequently transformed into the robot's base frame.
+
+Assuming that the relevant visual features lie approximately
+on the ground plane, the vertical coordinate of each transformed
+point is set to zero:
+\begin{equation}
+    \mathbf{p}_{\mathrm{base}}
+    =
+    \begin{bmatrix}
+        x & y & z
+    \end{bmatrix}^{\mathsf{T}}
+    \quad \longrightarrow \quad
+    \mathbf{p}_{\mathrm{BEV}}
+    =
+    \begin{bmatrix}
+        x & y & 0
+    \end{bmatrix}^{\mathsf{T}}.
+    \label{eq:ground_plane_projection}
+\end{equation}
+
+This approximation produces a planar bird's-eye view (BEV)
+representation, simplifying subsequent spatial processing
+and mapping. Downsampling further reduces the computational
+load and memory requirements.
+
+\subsubsection{Spatial Classification}
+
+Once the points have been projected onto the ground plane,
+spatial proximity is used to distinguish boardwalk regions
+from white dashed lines.
+
+Let $\mathcal{R}$ denote the set of road-boundary points and
+$\mathcal{B}$ the set of background points. The classification
+procedure comprises the following steps:
+
+\begin{enumerate}
+    \item For each background point $\mathbf{b}\in\mathcal{B}$,
+    compute its Euclidean distance to the nearest road-boundary
+    point:
+    \begin{equation}
+        d_{\mathcal{R}}(\mathbf{b})
+        =
+        \min_{\mathbf{r}\in\mathcal{R}}
+        \left\|\mathbf{b}-\mathbf{r}\right\|_2.
+    \end{equation}
+
+    \item Classify background points whose distance exceeds
+    a threshold $d_1$ as boardwalk, forming an initial set
+    $\mathcal{T}$:
+    \begin{equation}
+        \mathcal{T}
+        =
+        \left\{
+        \mathbf{b}\in\mathcal{B}
+        \;:\;
+        d_{\mathcal{R}}(\mathbf{b})>d_1
+        \right\}.
+    \end{equation}
+
+    \item For each remaining background point, compute the
+    Euclidean distance to the nearest point in the initial
+    boardwalk set:
+    \begin{equation}
+        d_{\mathcal{T}}(\mathbf{b})
+        =
+        \min_{\mathbf{t}\in\mathcal{T}}
+        \left\|\mathbf{b}-\mathbf{t}\right\|_2.
+    \end{equation}
+
+    \item Extend the boardwalk classification to background
+    points whose distance to $\mathcal{T}$ is below a second
+    threshold $d_2$.
+\end{enumerate}
+
+KD-Trees are used to accelerate the nearest-neighbour searches.
+Writing $R=|\mathcal{R}|$, $B=|\mathcal{B}|$, and
+$T=|\mathcal{T}|$, the indicative average-case costs are
+$\mathcal{O}(R\log R)$ for constructing the road-boundary tree
+and $\mathcal{O}(B\log R)$ for querying the background points.
+The second stage requires constructing a tree from the
+boardwalk points, with a cost of $\mathcal{O}(T\log T)$,
+followed by at most $B$ queries, with an indicative cost of
+$\mathcal{O}(B\log T)$. These query estimates depend on the
+point distribution and are not worst-case guarantees.
+
+% TODO: Verify the complexity assumptions against the selected
+% reference and the KD-Tree implementation before final submission.
+% Reference supplied:
+% https://arxiv.org/pdf/cs/9901013
+
+\subsubsection{Output Representation}
+
+The resulting semantic classes are summarized in
+Table~\ref{tab:visual_ptcld_labels}.
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lp{0.48\textwidth}}
+        \toprule
+        \textbf{Label} & \textbf{Description} \\
+        \midrule
+        \texttt{LABEL\_INVALID}
+        & Invalid or ignored observations. \\
+
+        \texttt{LABEL\_ROAD}
+        & Road-boundary points. \\
+
+        \texttt{LABEL\_YELLOW}
+        & Yellow marking points. \\
+
+        \texttt{LABEL\_BACKGROUND}
+        & Remaining background points, interpreted as
+        white dashed lines. \\
+
+        \texttt{LABEL\_INTERIOR\_ROAD}
+        & Interior road points. \\
+
+        \texttt{LABEL\_BOARDWALK}
+        & Boardwalk points within a threshold distance
+        of the road. \\
+
+        \texttt{LABEL\_INTERIOR\_BOARDWALK}
+        & Remaining boardwalk points. \\
+        \bottomrule
+    \end{tabular}
+    \caption{Semantic labels produced by
+    \texttt{visual\_ptcld.py}.}
+    \label{tab:visual_ptcld_labels}
+\end{table}
+
+Following classification and further downsampling, the points
+are published in a \texttt{sensor\_msgs/msg/PointCloud2} message.
+This representation supports visual inspection in RViz2 and
+preserves the distinction between observed free space,
+represented by road points, and unobserved regions, where
+no valid points are available. In particular, gaps in the
+projected observations are not automatically interpreted
+as free space.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Semantic point cloud generated by
+    \texttt{visual\_ptcld.py}.}
+    \label{fig:semantic_point_cloud}
+\end{figure}
+
+Figure~\ref{fig:cv_data_flow} summarizes the input
+and output topics, image dimensions, and publishing frequencies of the computer vision pipeline when operating in standalone mode.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Input and output data flow of CV pipeline, including image dimensions and
+    publishing frequencies in standalone operation.}
+    \label{fig:cv_data_flow}
+\end{figure}
+
+% TODO: Add measured processing times and output frequencies
+% after experimental validation.
+
+\section{Offline Global Mapping}
+\label{sec:offline_mapping}
+
+The purpose of this stage is to combine the semantic point cloud
+generated by the perception pipeline with LiDAR observations to
+construct a global costmap of the circuit.
+
+\subsection{Visual Cost Map: \texttt{semantic\_grid.py}}
+\label{subsec:semantic_grid}
+
+The semantic point cloud contains several classes, which are
+associated with different traversal costs. Using a cost range
+of $[0,100]$, the assignments are summarized in
+Table~\ref{tab:semantic_costs}.
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lc}
+        \toprule
+        \textbf{Semantic label} & \textbf{Cost} \\
+        \midrule
+        \texttt{LABEL\_INVALID}            & Discarded \\
+        \texttt{LABEL\_ROAD}               & 0 \\
+        \texttt{LABEL\_INTERIOR\_ROAD}      & 0 \\
+        \texttt{LABEL\_BACKGROUND}         & 30 \\
+        \texttt{LABEL\_YELLOW}             & 60 \\
+        \texttt{LABEL\_BOARDWALK}          & 90 \\
+        \texttt{LABEL\_INTERIOR\_BOARDWALK} & 90 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Traversal costs assigned to the semantic classes.}
+    \label{tab:semantic_costs}
+\end{table}
+
+The global map is discretized into cells measuring
+$5 \times 5\,\mathrm{cm}$, each of which is assigned a single
+semantic cost.
+
+\subsubsection{Temporal Evidence Accumulation}
+
+A single cell may receive observations belonging to different
+semantic classes, both within the same point cloud and over time.
+To combine these observations, a temporal evidence accumulator
+was implemented, taking inspiration from the Bayesian log-odds
+filter described in \textit{Probabilistic Robotics},
+Section~4.1.4.
+
+For each cell, a separate score is maintained for each candidate
+cost label. Whenever new visual observations are available,
+the score associated with class $c$ is updated as follows:
+\begin{equation}
+    s_{t,c}
+    =
+    \operatorname{clip}
+    \left(
+        s_{t-1,c}
+        + h f_{t,c}
+        - m\left(1-f_{t,c}\right),
+        -L,
+        L
+    \right),
+    \label{eq:semantic_score_update}
+\end{equation}
+where
+\begin{equation}
+    f_{t,c}
+    =
+    \frac{N_{t,c}}{N_t}.
+    \label{eq:semantic_class_fraction}
+\end{equation}
+
+Here, $N_{t,c}$ is the number of points assigned to class $c$
+within the cell at time $t$, and $N_t$ is the total number of
+valid points observed in that cell. The parameters $h$ and $m$
+control the positive and negative score increments, respectively,
+while $L$ limits the score magnitude.
+
+The clipping operation is defined as
+\begin{equation}
+    \operatorname{clip}(a,-L,L)
+    =
+    \min\left(L,\max\left(-L,a\right)\right).
+\end{equation}
+
+The cell is assigned the class with the highest score, provided
+that this score exceeds the classification threshold. Otherwise,
+the cell remains unknown.
+
+Score saturation prevents evidence from accumulating without
+bound, allowing the classifier to respond to changes even after
+a prolonged period of consistent observations.
+
+The reference used as inspiration for this accumulation strategy
+is available at:
+\begin{quote}
+    \url{https://docs.ufpr.br/~danielsantos/ProbabilisticRobotics.pdf}
+\end{quote}
+
+\subsubsection{Experimental Evaluation}
+
+To evaluate the effectiveness of the filter, a ROS bag containing
+the topics required for mapping was recorded. This recording
+allows different parameter configurations to be compared using
+the same input observations.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Comparison of visual maps obtained using different
+    temporal evidence accumulation parameters.}
+    \label{fig:semantic_grid_parameter_comparison}
+\end{figure}
+
+\subsection{LiDAR Mapping}
+\label{subsec:lidar_mapping}
+
+LiDAR observations serve two main purposes during mapping:
+\begin{enumerate}
+    \item Correcting the estimated robot trajectory through
+    Simultaneous Localization and Mapping (SLAM).
+    \item Recording physical obstacles in the costmap.
+\end{enumerate}
+
+The robot trajectory estimated from odometry is corrected online
+using the \texttt{async\_slam\_toolbox\_node} provided by the
+ROS~2 \texttt{slam\_toolbox} package.
+
+To understand this process, it is first necessary to examine
+the main reference frames used during navigation.
+
+\subsubsection{Reference Frames}
+
+Figure~\ref{fig:mapping_frame_tree} illustrates the reference
+frame hierarchy.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{blank.png}
+    \caption{Main reference frames used during mapping:
+    \texttt{map}, \texttt{odom}, and \texttt{base\_link}.}
+    \label{fig:mapping_frame_tree}
+\end{figure}
+
+The hierarchy starts from the fixed \texttt{map} frame, to which
+the global costmap is anchored. This frame is connected to the
+\texttt{odom} frame through a transform estimated by SLAM.
+The \texttt{odom} frame provides the reference for the locally
+continuous odometry estimate and is connected to the robot's
+\texttt{base\_link} frame.
+
+One of the main tasks of SLAM is to estimate the transform
+between \texttt{map} and \texttt{odom}, compensating for
+accumulated odometry drift.
+
+\subsubsection{Trajectory and Map Correction}
+
+The SLAM system maintains a graph of robot poses associated with
+laser scans. These poses are subsequently optimized to improve
+the alignment of the observed LiDAR features.
+
+Consequently, the correction process affects both the
+\texttt{map}-to-\texttt{odom} transform and the estimated poses
+associated with previously acquired scans. The occupancy map
+can therefore be updated using the corrected trajectory,
+reducing duplicated or blurred obstacle boundaries.
+
+In principle, a similar correction strategy could also be
+applied to previously recorded visual observations, which could
+provide additional information for localization. However,
+these extensions were not evaluated in the proposed pipeline,
+as the results obtained were already sufficiently accurate
+and the additional processing would increase computational
+and memory requirements.
+
+Nevertheless, extending the mapping framework in this direction
+represents a possible avenue for future work.
+
+\noindent\textbf{Reference:}
+Macenski, S., and Jambrecic, I. (2021).
+\textit{SLAM Toolbox: SLAM for the dynamic world}.
+Journal of Open Source Software, 6(61), 2783.
+\url{https://doi.org/10.21105/joss.02783}
+
+\subsection{Data Fusion and Outputs: \texttt{semantic\_mapper.py}}
+\label{subsec:semantic_mapper}
+
+The \texttt{semantic\_mapper.py} node combines the LiDAR
+observations with the visual cost map. LiDAR-detected obstacles
+are assigned the maximum cost of 100 and take priority over
+visual costs. Laser scan information is also used to populate
+regions that have not been observed by the vision pipeline.
+
+The procedure generates three maps:
+\begin{enumerate}
+    \item \texttt{limo\_map\_complete.pgm}: a complete map
+    containing both physical and visual obstacles, with their
+    corresponding traversal costs.
+
+    \item \texttt{limo\_map\_laser.pgm}: a map containing only
+    LiDAR-detected obstacles, represented with the maximum
+    cost of 100.
+
+    \item \texttt{limo\_cv\_obstacle.pgm}: a map containing
+    yellow lines and visually detected sidewalks, both
+    represented with the maximum cost of 100.
+\end{enumerate}
+
+The complete map is used for navigation, while the other two
+maps are used for robot localization.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Maps generated by \texttt{semantic\_mapper.py}:
+    complete cost map, LiDAR-only obstacle map, and visual
+    obstacle map.}
+    \label{fig:offline_mapping_outputs}
+\end{figure}
+
+
+\section{Autonomous Localization}
+\label{sec:autonomous_localization}
+
+\subsection{LiDAR-Based Localization and Its Limitations}
+\label{subsec:lidar_localization}
+
+One of the first challenges in autonomous navigation is to estimate
+the robot's pose within a given map. One of the most widely used
+algorithms for this purpose is Adaptive Monte Carlo Localization
+(AMCL), which is implemented in Nav2, the navigation stack for ROS~2.
+
+The underlying principle is to compare LiDAR measurements with a
+previously constructed map to estimate a probability distribution
+over the robot's possible poses. Ideally, this distribution should
+be concentrated around the robot's actual pose, with sufficiently
+small uncertainty.
+
+However, in the environments considered here, LiDAR measurements
+provide relatively little distinctive information and may
+occasionally be unreliable. Both the simulated and real circuits
+are fully or partially enclosed by walls forming rectangular
+boundaries, whose geometric symmetries can produce ambiguous pose
+hypotheses. Moreover, the robot may detect obstacles whose positions
+change between experiments or during navigation, introducing
+further uncertainty.
+
+To evaluate conventional AMCL under these conditions, a simulation
+experiment was conducted in which the robot navigated through one
+of the circuits using only LiDAR-based localization. The estimated
+covariance remained relatively large throughout the experiment,
+as illustrated in Figure~\ref{fig:lidar_amcl_covariance}.
+
+% TODO: Insert the measured covariance threshold and specify
+% the corresponding position or orientation component.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Estimated pose covariance during navigation using
+    conventional LiDAR-based AMCL.}
+    \label{fig:lidar_amcl_covariance}
+\end{figure}
+
+An important objective of localization is to estimate the robot's
+position relative to surrounding obstacles. However, as shown in
+Figure~\ref{fig:lidar_amcl_alignment}, the estimated pose did not
+always provide sufficiently accurate alignment between sensor
+observations and the reference map. Such discrepancies can
+negatively affect path planning and obstacle avoidance.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Alignment between sensor observations and the
+    reference map using conventional LiDAR-based AMCL.}
+    \label{fig:lidar_amcl_alignment}
+\end{figure}
+
+To address these limitations, information extracted by the computer
+vision pipeline is incorporated into localization. Combining LiDAR
+measurements with semantic environmental features provides
+additional spatial information that can help resolve geometric
+ambiguities.
+
+\subsection{Sensor-Fused AMCL}
+\label{subsec:sensor_fused_amcl}
+
+The proposed approach extends AMCL to integrate visual information
+alongside laser measurements. It preserves the particle-filter
+structure while introducing an additional measurement model based
+on semantic information extracted from camera images.
+
+Since visual observations are not informative in every situation,
+a dedicated assessment mechanism determines whether their
+contribution should be included in the particle weight update.
+
+\subsubsection{Particle Representation and Motion Model}
+
+The robot pose distribution is represented by $N$ weighted
+particles. Each particle $i$ has a pose
+$\boldsymbol{\xi}_{t,i}=(x_{t,i},y_{t,i},\theta_{t,i})$
+and a non-negative weight $w_{t,i}$ satisfying
+\begin{equation}
+    w_{t,i}\geq 0,
+    \qquad
+    \sum_{i=1}^{N}w_{t,i}=1.
+\end{equation}
+
+Each particle represents a possible robot pose in the map frame,
+and its weight expresses the relative plausibility of that
+hypothesis. The initial particle cloud is generated by applying
+Gaussian perturbations around the initial pose estimate.
+
+During navigation, the particles are propagated using the
+odometry motion model, with random perturbations accounting
+for motion uncertainty:
+\begin{equation}
+    \boldsymbol{\xi}_{t,i}^{-}
+    =
+    f\left(
+        \boldsymbol{\xi}_{t-1,i},
+        \Delta\boldsymbol{\xi}_{\mathrm{odom},t}
+    \right)
+    +
+    \boldsymbol{\varepsilon}_{t,i}.
+    \label{eq:amcl_motion_prediction}
+\end{equation}
+
+Here, $f(\cdot)$ denotes the deterministic odometry model,
+$\boldsymbol{\varepsilon}_{t,i}$ represents motion uncertainty,
+and the superscript $-$ denotes the predicted state before
+the measurement update.
+
+Once the particles have been propagated, sensor measurements
+are used to update their weights. For readability, the time
+index $t$ is omitted in the following equations.
+
+\subsubsection{LiDAR Measurement Model}
+
+The LiDAR update follows a likelihood-field approach. For each
+particle, valid laser-ray endpoints are projected into the map
+frame according to the corresponding pose hypothesis.
+
+For a ray $k$ with measured range $r_k$ and relative bearing
+$\alpha_k$, the endpoint coordinates are
+\begin{align}
+    e_{ik,x}
+    &=
+    x_{L,i}
+    +
+    r_k\cos\left(\theta_{L,i}+\alpha_k\right), \\
+    e_{ik,y}
+    &=
+    y_{L,i}
+    +
+    r_k\sin\left(\theta_{L,i}+\alpha_k\right),
+\end{align}
+where $(x_{L,i},y_{L,i},\theta_{L,i})$ is the LiDAR pose in the
+map frame, obtained from the particle hypothesis and the
+sensor extrinsic calibration.
+
+A distance field is computed from the reference occupancy map.
+Each cell stores the Euclidean distance to the nearest occupied
+obstacle. Endpoints outside the map boundaries are assigned
+the maximum cutoff distance.
+
+Let $d_{ik}$ denote the distance associated with the projected
+endpoint. Its measurement score is
+\begin{equation}
+    s_{ik}
+    =
+    z_{\mathrm{hit}}
+    \exp\left(
+        -\frac{d_{ik}^{2}}{2\sigma_{\mathrm{hit}}^{2}}
+    \right)
+    +
+    \frac{z_{\mathrm{rand}}}{r_{\max}},
+    \label{eq:lidar_measurement_score}
+\end{equation}
+where $z_{\mathrm{hit}}$ weights obstacle proximity,
+$\sigma_{\mathrm{hit}}$ controls the spatial decay,
+$z_{\mathrm{rand}}$ weights the uniform random component,
+and $r_{\max}$ is the maximum sensor range.
+
+The parameters used are
+\begin{equation}
+    z_{\mathrm{hit}}=0.5,
+    \qquad
+    z_{\mathrm{rand}}=0.5,
+    \qquad
+    \sigma_{\mathrm{hit}}=0.2\,\mathrm{m}.
+\end{equation}
+
+The individual ray scores are aggregated into a LiDAR score:
+\begin{equation}
+    L_i
+    =
+    1+\sum_{k\in\mathcal{B}}s_{ik}^{3},
+    \label{eq:lidar_particle_score}
+\end{equation}
+where $\mathcal{B}$ is the set of valid rays. The cubic exponent
+emphasizes measurements that agree strongly with the map,
+while the constant prevents the score from vanishing.
+
+The predicted weight is updated according to
+\begin{equation}
+    \widetilde{w}_i^{L}
+    =
+    w_i^{-}L_i.
+\end{equation}
+
+Normalization yields
+\begin{equation}
+    w_i^{L}
+    =
+    \frac{w_i^{-}L_i}
+    {\displaystyle\sum_{j=1}^{N}w_j^{-}L_j}.
+    \label{eq:lidar_weight_update}
+\end{equation}
+
+\subsubsection{Visual Measurement Model}
+
+The visual measurement model uses a previously generated semantic
+map $M_V$ and a point cloud of visual observations acquired online.
+
+The semantic map assigns each cell $c$ one of the following values:
+\begin{equation}
+    M_V(c)
+    =
+    \begin{cases}
+        0,   & \text{traversable road}, \\
+        100, & \text{visual obstacle}, \\
+        -1,  & \text{unknown region}.
+    \end{cases}
+\end{equation}
+
+The visual point cloud is subsampled to reduce computational
+overhead. Each retained point $j$ is assigned a binary label:
+\begin{equation}
+    o_j
+    =
+    \begin{cases}
+        0, & \text{road point}, \\
+        1, & \text{obstacle point}.
+    \end{cases}
+\end{equation}
+
+Temporal compensation accounts for the timestamp offset between
+LiDAR and camera observations, aligning the visual point cloud
+with the robot pose used for the update.
+
+For particle $i$, a compensated local point $(u_j,v_j)$ is
+projected into the map frame as
+\begin{align}
+    q_{ij,x}
+    &=
+    x_i^{-}
+    +
+    u_j\cos\theta_i^{-}
+    -
+    v_j\sin\theta_i^{-}, \\
+    q_{ij,y}
+    &=
+    y_i^{-}
+    +
+    u_j\sin\theta_i^{-}
+    +
+    v_j\cos\theta_i^{-}.
+\end{align}
+
+Semantic consistency is evaluated by comparing the observed label
+with the map value at the projected position
+$\mathbf{q}_{ij}=(q_{ij,x},q_{ij,y})$.
+The binary disagreement term is
+\begin{equation}
+    \delta_{ij}
+    =
+    o_j\,
+    \mathbf{1}\!\left[M_V(\mathbf{q}_{ij})\neq 100\right]
+    +
+    (1-o_j)\,
+    \mathbf{1}\!\left[M_V(\mathbf{q}_{ij})\neq 0\right],
+    \label{eq:visual_disagreement}
+\end{equation}
+where $\mathbf{1}[\cdot]$ is the indicator function.
+
+The overall disagreement score for particle $i$ is
+\begin{equation}
+    D_i
+    =
+    \frac{1}{M}
+    \sum_{j=1}^{M}\delta_{ij},
+    \label{eq:visual_disagreement_score}
+\end{equation}
+where $M$ is the number of valid visual points used in the
+comparison. Consequently, $D_i\in[0,1]$, with lower values
+indicating better agreement with the semantic map.
+
+\subsubsection{Visual Information Reliability Assessment}
+
+Visual observations can be ambiguous or contain insufficient
+semantic structure. A reliability filter therefore determines
+whether the visual update should be applied.
+
+First, the disagreement scores are converted into a normalized
+distribution over the particles:
+\begin{equation}
+    q_i
+    =
+    \frac{
+        \exp\left[-\lambda_V\gamma(D_i-D_{\min})\right]
+    }{
+        \displaystyle\sum_{j=1}^{N}
+        \exp\left[-\lambda_V\gamma(D_j-D_{\min})\right]
+    },
+    \label{eq:visual_particle_distribution}
+\end{equation}
+where $D_{\min}=\min_i D_i$, $\lambda_V$ is the visual weight
+factor, and $\gamma$ is a sensitivity gain.
+
+The informativeness of the visual observations is evaluated
+using the Kullback--Leibler divergence from a uniform
+distribution:
+\begin{equation}
+    I
+    =
+    \sum_{i=1}^{N}
+    q_i\ln\left(\frac{q_i}{1/N}\right).
+    \label{eq:visual_kl_divergence}
+\end{equation}
+
+A value close to zero indicates that the visual observations
+provide little discrimination between the particle hypotheses.
+
+To evaluate spatial dispersion, let
+$\mathbf{p}_i=(x_i^{-},y_i^{-})^{\mathsf{T}}$.
+The weighted mean position and covariance are
+\begin{align}
+    \boldsymbol{\mu}_q
+    &=
+    \sum_{i=1}^{N}q_i\mathbf{p}_i, \\
+    \Sigma_q
+    &=
+    \sum_{i=1}^{N}
+    q_i
+    \left(\mathbf{p}_i-\boldsymbol{\mu}_q\right)
+    \left(\mathbf{p}_i-\boldsymbol{\mu}_q\right)^{\mathsf{T}}.
+\end{align}
+
+The maximum positional spread is measured by
+\begin{equation}
+    \sigma_{\mathrm{pos}}
+    =
+    \sqrt{\lambda_{\max}(\Sigma_q)},
+    \label{eq:visual_position_spread}
+\end{equation}
+where $\lambda_{\max}(\Sigma_q)$ is the largest eigenvalue
+of the covariance matrix.
+
+Angular dispersion is evaluated using circular statistics.
+The mean resultant length is
+\begin{equation}
+    \rho
+    =
+    \left|
+        \sum_{i=1}^{N}q_i
+        \exp\left(\mathrm{j}\theta_i^{-}\right)
+    \right|,
+\end{equation}
+where $\mathrm{j}$ is the imaginary unit. The corresponding
+circular standard deviation is
+\begin{equation}
+    \sigma_{\mathrm{yaw}}
+    =
+    \sqrt{-2\ln\rho}.
+    \label{eq:visual_yaw_spread}
+\end{equation}
+
+The visual update is accepted only when all the following
+conditions are satisfied:
+\begin{equation}
+    \begin{aligned}
+        I &\geq 0.02, \\
+        \sigma_{\mathrm{pos}} &\leq 0.5\,\mathrm{m}, \\
+        \sigma_{\mathrm{yaw}} &\leq 0.5\,\mathrm{rad}.
+    \end{aligned}
+    \label{eq:visual_reliability_conditions}
+\end{equation}
+
+At least 20 observed obstacle points are also required.
+If this requirement or any reliability condition is not met,
+the visual update is discarded.
+
+\subsubsection{Sensor Fusion and Particle Weight Update}
+
+When the reliability conditions are satisfied, the LiDAR-updated
+weights and visual scores are combined as follows:
+\begin{equation}
+    w_i^{F}
+    =
+    \frac{
+        (w_i^{L})^{\lambda_L}
+        \exp\left(-\lambda_V\gamma D_i\right)
+    }{
+        \displaystyle\sum_{j=1}^{N}
+        (w_j^{L})^{\lambda_L}
+        \exp\left(-\lambda_V\gamma D_j\right)
+    }.
+    \label{eq:fused_particle_weights}
+\end{equation}
+
+The parameters $\lambda_L$ and $\lambda_V$ control the relative
+influence of the LiDAR-updated distribution and the visual
+measurement score. Their values for simulation and real-world
+experiments are reported in Table~\ref{tab:amcl_fusion_parameters}.
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lcc}
+        \toprule
+        \textbf{Parameter}
+        & \textbf{Simulation}
+        & \textbf{Real Environment} \\
+        \midrule
+        $\lambda_L$ & 2  & 1 \\
+        $\lambda_V$ & 1  & 1 \\
+        $\gamma$    & 20 & 20 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Parameters used for LiDAR and visual fusion.}
+    \label{tab:amcl_fusion_parameters}
+\end{table}
+
+When the reliability checks fail, the visual update is bypassed
+and the LiDAR-updated weights are retained:
+\begin{equation}
+    w_i^{F}=w_i^{L}.
+\end{equation}
+
+\subsubsection{Resampling and Iterative Localization}
+
+Following the measurement update, particles are resampled according
+to their normalized weights, favouring more plausible hypotheses.
+
+As the robot navigates, motion prediction, measurement updates,
+and resampling are repeated. The accepted visual observations
+complement the geometric information provided by LiDAR,
+helping the filter distinguish between otherwise ambiguous
+pose hypotheses.
+
+\subsection{Pipeline Validation}
+\label{subsec:localization_validation}
+
+The proposed algorithm was evaluated on the same simulation
+circuit used to test conventional LiDAR-based AMCL.
+
+The results showed a substantial reduction in estimated
+localization uncertainty, with the position covariance
+approaching zero during most of the experiment, as illustrated
+in Figure~\ref{fig:fused_amcl_covariance}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Estimated position covariance during navigation
+    using Sensor-Fused AMCL.}
+    \label{fig:fused_amcl_covariance}
+\end{figure}
+
+Furthermore, the visual point cloud showed good spatial alignment
+with the corresponding obstacles in the global costmap,
+as illustrated in Figure~\ref{fig:fused_amcl_alignment}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Alignment between the visual point cloud and the
+    global costmap using Sensor-Fused AMCL.}
+    \label{fig:fused_amcl_alignment}
+\end{figure}
+
+\section{Path Planning}
+\label{sec:path_planning}
+
+Once a global map is available and the robot's pose is estimated
+with sufficient precision, a reference path must be generated
+to connect the current pose to a desired goal position and
+orientation.
+
+The controller computes commands by minimizing a cost function
+that accounts for several objectives, including proximity to
+the reference path. Consequently, the reference acts as a guide
+rather than a trajectory that must be followed exactly.
+Strict adherence to a path generated from an imperfect map
+may be undesirable, particularly when local observations
+indicate that adjustments are necessary.
+
+The global planner must nevertheless account for the robot's
+kinematic constraints. This is particularly important in the
+experimental road network, where narrow lanes limit the space
+available for manoeuvring.
+
+For these reasons, an A*-based planning algorithm is used to
+generate paths compatible with the robot's Ackermann steering
+geometry.
+
+\subsection{Custom Costmap Inflation}
+\label{subsec:custom_inflation}
+
+The planner searches for a path to the goal by minimizing a cost
+that depends partly on the global costmap. However, the semantic
+map assigns discrete costs to different classes without explicitly
+representing preferred positions within a lane. For example,
+road cells have zero cost both near the centre of a lane and
+close to a road boundary.
+
+This does not necessarily cause the planner to select paths
+dangerously close to obstacles. Nevertheless, the lack of spatial
+guidance can increase the search effort and produce paths that
+do not follow the intended lane structure.
+
+A custom inflation layer is therefore introduced to shape the
+cost distribution around obstacles and road boundaries.
+
+\subsubsection{Design Objectives}
+
+Conventional inflation encourages the robot to maintain clearance
+from obstacles by assigning larger costs to nearby cells.
+For road navigation, obstacle clearance alone is insufficient:
+the planner should also favour appropriate lane positioning
+while leaving sufficient space for other adjacent vehicles when possible, even where
+no centreline is present.
+
+The proposed inflation profile therefore combines obstacle
+repulsion with preferred distance bands. These bands guide the
+planner towards suitable lateral positions within the road.
+
+\subsubsection{Inflation Cost Profile}
+
+Each non-road known cell generates a distance-dependent cost
+profile. The profiles used in simulation and in the real
+environment are illustrated in
+Figure~\ref{fig:inflation_cost_profiles}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Custom inflation cost profiles used in simulation
+    and in the real environment. Regions A--F identify the
+    obstacle, repulsion zone, preferred distance bands,
+    separating cost peak, and outer cost region.}
+    \label{fig:inflation_cost_profiles}
+\end{figure}
+
+The profile is divided into six regions:
+
+\begin{description}
+    \item[Region A --- Source obstacle.]
+    The obstacle cells from which the inflation profile
+    is generated.
+
+    \item[Region B --- Obstacle repulsion.]
+    A region in which the added cost gradually decreases
+    with distance from the obstacle, discouraging paths
+    that pass too close to it.
+
+    \item[Region C --- First preferred band.]
+    A distance band with zero added inflation cost,
+    corresponding to the preferred position in the lane
+    closest to the source boundary.
+
+    \item[Region D --- Separating cost peak.]
+    A local cost maximum that separates the two preferred
+    bands. It introduces a virtual lane separation where
+    no explicit centreline is available.
+
+    \item[Region E --- Second preferred band.]
+    A second local minimum corresponding to the other lane.
+    This band is particularly useful in wider junctions
+    with sparse road markings, where it encourages more
+    orderly turning manoeuvres.
+
+    \item[Region F --- Outer cost region.]
+    Beyond the second preferred band, the added cost
+    increases gradually until reaching a saturation value,
+    where configured. This discourages unnecessary
+    deviations from the preferred road region.
+\end{description}
+
+Where multiple inflation profiles overlap, the contribution from the nearest source cell is retained. The resulting inflation cost is
+combined with the underlying semantic costmap by taking
+the maximum of the two values:
+\begin{equation}
+    C_{\mathrm{final}}(c)
+    =
+    \max\left(
+        C_{\mathrm{semantic}}(c),
+        C_{\mathrm{inflation}}(c)
+    \right),
+    \label{eq:inflation_cost_combination}
+\end{equation}
+where $c$ denotes a map cell. Consequently, a zero inflation
+cost does not remove an existing semantic cost.
+
+Figure~\ref{fig:inflated_global_costmap} shows the resulting
+cost distribution over the global map, with selected examples
+of the six regions highlighted.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Global costmap after custom inflation.
+    Annotated areas illustrate examples of regions A--F
+    within the road network.}
+    \label{fig:inflated_global_costmap}
+\end{figure}
+
+\subsection{The Algorithm: \texttt{rviz\_goal\_bridge.py}}
+
+The main planning pipeline is illustrated in
+Figure~\ref{fig:goal_bridge_flowchart}.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{blank.png}
+    \caption{Flowchart of the start--goal adjustment and path-planning procedure.}
+    \label{fig:goal_bridge_flowchart}
+\end{figure}
+
+The user selects a target pose in RViz2, which is received by the
+\texttt{rviz\_goal\_bridge.py} node. Although this request could be
+forwarded directly to the path-planning service, small inaccuracies
+in either the estimated starting pose or the selected goal may
+prevent the planner from finding a feasible solution. For instance,
+the robot footprint may slightly overlap an obstacle at either
+endpoint, or the requested poses may be difficult to connect under
+the robot's kinematic constraints.
+
+To improve robustness, the bridge introduces a
+\textbf{start--goal adjustment procedure}. This procedure generates
+alternative poses around both endpoints, checks them for collisions,
+and submits candidate start--goal pairs to the planner, prioritising
+small deviations from the original request.
+
+\subsubsection{Candidate Pose Generation}
+
+Candidate positions are sampled on concentric rings centred on each
+reference position. The radius of each ring is an integer multiple
+of the radial sampling interval, $\Delta r$, up to a maximum search
+radius, $R$.
+
+Positions are distributed uniformly along each ring, with their
+number increasing with its circumference to maintain an
+approximately constant sampling distance. Each ring contains at
+least eight positions. The original reference position is also
+included.
+
+At each sampled position, the algorithm evaluates 16 orientations,
+spaced at $22.5^\circ$ intervals relative to the reference heading.
+These include the original orientation and offsets covering a full
+revolution.
+
+With a search radius of $0.75\,\mathrm{m}$ and a radial interval of
+$0.10\,\mathrm{m}$, the outermost sampled ring lies at
+$0.70\,\mathrm{m}$. This produces 181 positions and 16 orientations
+per position, giving a total of \textbf{2,896 candidate poses for
+each endpoint}, before collision filtering.
+
+\subsubsection{Candidate Ranking and Collision Filtering}
+
+Each candidate receives a score combining its translational
+displacement and its absolute angular deviation from the reference
+pose. Candidates are then sorted in ascending order of this score,
+favouring poses close to the original request.
+
+Collision checks use a rectangular robot footprint measuring
+$0.322\,\mathrm{m} \times 0.220\,\mathrm{m}$. The footprint width
+includes a safety margin of $2.5\,\mathrm{mm}$ on each side relative
+to the physical robot. A candidate is retained only if its footprint
+does not overlap either a LiDAR obstacle or a boardwalk obstacle.
+
+The procedure therefore produces two ordered lists of collision-free
+candidates: one for the start and one for the goal.
+
+\subsubsection{Start--Goal Pair Selection}
+
+The bridge combines the two lists and tests candidate pairs in a
+diagonal sequence. It first considers the highest-ranked start and
+goal, followed by pairs with progressively larger sums of their
+list indices:
+%
+\[
+\begin{aligned}
+(s_0,g_0)
+&\rightarrow (s_0,g_1)
+\rightarrow (s_1,g_0) \\
+&\rightarrow (s_0,g_2)
+\rightarrow (s_1,g_1)
+\rightarrow (s_2,g_0)
+\rightarrow \cdots
+\end{aligned}
+\]
+
+This ordering prioritises pairs drawn from the beginning of both
+lists, allowing adjustments to either endpoint before considering
+more distant alternatives.
+
+\subsubsection{Path Planning}
+
+Each candidate pair is submitted to \textbf{SMAC Hybrid A*},
+provided by the Navigation2 \texttt{smac\_planner} package, using
+the \textbf{Dubins motion model}.
+
+Hybrid A* follows the search principle of conventional A*, but
+expands states using motion primitives that account for the
+vehicle's heading and turning constraints. Collision checking also
+considers the robot footprint along the candidate path, rejecting
+configurations that intersect obstacles classified as
+non-traversable.
+
+The Dubins motion model restricts the search to \textbf{forward
+motion}, so the resulting global paths do not include reversing
+manoeuvres.
+
+The bridge tests successive start--goal pairs until the planner
+finds a feasible path or reaches the maximum number of attempts.
+This limit is set to \textbf{48} in both the simulation and
+real-robot configurations.
+
+Figure~\ref{fig:goal_bridge_adjustment} illustrates the benefit of
+endpoint adjustment. The turquoise path is successfully generated
+between nearby valid poses, even though the original starting pose
+and the user-selected goal would prevent a direct planning request
+from succeeding.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{blank.png}
+    \caption{Successful path generation through start--goal adjustment.
+    The turquoise path connects nearby valid poses despite the
+    infeasibility of the original endpoints.}
+    \label{fig:goal_bridge_adjustment}
+\end{figure}
+
+(source for smac:\url{https://arxiv.org/html/2401.13078v2})
+
+\section{Online Local Mapping}
+
+
+\section{Local Planning and Control}
+
+\section{Simulation Results}
+
+% ==========================================
+% PART II - EXPERIMENTAL IMPLEMENTATION
+% ==========================================
+
+\part{Experimental Implementation}
+
+% ==========================================
+% CHAPTER 5 - REAL WORLD IMPLEMENTATION
+% ==========================================
+
+\chapter{Real-World Implementation}
+
+\section{Experimental Setup}
+
+\section{Computer Vision Pipeline}
+
+\section{Mapping and Localization}
+
+\section{Planning and Control}
+
+\section{Experimental Results}
+
+% ==========================================
+% CHAPTER 6 - CONCLUSIONS
+% ==========================================
+
+\chapter{Conclusions}
+
+\section{Main Achievements}
+
+\section{Limitations and Future Developments}
+
+\end{document}

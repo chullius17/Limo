@@ -37,7 +37,7 @@ from sensor_msgs.msg import CompressedImage, LaserScan, PointCloud2, PointField 
 from tf2_ros import StaticTransformBroadcaster  # noqa: E402
 
 from limo_interfaces.msg import MpcCandidate, MpcDebug  # noqa: E402
-from limo_controller.mpc_preview import MpcPreview  # noqa: E402
+from limo_controller.mpc_preview.node import MpcPreview  # noqa: E402
 from test_mpc_preview_render import sample_frame  # noqa: E402
 
 

@@ -41,7 +41,8 @@ def test_image_puts_map_y_up_and_preserves_cells_and_owned_pixels():
     msg.data = [100] * 6
     assert (image.width(), image.height()) == (3, 2)
     assert image.pixelColor(0, 1).getRgb()[:3] == (245, 245, 245)
-    assert image.pixelColor(0, 0).getRgb()[:3] == (255, 0, 60)
+    assert image.pixelColor(0, 0).getRgb()[:3] == (110, 35, 180)
+    assert image.pixelColor(1, 1).getRgb()[:3] == (235, 225, 250)
     assert image.pixelColor(1, 0).getRgb()[:3] == (190, 50, 210)
     assert image.pixelColor(2, 0).getRgb()[:3] == (125, 135, 145)
     lethal = grid()
@@ -119,7 +120,7 @@ def test_footprint_and_axes_follow_robot_and_rotated_map_origin(ros_app):
     footprint = ((-0.2, -0.1), (-0.2, 0.1), (0.2, 0.1), (0.2, -0.1))
     try:
         view.set_image(costmap_image(msg))
-        view.set_robot(msg, (9.5, -2, math.pi), footprint, 'base_link', 0.45)
+        view.set_robot(msg, (9.5, -2, math.pi), footprint, 0.45)
         paths = [item for item in view.robot_items if hasattr(item, 'path')]
         border = next(item for item in paths if item.pen().color().name() == '#141e2d')
         first = border.path().elementAt(0)
@@ -196,7 +197,7 @@ def test_blue_goal_requires_current_valid_path_and_survives_topic_delivery_order
         node.destroy_node()
 
 
-def test_goal_pose_is_transformed_at_its_timestamp(ros_app):
+def test_goal_and_path_are_transformed_at_their_timestamps(ros_app):
     node = PlanningGuiNode()
     try:
         node.tf_buffer.set_transform(transform(2, 3, math.pi / 2), 'test')
@@ -204,6 +205,17 @@ def test_goal_pose_is_transformed_at_its_timestamp(ros_app):
         msg.header.frame_id = 'base_link'
         assert node.goal_overlay(msg, 'map') == pytest.approx((2, 4, math.pi))
         assert node.goal_overlay(msg, 'missing_frame') is None
+        planned = path(1)
+        planned.header.frame_id = 'base_link'
+        planned.poses = [goal(x=0.0, y=0.0), goal(x=1.0, y=0.0)]
+        node._receive_path(planned)
+        points = node.path_overlay('map')
+        assert points[0] == pytest.approx((2, 3))
+        assert points[1] == pytest.approx((2, 4))
+        assert node.path_overlay('missing_frame') is None
+        node._receive_goal(goal(stamp=2))
+        node._receive_path(planned)  # A late retained path must stay hidden.
+        assert node.path_overlay('map') is None
     finally:
         node.destroy_node()
 
@@ -263,7 +275,7 @@ def test_green_and_blue_arrows_show_yaw_and_remain_distinct_when_coincident(ros_
         assert (tip.x, tip.y) == pytest.approx((5, 10.5))
         labels = [item.toPlainText() for item in view.goal_items
                   if hasattr(item, 'toPlainText')]
-        assert labels == ['Planned goal', 'Planned start']
+        assert labels == []
     finally:
         view.close()
 
@@ -310,9 +322,12 @@ def test_ros_goal_overlays_are_included_in_compressed_png_output(ros_app):
         until(lambda: node.requested_goal is not None)
         adjusted_pub.publish(goal(x=2.0, y=2.0, yaw=math.pi / 2, stamp=3))
         start_pub.publish(goal(x=1.0, y=1.0, yaw=math.pi / 2, stamp=2))
-        path_pub.publish(path(2))
+        planned = path(2)
+        planned.poses = [goal(x=1.0, y=1.0), goal(x=2.0, y=1.0), goal(x=2.0, y=2.0)]
+        path_pub.publish(planned)
         until(lambda: node.planned_goal() is not None and node.planned_start() is not None
-              and len(window.map_view.goal_items) == 9)
+              and len(window.map_view.goal_items) == 6
+              and bool(window.map_view.path_items))
         frames.clear()
         until(lambda: bool(frames))
         frame = frames[-1]
@@ -327,7 +342,7 @@ def test_ros_goal_overlays_are_included_in_compressed_png_output(ros_app):
         bits.setsize(image.byteCount())
         rows = np.frombuffer(bits, dtype=np.uint8).reshape(image.height(), image.bytesPerLine())
         pixels = rows[:, :image.width() * 3].reshape(image.height(), image.width(), 3)
-        for color in [(0, 166, 60), (21, 101, 255)]:
+        for color in [(0, 166, 60), (21, 101, 255), (0, 213, 204)]:
             assert np.any(np.all(pixels == color, axis=2))
         # Both blue arrows must be included in the actual compressed frame.
         start_pixel = window.map_view.mapFromScene(*world_to_pixel((1.0, 1.2), background))
@@ -338,7 +353,12 @@ def test_ros_goal_overlays_are_included_in_compressed_png_output(ros_app):
         patch = pixels[v - 2:v + 3, u - 2:u + 3]
         assert np.any(np.all(patch == (21, 101, 255), axis=2))
         path_pub.publish(Path())
-        until(lambda: len(window.map_view.goal_items) == 3)
+        until(lambda: len(window.map_view.goal_items) == 2
+              and not window.map_view.path_items)
+        path_pub.publish(planned)
+        until(lambda: bool(window.map_view.path_items))
+        requested_pub.publish(goal(stamp=4))
+        until(lambda: not window.map_view.path_items)
         assert window.terminal.toPlainText() == ''
     finally:
         window.close()

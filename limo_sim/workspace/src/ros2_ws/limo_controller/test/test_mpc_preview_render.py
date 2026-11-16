@@ -20,7 +20,7 @@ import unittest
 
 from PIL import Image
 
-from limo_controller.mpc_preview_render import (
+from limo_controller.mpc_preview.render import (
     Candidate, PreviewBackground, PreviewFrame, PreviewSources, RenderOptions,
     _costmap, _costmap_points,
     base_to_pixel,

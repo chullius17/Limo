@@ -5,7 +5,7 @@ import struct
 from types import SimpleNamespace
 import unittest
 
-from limo_controller.mpc_preview_sources import laser_points, semantic_points, transform_points
+from limo_controller.mpc_preview.sources import laser_points, semantic_points, transform_points
 
 
 class PreviewSourcesTest(unittest.TestCase):

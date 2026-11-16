@@ -1,14 +1,14 @@
 import os
 from glob import glob
 
-from setuptools import setup
+from setuptools import find_packages, setup
 
 package_name = 'limo_controller'
 
 setup(
     name=package_name,
     version='0.0.0',
-    packages=[package_name],
+    packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -34,7 +34,7 @@ setup(
             'control_gui = limo_controller.control_gui:main',
             'cmd_vel_mux = limo_controller.cmd_vel_mux:main',
             'path_executor = limo_controller.path_executor:main',
-            'mpc_preview = limo_controller.mpc_preview:main',
+            'mpc_preview = limo_controller.mpc_preview.node:main',
         ],
     },
 )

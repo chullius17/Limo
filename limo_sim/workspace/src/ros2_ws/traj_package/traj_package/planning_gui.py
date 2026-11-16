@@ -15,7 +15,6 @@
 """Display the planner's global costmap and the current search transcript."""
 
 import ast
-from html import escape
 import math
 import signal
 import sys
@@ -27,8 +26,8 @@ import numpy as np
 from PyQt5.QtCore import QByteArray, QBuffer, QIODevice, QPointF, Qt, QTimer
 from PyQt5.QtGui import QColor, QFont, QImage, QImageWriter, QPainterPath, QPen, QPixmap
 from PyQt5.QtWidgets import (
-    QApplication, QGraphicsItem, QGraphicsScene, QGraphicsView, QLabel, QPlainTextEdit,
-    QSplitter, QVBoxLayout, QWidget,
+    QApplication, QGraphicsScene, QGraphicsView, QGridLayout, QHBoxLayout, QLabel,
+    QPlainTextEdit, QSizePolicy, QSplitter, QVBoxLayout, QWidget,
 )
 import rclpy
 from rclpy.node import Node
@@ -76,6 +75,20 @@ def png_bytes(image):
     return bytes(data)
 
 
+def costmap_palette():
+    """Share the exact cell colors between the map and its visual legend."""
+    palette = np.empty((102, 3), dtype=np.uint8)
+    palette[0] = (245, 245, 245)  # Free.
+    level = np.linspace(0.0, 1.0, 98)[:, None]
+    palette[1:99] = np.rint(
+        (1.0 - level) * np.array((235, 225, 250))
+        + level * np.array((110, 35, 180))).astype(np.uint8)
+    palette[99] = (190, 50, 210)  # Inscribed obstacle.
+    palette[100] = (20, 20, 20)  # Lethal obstacle.
+    palette[101] = (125, 135, 145)  # Unknown (-1).
+    return palette
+
+
 def costmap_image(grid):
     """Color OccupancyGrid values and put positive map Y toward the top."""
     width, height = grid.info.width, grid.info.height
@@ -85,19 +98,70 @@ def costmap_image(grid):
     values = np.asarray(grid.data, dtype=np.int16).reshape(height, width)
     if np.any((values < -1) | (values > 100)):
         raise ValueError('Costmap values outside the range [-1, 100]')
-
-    palette = np.empty((102, 3), dtype=np.uint8)
-    palette[0] = (245, 245, 245)  # Free.
-    level = np.linspace(0.0, 1.0, 98)
-    palette[1:99, 0] = 255
-    palette[1:99, 1] = np.rint(235 * (1.0 - level)).astype(np.uint8)
-    palette[1:99, 2] = 60
-    palette[99] = (190, 50, 210)  # Inscribed obstacle.
-    palette[100] = (20, 20, 20)  # Lethal obstacle.
-    palette[101] = (125, 135, 145)  # Unknown (-1).
-    pixels = np.ascontiguousarray(palette[values][::-1])
+    pixels = np.ascontiguousarray(costmap_palette()[values][::-1])
     # Own the storage after the temporary numpy array leaves this function.
     return QImage(pixels.data, width, height, pixels.strides[0], QImage.Format_RGB888).copy()
+
+
+class PlanningLegend(QWidget):
+    """Explain map costs and overlay symbols without covering the map."""
+
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 2, 0, 0)
+        layout.setSpacing(4)
+        costs = QHBoxLayout()
+        costs.setSpacing(6)
+        costs.addWidget(QLabel('Free'))
+        pixels = np.ascontiguousarray(costmap_palette()[None, :99])
+        image = QImage(pixels.data, 99, 1, pixels.strides[0], QImage.Format_RGB888).copy()
+        strip = QLabel()
+        strip.setPixmap(QPixmap.fromImage(image))
+        strip.setScaledContents(True)
+        strip.setFixedHeight(16)
+        strip.setMinimumWidth(80)
+        strip.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        strip.setStyleSheet('border: 1px solid #8d969f;')
+        strip.setToolTip('Costmap values 0–98: free to increasing traversal cost')
+        costs.addWidget(strip, 1)
+        costs.addWidget(QLabel('High cost'))
+        palette = costmap_palette()
+        for value, name in [(99, 'Inscribed'), (100, 'Obstacle'), (-1, 'Unknown')]:
+            costs.addSpacing(8)
+            cell = QLabel()
+            cell.setFixedSize(16, 16)
+            cell.setStyleSheet(
+                'background-color: rgb({}, {}, {}); border: 1px solid #8d969f;'
+                .format(*palette[value]))
+            costs.addWidget(cell)
+            costs.addWidget(QLabel(name))
+        layout.addLayout(costs)
+
+        symbols = QGridLayout()
+        symbols.setHorizontalSpacing(16)
+        symbols.setVerticalSpacing(0)
+        for index, (glyph, color, name) in enumerate([
+            ('━', '#00d5cc', 'Path'),
+            ('→', '#00a63c', 'Selected goal'),
+            ('→', '#1565ff', 'Start / goal'),
+            ('▭', '#141e2d', 'Robot'),
+            ('→', '#c32323', 'X axis'),
+            ('↑', '#238237', 'Y axis'),
+        ]):
+            entry = QHBoxLayout()
+            entry.setSpacing(6)
+            symbol = QLabel(glyph)
+            symbol.setAlignment(Qt.AlignCenter)
+            symbol.setFixedWidth(26)
+            symbol.setStyleSheet('color: {}; font-size: 20px;'.format(color))
+            entry.addWidget(symbol)
+            entry.addWidget(QLabel(name))
+            entry.addStretch(1)
+            symbols.addLayout(entry, index // 3, index % 3)
+        for column in range(3):
+            symbols.setColumnStretch(column, 1)
+        layout.addLayout(symbols)
 
 
 class PlanningGuiNode(Node):
@@ -213,17 +277,43 @@ class PlanningGuiNode(Node):
         return self._planned_pose(self.adjusted_start)
 
     def _planned_pose(self, pose):
-        if self.planned_path is None or pose is None:
+        path = self._current_path()
+        if path is None or pose is None:
             return None
-        path_stamp = Time.from_msg(self.planned_path.header.stamp).nanoseconds
+        path_stamp = Time.from_msg(path.header.stamp).nanoseconds
         pose_stamp = Time.from_msg(pose.header.stamp).nanoseconds
         if pose_stamp < path_stamp:
             return None  # A retained pose from an earlier plan must not turn blue.
+        return pose
+
+    def _current_path(self):
+        """Ignore retained paths that predate the latest selected goal."""
+        if self.planned_path is None:
+            return None
         if self.requested_goal is not None:
+            path_stamp = Time.from_msg(self.planned_path.header.stamp).nanoseconds
             request_stamp = Time.from_msg(self.requested_goal.header.stamp).nanoseconds
             if path_stamp < request_stamp:
                 return None
-        return pose
+        return self.planned_path
+
+    def path_overlay(self, target_frame):
+        """Place the current path in the displayed frame using one stamped TF."""
+        path = self._current_path()
+        if path is None:
+            return None
+        points = [(p.pose.position.x, p.pose.position.y) for p in path.poses]
+        if not all(math.isfinite(x) and math.isfinite(y) for x, y in points):
+            return None
+        if path.header.frame_id != target_frame:
+            try:
+                tf = self.tf_buffer.lookup_transform(
+                    target_frame, path.header.frame_id, Time.from_msg(path.header.stamp)).transform
+            except TransformException:
+                return None
+            transform = (tf.translation.x, tf.translation.y, quaternion_yaw(tf.rotation))
+            points = [transform_point(point, transform) for point in points]
+        return points
 
     def goal_overlay(self, msg, target_frame):
         """Place the selected or accepted pose in the displayed costmap frame."""
@@ -292,8 +382,29 @@ class CostmapView(QGraphicsView):
         self.setDragMode(QGraphicsView.NoDrag)
         self.setMinimumSize(240, 180)
         self.map_item = None
+        self.path_items = []
         self.robot_items = []
         self.goal_items = []
+
+    def set_path(self, grid, points):
+        """Draw the planned path in turquoise above the map and below pose overlays."""
+        for item in self.path_items:
+            self.scene().removeItem(item)
+        self.path_items.clear()
+        if not points or len(points) < 2:
+            return
+        path = QPainterPath(QPointF(*world_to_pixel(points[0], grid)))
+        for point in points[1:]:
+            path.lineTo(QPointF(*world_to_pixel(point, grid)))
+        for color, width in [('#123f46', 7.0), ('#00d5cc', 4.0)]:
+            pen = QPen(QColor(color))
+            pen.setWidthF(width)
+            pen.setCosmetic(True)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            item = self.scene().addPath(path, pen)
+            item.setZValue(1)
+            self.path_items.append(item)
 
     def set_goals(self, grid, requested, planned, start=None):
         """Draw the green requested goal and blue planning endpoints with yaw."""
@@ -301,10 +412,10 @@ class CostmapView(QGraphicsView):
             self.scene().removeItem(item)
         self.goal_items.clear()
         # Different lengths preserve both colors when the two poses coincide.
-        for pose, color, name, length, width, offset in [
-            (requested, '#00a63c', 'Selected goal', 0.65, 4.0, -0.25),
-            (planned, '#1565ff', 'Planned goal', 0.45, 2.5, 0.25),
-            (start, '#1565ff', 'Planned start', 0.45, 2.5, -0.65),
+        for pose, color, length, width in [
+            (requested, '#00a63c', 0.65, 4.0),
+            (planned, '#1565ff', 0.45, 2.5),
+            (start, '#1565ff', 0.45, 2.5),
         ]:
             if pose is None:
                 continue
@@ -324,15 +435,6 @@ class CostmapView(QGraphicsView):
                 item = self.scene().addPath(arrow, pen)
                 item.setZValue(4)
                 self.goal_items.append(item)
-            label = self.scene().addText('')
-            label.setFont(QFont('Sans Serif', 9))
-            label.document().setDocumentMargin(1)
-            label.setHtml('<span style="background-color: white; color: {}">{}</span>'
-                          .format(color, name))
-            label.setFlag(QGraphicsItem.ItemIgnoresTransformations)
-            label.setPos(pixel((0.0, offset)))
-            label.setZValue(5)
-            self.goal_items.append(label)
 
     def clear_robot(self):
         """Hide geometry when the robot cannot be located in the displayed map."""
@@ -340,7 +442,7 @@ class CostmapView(QGraphicsView):
             self.scene().removeItem(item)
         self.robot_items.clear()
 
-    def set_robot(self, grid, pose, footprint, base_frame, axis_length):
+    def set_robot(self, grid, pose, footprint, axis_length):
         """Draw the footprint and red X / green Y axes like the MPC viewer."""
         self.clear_robot()
 
@@ -355,17 +457,6 @@ class CostmapView(QGraphicsView):
             item.setZValue(2)
             self.robot_items.append(item)
 
-        def label(text, point, color):
-            item = self.scene().addText('')
-            item.setFont(QFont('Sans Serif', 9))
-            item.document().setDocumentMargin(1)
-            item.setHtml('<span style="background-color: white; color: {}">{}</span>'
-                         .format(color, escape(text)))
-            item.setFlag(QGraphicsItem.ItemIgnoresTransformations)
-            item.setPos(pixel(point))
-            item.setZValue(3)
-            self.robot_items.append(item)
-
         polygon = QPainterPath(pixel(footprint[0]))
         for point in footprint[1:]:
             polygon.lineTo(pixel(point))
@@ -373,7 +464,7 @@ class CostmapView(QGraphicsView):
         path_item(polygon, '#ffffff', 7)
         path_item(polygon, '#141e2d', 3)
 
-        for angle, color, name in [(0.0, '#c32323', '+x'), (math.pi / 2, '#238237', '+y')]:
+        for angle, color in [(0.0, '#c32323'), (math.pi / 2, '#238237')]:
             end = (axis_length * math.cos(angle), axis_length * math.sin(angle))
             arrow = QPainterPath(pixel((0.0, 0.0)))
             arrow.lineTo(pixel(end))
@@ -383,8 +474,6 @@ class CostmapView(QGraphicsView):
                                     end[1] - 0.08 * math.sin(angle + side))))
             path_item(arrow, '#ffffff', 4)
             path_item(arrow, color, 2)
-            label(name, (end[0] * 1.1, end[1] * 1.1), color)
-        label(base_frame, (0.0, -0.35), '#141e2d')
 
     def set_image(self, image):
         """Replace the map while preserving discrete cell colors."""
@@ -420,18 +509,12 @@ class PlanningWindow(QWidget):
         self.last_image_publish = 0.0
         self.status = QLabel('Waiting for the planner costmap…')
         self.status.setWordWrap(True)
-        self.robot_status = QLabel('Waiting for {} pose'.format(node.base_frame))
+        self.robot_status = QLabel('Waiting for robot pose…')
         self.robot_status.setWordWrap(True)
         topic = QLabel('Planner costmap: {}'.format(node.costmap_topic))
         topic.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.map_view = CostmapView()
-        legend = QLabel(
-            'White: free  |  Yellow → red: increasing cost  |  '
-            'Purple: inscribed obstacle  |  Black: obstacle  |  Gray: unknown')
-        legend.setWordWrap(True)
-        goal_legend = QLabel(
-            'Green arrow: selected goal  |  Blue arrows: planned goal and start')
-        goal_legend.setWordWrap(True)
+        self.legend = PlanningLegend()
 
         map_panel = QWidget()
         map_layout = QVBoxLayout(map_panel)
@@ -440,8 +523,7 @@ class PlanningWindow(QWidget):
         map_layout.addWidget(self.status)
         map_layout.addWidget(self.robot_status)
         map_layout.addWidget(self.map_view, 1)
-        map_layout.addWidget(legend)
-        map_layout.addWidget(goal_legend)
+        map_layout.addWidget(self.legend)
 
         self.terminal = QPlainTextEdit()
         self.terminal.setReadOnly(True)
@@ -504,19 +586,19 @@ class PlanningWindow(QWidget):
                             grid.info.resolution, grid.info.width * grid.info.resolution,
                             grid.info.height * grid.info.resolution))
         if self.grid is not None:
+            self.map_view.set_path(
+                self.grid, self.node.path_overlay(self.grid.header.frame_id))
             overlay = self.node.robot_overlay(self.grid.header.frame_id)
             if overlay is None:
                 self.map_view.clear_robot()
-                self.robot_status.setText('TF unavailable: {} → {}'.format(
-                    self.node.base_frame, self.grid.header.frame_id))
+                self.robot_status.setText('TF unavailable: robot pose')
             else:
                 pose, footprint = overlay
                 self.map_view.set_robot(
-                    self.grid, pose, footprint, self.node.base_frame, self.node.axis_length)
+                    self.grid, pose, footprint, self.node.axis_length)
                 self.robot_status.setText(
-                    '{}: x={:.2f} m, y={:.2f} m, yaw={:.1f}°  |  '
-                    'Footprint: {}  |  Axes: +x red, +y green'.format(
-                        self.node.base_frame, pose[0], pose[1], math.degrees(pose[2]),
+                    'Robot: x={:.2f} m, y={:.2f} m, yaw={:.1f}°  |  Footprint: {}'.format(
+                        pose[0], pose[1], math.degrees(pose[2]),
                         self.node.footprint_source))
             requested = self.node.goal_overlay(
                 self.node.requested_goal, self.grid.header.frame_id)
