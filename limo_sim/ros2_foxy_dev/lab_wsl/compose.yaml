@@ -1,0 +1,52 @@
+name: limo-foxy-lab-wsl
+
+services:
+  foxy:
+    image: limo-foxy-lab-wsl:latest
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: ros2_foxy_dev/lab_wsl/Dockerfile
+      args:
+        USER_UID: ${HOST_UID:-1000}
+        USER_GID: ${HOST_GID:-1000}
+    stdin_open: true
+    tty: true
+    init: true
+    shm_size: 1gb
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      ROS_LOCALHOST_ONLY: ${ROS_LOCALHOST_ONLY:-0}
+      DISPLAY: ${DISPLAY:-:0}
+      WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-wayland-0}
+      XDG_RUNTIME_DIR: /mnt/wslg/runtime-dir
+      PULSE_SERVER: ${PULSE_SERVER:-unix:/mnt/wslg/PulseServer}
+      QT_X11_NO_MITSHM: "1"
+      LIBGL_ALWAYS_SOFTWARE: ${LIBGL_ALWAYS_SOFTWARE:-1}
+    volumes:
+      - type: bind
+        source: ../../workspace
+        target: /workspace
+        bind:
+          create_host_path: false
+      - type: volume
+        source: wsl_build
+        target: /workspace/.lab_wsl
+      - type: bind
+        source: /mnt/wslg
+        target: /mnt/wslg
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /mnt/wslg/.X11-unix
+        target: /tmp/.X11-unix
+        read_only: true
+        bind:
+          create_host_path: false
+    working_dir: /workspace
+    command: ["sleep", "infinity"]
+    restart: unless-stopped
+
+volumes:
+  wsl_build:

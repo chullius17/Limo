@@ -33,3 +33,8 @@ Limo_robot_dev_mk2/ai_control_logs/
 /limo_sim/workspace/planner_server.yaml
 /limo_sim/workspace/rviz_goal_bridge.yaml
 /limo_sim/workspace/twist_mux.yaml
+
+# Local MPC analysis artifacts, recorded bags and crash dumps.
+/limo_sim/workspace/src/work/
+/limo_sim/workspace/core
+/limo_sim/workspace/mpc_[0-9]*/

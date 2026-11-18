@@ -1,0 +1,8 @@
+# Onboard Jetson chassis UART.
+SUBSYSTEM=="tty", KERNEL=="ttyTHS1", GROUP="dialout", MODE="0660"
+# YDLidar adapter IDs from the workspace's existing driver rules.
+SUBSYSTEM=="tty", KERNEL=="ttyUSB*", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", GROUP="dialout", MODE="0660", SYMLINK+="ydlidar"
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", GROUP="dialout", MODE="0660", SYMLINK+="ydlidar"
+SUBSYSTEM=="tty", KERNEL=="ttyUSB*", ATTRS{idVendor}=="067b", ATTRS{idProduct}=="2303", GROUP="dialout", MODE="0660", SYMLINK+="ydlidar"
+# Orbbec/Astra/Dabai USB devices, including Dabai U3 product 050e.
+SUBSYSTEM=="usb", ATTR{idVendor}=="2bc5", GROUP="video", MODE="0660"

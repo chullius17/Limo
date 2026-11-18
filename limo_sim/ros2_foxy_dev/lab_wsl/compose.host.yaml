@@ -1,0 +1,4 @@
+# Requires Docker Desktop >= 4.34 and "Enable host networking" in Settings.
+services:
+  foxy:
+    network_mode: host
