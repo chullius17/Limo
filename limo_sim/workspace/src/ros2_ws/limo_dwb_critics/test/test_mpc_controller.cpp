@@ -1,11 +1,19 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 #include <memory>
 
 #include "dwb_core/exceptions.hpp"
 #include "dwb_core/illegal_trajectory_tracker.hpp"
 #include "limo_dwb_critics/ackermann_mpc_controller.hpp"
+#include "limo_dwb_critics/mppi_cost_critics.hpp"
+
+class GoalDistanceCritic : public limo_dwb_critics::MppiPathCritic
+{
+public:
+  explicit GoalDistanceCritic(double distance) {distance_to_goal_ = distance;}
+};
 
 class ControllerHarness : public limo_dwb_critics::AckermannMPCController
 {
@@ -20,6 +28,12 @@ public:
   }
 
   bool reject{false};
+  bool cheap_stop{false};
+  bool reject_motion{false};
+  void globalGoalDistance(double distance)
+  {
+    critics_.push_back(std::make_shared<GoalDistanceCritic>(distance));
+  }
   bool warm() const {return mpc_->hasWarmStart();}
   void advanceTime(double seconds = 0.05) {time_ns_ += static_cast<std::int64_t>(seconds * 1e9);}
   void closedLoop() {open_loop_ = false;}
@@ -40,12 +54,14 @@ public:
   dwb_msgs::msg::TrajectoryScore scoreTrajectory(
     const dwb_msgs::msg::Trajectory2D & trajectory, double) override
   {
-    if (reject) {
+    const bool moving = std::abs(trajectory.velocity.x) > 0.001;
+    if (reject || (reject_motion && moving)) {
       throw dwb_core::IllegalTrajectoryException("test_obstacle", "Blocked");
     }
     dwb_msgs::msg::TrajectoryScore score;
     score.traj = trajectory;
-    score.total = 10.0 + 100.0 * std::pow(trajectory.poses.back().x - 0.8, 2);
+    score.total = cheap_stop ? (moving ? 100.0 : 0.0) :
+      10.0 + 100.0 * std::pow(trajectory.poses.back().x - 0.8, 2);
     return score;
   }
 
@@ -97,6 +113,109 @@ TEST_F(MpcControllerTest, ThrowsAndDiscardsOldSequenceIfAllTrajectoriesFail)
       geometry_msgs::msg::Pose2D(), nav_2d_msgs::msg::Twist2D(), results),
     dwb_core::NoLegalTrajectoriesException);
   EXPECT_FALSE(controller.warm());
+}
+
+TEST_F(MpcControllerTest, PrefersLegalMotionToCheaperStopFarFromGlobalGoal)
+{
+  ControllerHarness controller;
+  controller.cheap_stop = true;
+  controller.globalGoalDistance(2.0);
+  auto results = std::make_shared<dwb_msgs::msg::LocalPlanEvaluation>();
+  const auto best = controller.coreScoringAlgorithm(
+    geometry_msgs::msg::Pose2D(), nav_2d_msgs::msg::Twist2D(), results);
+
+  EXPECT_GT(std::abs(best.traj.velocity.x), 0.001);
+  EXPECT_GE(best.total, 100.0);
+  bool recorded_cheaper_stop = false;
+  for (const auto & candidate : results->twists) {
+    if (candidate.total >= 0.0 && candidate.total < best.total &&
+      std::abs(candidate.traj.velocity.x) <= 0.001)
+    {
+      recorded_cheaper_stop = true;
+    }
+  }
+  EXPECT_TRUE(recorded_cheaper_stop);
+  ASSERT_LT(results->best_index, results->twists.size());
+  const auto & selected = results->twists[results->best_index];
+  EXPECT_DOUBLE_EQ(selected.total, best.total);
+  EXPECT_DOUBLE_EQ(selected.traj.velocity.x, best.traj.velocity.x);
+  EXPECT_DOUBLE_EQ(selected.traj.velocity.theta, best.traj.velocity.theta);
+  ASSERT_EQ(selected.traj.poses.size(), best.traj.poses.size());
+  for (std::size_t i = 0; i < best.traj.poses.size(); ++i) {
+    EXPECT_DOUBLE_EQ(selected.traj.poses[i].x, best.traj.poses[i].x);
+    EXPECT_DOUBLE_EQ(selected.traj.poses[i].y, best.traj.poses[i].y);
+    EXPECT_DOUBLE_EQ(selected.traj.poses[i].theta, best.traj.poses[i].theta);
+  }
+}
+
+TEST_F(MpcControllerTest, AllowsCheaperStopInsideGlobalGoalTolerance)
+{
+  ControllerHarness controller;
+  controller.cheap_stop = true;
+  controller.globalGoalDistance(0.05);
+  std::shared_ptr<dwb_msgs::msg::LocalPlanEvaluation> results;
+  const auto best = controller.coreScoringAlgorithm(
+    geometry_msgs::msg::Pose2D(), nav_2d_msgs::msg::Twist2D(), results);
+  EXPECT_DOUBLE_EQ(best.traj.velocity.x, 0.0);
+  EXPECT_DOUBLE_EQ(best.total, 0.0);
+}
+
+TEST_F(MpcControllerTest, AllowsCheaperStopAtGlobalGoalToleranceBoundary)
+{
+  ControllerHarness controller;
+  controller.cheap_stop = true;
+  controller.globalGoalDistance(0.1);
+  std::shared_ptr<dwb_msgs::msg::LocalPlanEvaluation> results;
+  const auto best = controller.coreScoringAlgorithm(
+    geometry_msgs::msg::Pose2D(), nav_2d_msgs::msg::Twist2D(), results);
+  EXPECT_DOUBLE_EQ(best.traj.velocity.x, 0.0);
+  EXPECT_DOUBLE_EQ(best.total, 0.0);
+}
+
+TEST_F(MpcControllerTest, RetainsLegalStopWhenMovingTrajectoriesAreBlocked)
+{
+  ControllerHarness controller;
+  controller.cheap_stop = true;
+  controller.reject_motion = true;
+  controller.globalGoalDistance(2.0);
+  auto results = std::make_shared<dwb_msgs::msg::LocalPlanEvaluation>();
+  const auto best = controller.coreScoringAlgorithm(
+    geometry_msgs::msg::Pose2D(), nav_2d_msgs::msg::Twist2D(), results);
+
+  EXPECT_DOUBLE_EQ(best.traj.velocity.x, 0.0);
+  EXPECT_DOUBLE_EQ(best.total, 0.0);
+  ASSERT_LT(results->best_index, results->twists.size());
+  EXPECT_DOUBLE_EQ(results->twists[results->best_index].total, best.total);
+  bool rejected_motion = false;
+  for (const auto & candidate : results->twists) {
+    if (candidate.total < 0.0 && std::abs(candidate.traj.velocity.x) > 0.001) {
+      rejected_motion = true;
+    }
+  }
+  EXPECT_TRUE(rejected_motion);
+}
+
+TEST_F(MpcControllerTest, KeepsCostSelectionWithoutKnownGlobalGoalDistance)
+{
+  ControllerHarness controller;
+  controller.cheap_stop = true;
+  std::shared_ptr<dwb_msgs::msg::LocalPlanEvaluation> results;
+  const auto best = controller.coreScoringAlgorithm(
+    geometry_msgs::msg::Pose2D(), nav_2d_msgs::msg::Twist2D(), results);
+  EXPECT_DOUBLE_EQ(best.traj.velocity.x, 0.0);
+  EXPECT_DOUBLE_EQ(best.total, 0.0);
+}
+
+TEST_F(MpcControllerTest, KeepsCostSelectionWhenGlobalGoalDistanceIsNonFinite)
+{
+  ControllerHarness controller;
+  controller.cheap_stop = true;
+  controller.globalGoalDistance(std::numeric_limits<double>::infinity());
+  std::shared_ptr<dwb_msgs::msg::LocalPlanEvaluation> results;
+  const auto best = controller.coreScoringAlgorithm(
+    geometry_msgs::msg::Pose2D(), nav_2d_msgs::msg::Twist2D(), results);
+  EXPECT_DOUBLE_EQ(best.traj.velocity.x, 0.0);
+  EXPECT_DOUBLE_EQ(best.total, 0.0);
 }
 
 TEST_F(MpcControllerTest, CommandRampSurvivesActuatorLagAndRepeatedRosTimestamps)

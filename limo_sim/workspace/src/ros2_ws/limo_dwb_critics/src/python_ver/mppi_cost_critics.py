@@ -5,17 +5,20 @@ initial poses. Path scoring uses meters and radians and optional grid detours.
 """
 from bisect import bisect_right
 from copy import deepcopy
+from contextlib import nullcontext
 import math
+import time
 from ...include.python_ver.mppi_cost_critics import MppiObstacleParameters, MppiPathParameters
 from ...include.python_ver.mpc_timing_scope import MpcTimingScope
 from ...include.python_ver.ros_compat import (
-    TrajectoryCritic, Pose2D, IllegalTrajectoryException, read_parameter,
+    TrajectoryCritic, Pose2D, ObstacleLayer, IllegalTrajectoryException, read_parameter,
     LETHAL_OBSTACLE, NO_INFORMATION, INSCRIBED_INFLATED_OBSTACLE, clamp, wrappedAngle,
 )
 from ...include.python_ver.nav2_compat import (
     closestPathPoseIndex, footprintCells, footprintCostAtPose, transformFootprint,
 )
 from .obstacle_guidance import ObstacleGuidance
+from .smac_guidance import plan_smac, smac_reference
 
 
 def distance(a, b):
@@ -33,8 +36,8 @@ def readNonnegative(node, name, value):
     return value
 
 
-def footprintNearObstacle(pose, footprint, grid, margin, oriented):
-    if margin <= 0 or len(footprint) < 3:
+def footprintNearObstacle(pose, footprint, grid, margin, oriented, marked_only=False):
+    if (margin <= 0 and not marked_only) or len(footprint) < 3:
         return False
     oriented[:] = transformFootprint(pose, footprint)
     reach = margin + grid.getResolution() * math.sqrt(0.5)
@@ -42,7 +45,8 @@ def footprintNearObstacle(pose, footprint, grid, margin, oriented):
     last_x, last_y = grid.worldToMapEnforceBounds(max(p.x for p in oriented) + reach, max(p.y for p in oriented) + reach)
     for y in range(first_y, last_y + 1):
         for x in range(first_x, last_x + 1):
-            if grid.getCost(x, y) < LETHAL_OBSTACLE:
+            cost = grid.getCost(x, y)
+            if cost < LETHAL_OBSTACLE or (marked_only and cost != LETHAL_OBSTACLE):
                 continue
             wx, wy = grid.mapToWorld(x, y)
             inside = False
@@ -144,18 +148,43 @@ class MppiObstacleCritic(TrajectoryCritic):
 
 
 class MppiPathCritic(TrajectoryCritic):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, smac_planner=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.__dict__.update(vars(MppiPathParameters()))
         self.guidance_ = ObstacleGuidance()
+        self.smac_planner_ = smac_planner
 
     def setTimingEnabled(self, enabled): self.timing_enabled_ = enabled
-    def resetTiming(self): self.guidance_grid_ms_, self.grid_updated_ = 0.0, False
+    def resetTiming(self):
+        self.guidance_grid_ms_ = self.guidance_plan_ms_ = 0.0
+        self.grid_updated_ = self.guidance_plan_called_ = self.guidance_plan_failed_ = False
     def guidanceGridMs(self): return self.guidance_grid_ms_
+    def guidancePlanMs(self): return self.guidance_plan_ms_
+    def guidancePlanCalled(self): return self.guidance_plan_called_
+    def guidancePlanFailed(self): return self.guidance_plan_failed_
+    def usesSmac(self): return self.guidance_use_smac_
     def gridUpdated(self): return self.grid_updated_
     def detouring(self): return self.guidance_active_
     def setTrackedReference(self, enabled): self.tracked_reference_ = enabled
-    def reset(self): self.guidance_active_ = False
+    def reset(self):
+        self.guidance_active_ = False
+        self.smac_path_, self.smac_lengths_ = [], []
+
+    def guidanceReference(self, pose):
+        if not self.guidance_active_:
+            return []
+        if self.guidance_use_smac_:
+            return deepcopy(self.smac_path_)
+        grid = self.costmap_ros_.getCostmap()
+        cell = grid.worldToMap(pose.x, pose.y)
+        if cell is None:
+            return []
+        result = [Pose2D(*grid.mapToWorld(x, y)) for x, y in self.guidance_.route(*cell, pose.theta)]
+        for a, b in zip(result, result[1:]):
+            a.theta = math.atan2(b.y-a.y, b.x-a.x)
+        if result:
+            result[-1].theta = self.path_[self.target_index_].theta
+        return result
 
     def onInit(self):
         prefix = self.dwb_plugin_name_ + '.' + self.name_ + '.'
@@ -177,10 +206,19 @@ class MppiPathCritic(TrajectoryCritic):
         for key, attribute in parameters.items():
             setattr(self, attribute, readNonnegative(self.nh_, prefix + key, getattr(self, attribute)))
         for key, attribute in (('PathAlignCritic.use_path_orientations', 'use_path_orientations_'),
-                ('PathAngleCritic.forward_preference', 'forward_preference_'), ('ObstacleGuidance.enabled', 'guidance_enabled_')):
+                ('PathAngleCritic.forward_preference', 'forward_preference_'), ('ObstacleGuidance.enabled', 'guidance_enabled_'),
+                ('ObstacleGuidance.use_smac', 'guidance_use_smac_')):
             setattr(self, attribute, read_parameter(self.nh_, prefix + key, getattr(self, attribute)))
+        self.guidance_trigger_layer_name_ = read_parameter(self.nh_, prefix + 'ObstacleGuidance.trigger_layer', '')
+        if self.guidance_enabled_ and self.guidance_trigger_layer_name_:
+            self.guidance_trigger_layer_ = next((layer for layer in self.costmap_ros_.getLayeredCostmap().getPlugins()
+                if isinstance(layer, ObstacleLayer) and layer.getName() == self.guidance_trigger_layer_name_), None)
+            if self.guidance_trigger_layer_ is None:
+                raise ValueError('ObstacleGuidance.trigger_layer must name an ObstacleLayer: ' + self.guidance_trigger_layer_name_)
         if self.max_path_occupancy_ratio_ > 1 or self.lookahead_distance_ <= 0:
             raise ValueError('Invalid MPPI path occupancy ratio or lookahead')
+        if self.guidance_enabled_ and self.guidance_use_smac_ and self.smac_planner_ is None:
+            raise ValueError('Python SMAC mode requires an injected Nav2 createPlan adapter; use the C++ plugin for ROS')
 
     def prepare(self, pose, velocity, goal, path):
         self.resetTiming()
@@ -214,7 +252,8 @@ class MppiPathCritic(TrajectoryCritic):
 
             def free_point(point):
                 cell = grid.worldToMap(point.x, point.y)
-                return cell is not None and self.guidance_.traversable(*cell)
+                return (cell is not None and self.guidance_.traversable(*cell) and
+                    (not self.guidance_use_smac_ or 0 <= footprintCostAtPose(grid, point, footprint) < LETHAL_OBSTACLE))
 
             def collision_free(point):
                 cell = grid.worldToMap(point.x, point.y)
@@ -224,21 +263,27 @@ class MppiPathCritic(TrajectoryCritic):
                 return 0 <= cost < LETHAL_OBSTACLE
 
             blocked, previous = False, pose
-            for i in range(self.start_index_, self.target_index_ + 1):
-                if blocked:
-                    break
-                target = self.path_[i]
-                steps = max(1, math.ceil(distance(previous, target) / grid.getResolution()))
-                for step in range(steps + 1):
-                    f = step / steps
-                    point = Pose2D(previous.x + f * (target.x - previous.x), previous.y + f * (target.y - previous.y),
-                                   previous.theta + f * wrappedAngle(target.theta - previous.theta))
-                    if (not collision_free(point) or footprintNearObstacle(point, footprint, grid,
-                            self.guidance_trigger_margin_, self.proximity_footprint_)):
-                        blocked = True
+            sensor = self.guidance_trigger_layer_
+            trigger_grid = sensor if sensor is not None else grid
+            with sensor.getMutex() if sensor is not None else nullcontext():
+                for i in range(self.start_index_, self.target_index_ + 1):
+                    if blocked or (sensor is not None and not sensor.enabled):
                         break
-                previous = target
+                    target = self.path_[i]
+                    steps = max(1, math.ceil(distance(previous, target) / grid.getResolution()))
+                    for step in range(steps + 1):
+                        f = step / steps
+                        point = Pose2D(previous.x + f * (target.x - previous.x), previous.y + f * (target.y - previous.y),
+                                       previous.theta + f * wrappedAngle(target.theta - previous.theta))
+                        nearby = footprintNearObstacle(point, footprint, trigger_grid,
+                            self.guidance_trigger_margin_, self.proximity_footprint_, sensor is not None)
+                        if nearby or (sensor is None and not collision_free(point)):
+                            blocked = True
+                            break
+                    previous = target
             if blocked or (was_detouring and nearest > 0.15):
+                self.guidance_plan_called_ = self.guidance_plan_failed_ = True
+                plan_start = time.monotonic() if self.timing_enabled_ else 0.0
                 self.path_blocked_ = True
                 rejoin = self.target_index_
                 while rejoin < len(self.path_) and not free_point(self.path_[rejoin]):
@@ -249,12 +294,22 @@ class MppiPathCritic(TrajectoryCritic):
                             self.path_lengths_[rejoin + 1] - self.path_lengths_[first_free] <= self.guidance_rejoin_distance_):
                         rejoin += 1
                 cell = grid.worldToMap(self.path_[rejoin].x, self.path_[rejoin].y) if rejoin < len(self.path_) else None
-                if cell is not None and self.guidance_.setTarget(*cell):
-                    px = (pose.x - grid.getOriginX()) / grid.getResolution() - 0.5
-                    py = (pose.y - grid.getOriginY()) / grid.getResolution() - 0.5
-                    self.guidance_active_ = math.isfinite(self.guidance_.distance(px, py))
+                try:
+                    if cell is not None:
+                        if self.guidance_use_smac_:
+                            self.guidance_active_ = plan_smac(self, pose, self.path_[rejoin])
+                        elif self.guidance_.setTarget(*cell):
+                            px = (pose.x - grid.getOriginX()) / grid.getResolution() - 0.5
+                            py = (pose.y - grid.getOriginY()) / grid.getResolution() - 0.5
+                            self.guidance_active_ = math.isfinite(self.guidance_.distance(px, py))
                     if self.guidance_active_:
                         self.target_index_ = rejoin
+                        self.guidance_plan_failed_ = False
+                    elif self.guidance_use_smac_:
+                        raise IllegalTrajectoryException(self.name_, 'Local SMAC found no valid rejoin route')
+                finally:
+                    if self.timing_enabled_:
+                        self.guidance_plan_ms_ = (time.monotonic()-plan_start)*1000
         target = self.path_[self.target_index_]
         angle = angleError(pose.theta, math.atan2(target.y - pose.y, target.x - pose.x))
         if not self.forward_preference_:
@@ -295,7 +350,10 @@ class MppiPathCritic(TrajectoryCritic):
             grid = self.costmap_ros_.getCostmap()
             x = (last.x - grid.getOriginX()) / grid.getResolution() - 0.5
             y = (last.y - grid.getOriginY()) / grid.getResolution() - 0.5
-            remaining = self.guidance_.distance(x, y)
+            if self.guidance_use_smac_:
+                remaining, reference_heading = smac_reference(self, last)
+            else:
+                remaining = self.guidance_.distance(x, y)
             if not math.isfinite(remaining):
                 raise IllegalTrajectoryException(self.name_, 'No obstacle-free route from prediction')
             result += self.follow_weight_ * remaining
@@ -306,7 +364,8 @@ class MppiPathCritic(TrajectoryCritic):
                     if distance(before, after) > 1e-6:
                         motion_heading = math.atan2(after.y - before.y, after.x - before.x)
                         break
-                result += self.guidance_heading_weight_ * angleError(motion_heading, self.guidance_.heading(x, y, motion_heading))
+                result += self.guidance_heading_weight_ * angleError(motion_heading,
+                    reference_heading if self.guidance_use_smac_ else self.guidance_.heading(x, y, motion_heading))
         elif self.distance_to_goal_ >= self.follow_distance_:
             result += self.follow_weight_ * distance(last, target)
         if not self.guidance_active_ and self.distance_to_goal_ > self.angle_distance_ and self.apply_path_angle_:

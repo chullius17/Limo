@@ -6,6 +6,9 @@ mpc_preview:
     tube_radius: 0.60  # Meters from the global path to the white boundary; 0 hides it.
     # control.launch.py overrides this with path_distance_layer.tube_radius.
     tube_line_width: 2  # Pixels; draw the contour without covering the costmap.
+    trigger_margin: 0.05  # Standalone fallback; launch shares ObstacleGuidance.trigger_margin.
+    trigger_front_extension: 0.0  # Optional additional front extension, shared from ObstacleGuidance.
+    trigger_region_color: [255, 145, 0]  # Outline 5 cm around the padded footprint, with round corners.
     goal_circle_radius: 0.20  # Standalone fallback; launch shares path_executor.goal_circle_radius.
     costmap_topic: /local_costmap/costmap_raw
     footprint_topic: /local_costmap/published_footprint

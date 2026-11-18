@@ -9,8 +9,10 @@
 #include "dwb_core/exceptions.hpp"
 #include "dwb_core/illegal_trajectory_tracker.hpp"
 #include "pluginlib/class_list_macros.hpp"
+#include "limo_dwb_critics/guidance_unavailable.hpp"
 #include "limo_dwb_critics/mppi_cost_critics.hpp"
 #include "limo_dwb_critics/mpc_timing_scope.hpp"
+#include "nav_2d_utils/conversions.hpp"
 #include "nav_2d_utils/tf_help.hpp"
 
 namespace limo_dwb_critics
@@ -62,6 +64,11 @@ void AckermannMPCController::configure(
     };
   config.structured_actions = read_bool("structured_actions", false);
   config.deduplicate = read_bool("deduplicate", false);
+  prefer_motion_ = read_bool("prefer_motion", true);
+  motion_goal_tolerance_ = read_double("xy_goal_tolerance", 0.10);
+  if (!std::isfinite(motion_goal_tolerance_) || motion_goal_tolerance_ < 0.0) {
+    throw std::invalid_argument("xy_goal_tolerance must be finite and nonnegative");
+  }
   config.action_variants = read_int("action_variants", 3);
   config.action_noise = read_double("MPC.action_noise", 0.20);
   config.startup_enabled = read_bool("Startup.enabled", config.startup_enabled);
@@ -188,6 +195,9 @@ std::int64_t AckermannMPCController::controlTimeNs() const
 void AckermannMPCController::setPlan(const nav_msgs::msg::Path & path)
 {
   std::lock_guard<std::mutex> lock(plan_mutex_);
+  for (const auto & critic : critics_) {
+    if (auto reference = std::dynamic_pointer_cast<MppiPathCritic>(critic)) {reference->reset();}
+  }
   complete_plan_ = path;
   resetPrediction();
   tube_start_pending_ = true;
@@ -254,6 +264,18 @@ geometry_msgs::msg::TwistStamped AckermannMPCController::computeVelocityCommands
       for (const auto & critic : critics_) {
         if (auto path = std::dynamic_pointer_cast<MppiPathCritic>(critic)) {
           timing_sample_.guidance_grid_ms += path->guidanceGridMs();
+          timing_sample_.guidance_plan_ms += path->guidancePlanMs();
+          timing_sample_.guidance_plan_called = timing_sample_.guidance_plan_called || path->guidancePlanCalled();
+          timing_sample_.guidance_plan_failed = timing_sample_.guidance_plan_failed || path->guidancePlanFailed();
+          timing_sample_.guidance_smac = path->usesSmac();
+          timing_sample_.guidance_async = path->guidanceAsync();
+          timing_sample_.guidance_plan_running = timing_sample_.guidance_plan_running ||
+            path->guidancePlanRunning();
+          timing_sample_.guidance_plan_discarded = timing_sample_.guidance_plan_discarded ||
+            path->guidancePlanDiscarded();
+          timing_sample_.guidance_plan_start_steady_ns = path->guidancePlanStartSteadyNs();
+          timing_sample_.guidance_plan_epoch = path->guidancePlanEpoch();
+          timing_sample_.guidance_replan_hz = path->guidanceReplanHz();
           timing_sample_.grid_updated = timing_sample_.grid_updated || path->gridUpdated();
           timing_sample_.detouring = timing_sample_.detouring ||
             (path->gridUpdated() && path->detouring());
@@ -265,6 +287,48 @@ geometry_msgs::msg::TwistStamped AckermannMPCController::computeVelocityCommands
     auto command = DWBLocalPlanner::computeVelocityCommands(pose, velocity);
     record_timing(true);
     return command;
+  } catch (const GuidanceUnavailable & error) {
+    // Preserve the avoidance cache and progress history.
+    // Only reset the predicted actuation state to match the stop command.
+    resetPrediction();
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+      "Waiting for a collision-free avoidance reference: %s", error.what());
+    if (debug_publisher_) {
+      MpcTimingScope timing(timing_enabled ? &timing_sample_.debug_ms : nullptr);
+      auto planar_pose = nav_2d_utils::poseStampedToPose2D(pose);
+      nav_2d_msgs::msg::Pose2DStamped local_pose;
+      const auto & frame = costmap_ros_->getGlobalFrameID();
+      if (planar_pose.header.frame_id == frame || nav_2d_utils::transformPose(
+          tf_, frame, planar_pose, local_pose, transform_tolerance_))
+      {
+        if (planar_pose.header.frame_id != frame) {planar_pose = local_pose;}
+        MpcState initial;
+        initial.x = planar_pose.pose.x;
+        initial.y = planar_pose.pose.y;
+        initial.yaw = planar_pose.pose.theta;
+        initial.control.velocity = velocity.linear.x;
+        // Preparation released DWB's map lock when it threw. Capture a fresh,
+        // empty preview under the same lock instead of leaving old rollouts.
+        std::lock_guard<nav2_costmap_2d::Costmap2D::mutex_t> map_lock(
+          *costmap_ros_->getCostmap()->getMutex());
+        if (debug_publisher_->begin(initial)) {
+          debug_publisher_->setGuidance("SMAC", {});
+          for (const auto & critic : critics_) {
+            if (auto path = std::dynamic_pointer_cast<MppiPathCritic>(critic)) {
+              debug_publisher_->setLookaheads(path->pathLookahead(), path->guidanceLookahead(),
+                path->guidanceCandidateTarget());
+              break;
+            }
+          }
+          debug_publisher_->finish(MpcSolution());
+        }
+      }
+    }
+    geometry_msgs::msg::TwistStamped command;
+    command.header.stamp = node_->now();
+    command.header.frame_id = costmap_ros_->getBaseFrameID();
+    record_timing(false);
+    return command;
   } catch (...) {
     record_timing(false);
     throw;
@@ -273,6 +337,9 @@ geometry_msgs::msg::TwistStamped AckermannMPCController::computeVelocityCommands
 
 void AckermannMPCController::deactivate()
 {
+  for (const auto & critic : critics_) {
+    if (auto reference = std::dynamic_pointer_cast<MppiPathCritic>(critic)) {reference->reset();}
+  }
   if (debug_publisher_) {debug_publisher_->deactivate();}
   if (timing_publisher_) {timing_publisher_->deactivate();}
   resetPrediction();
@@ -346,6 +413,17 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
     throw nav2_core::PlannerException("Non-finite odometry velocity");
   }
   const auto & config = mpc_->config();
+  std::shared_ptr<MppiPathCritic> active_guidance;
+  double goal_distance = std::numeric_limits<double>::quiet_NaN();
+  for (const auto & critic : critics_) {
+    auto path = std::dynamic_pointer_cast<MppiPathCritic>(critic);
+    if (path) {
+      goal_distance = path->distanceToGoal();
+      if (path->followsSmac()) {active_guidance = path;}
+    }
+  }
+  const bool prefer_motion = prefer_motion_ && std::isfinite(goal_distance) &&
+    goal_distance > motion_goal_tolerance_;
   double start_progress = 0.0, start_heading = 0.0;
   if (tube_required_) {
     if (!tube_layer_ || !tube_layer_->matchesPath(complete_plan_)) {
@@ -362,7 +440,13 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
     const double tracked = progress_tracker_.progress();
     const double minimum = progress_tracker_.valid() ? tracked - 0.10 : -1e30;
     const double maximum = progress_tracker_.valid() ? tracked + 0.10 : 1e30;
-    if (!tube_layer_->projectProgress(
+    if (active_guidance) {
+      limo_inflation::PathPoseProjection projection;
+      if (!limo_inflation::projectPathPose(active_guidance->activeGuidancePoints(), pose, projection)) {
+        throw nav2_core::PlannerException("SMAC reference has no valid tracking segments");
+      }
+      start_progress = projection.progress; start_heading = projection.heading;
+    } else if (!tube_layer_->projectProgress(
         pose, start_progress, start_heading,
         minimum, maximum, tracked))
     {
@@ -374,11 +458,20 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
       const auto & state = rollout.states.back();
       geometry_msgs::msg::Pose2D terminal;
       terminal.x = state.x; terminal.y = state.y; terminal.theta = state.yaw;
-      if (!tube_layer_->containsFootprint(terminal)) {
+      if (!(active_guidance ? active_guidance->guidanceTubeContains(terminal, tube_layer_->tubeRadius()) :
+        tube_layer_->containsFootprint(terminal)))
+      {
         throw dwb_core::IllegalTrajectoryException("TerminalTube", "Final footprint outside tube");
       }
       double progress = 0.0, heading = 0.0;
-      if (!tube_layer_->projectProgress(
+      if (active_guidance) {
+        limo_inflation::PathPoseProjection projection;
+        if (!limo_inflation::projectPathPose(active_guidance->activeGuidancePoints(), terminal,
+            projection, start_progress - 0.05, start_progress + config.max_velocity * config.dt *
+            config.time_steps + tube_layer_->tubeRadius(), start_progress))
+        {throw dwb_core::IllegalTrajectoryException("TerminalTube", "No forward SMAC segment");}
+        progress = projection.progress; heading = projection.heading;
+      } else if (!tube_layer_->projectProgress(
           terminal, progress, heading,
           start_progress - 0.05, start_progress + config.max_velocity * config.dt *
           config.time_steps + tube_layer_->tubeRadius(), start_progress))
@@ -426,6 +519,20 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
   {
     MpcTimingScope timing(timing_enabled ? &timing_sample_.debug_ms : nullptr);
     preview_observer = debug_publisher_ ? debug_publisher_->begin(initial) : MpcObserver();
+    if (preview_observer) {
+      try {
+        for (const auto & critic : critics_) {
+          if (auto path = std::dynamic_pointer_cast<MppiPathCritic>(critic)) {
+            debug_publisher_->setLookaheads(path->pathLookahead(), path->guidanceLookahead(),
+              path->guidanceCandidateTarget());
+            debug_publisher_->setGuidance(path->usesSmac() ? "SMAC" : "DIJKSTRA",
+              path->guidanceReference(pose), path->guidanceTarget());
+          }
+        }
+      } catch (const std::exception & error) {
+        RCLCPP_WARN(node_->get_logger(), "MPC guidance preview failed: %s", error.what());
+      }
+    }
   }
   const auto timed_observer = [this, &preview_observer](
       const MpcRollout & rollout, MpcFamily family, std::size_t id, double cost) {
@@ -444,10 +551,14 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
   dwb_core::IllegalTrajectoryTracker tracker;
   double best_debug = std::numeric_limits<double>::infinity();
   double worst_debug = -1.0;
+  std::vector<std::size_t> candidate_debug_indices;
+  if (results) {candidate_debug_indices.reserve(config.batch_size);}
+  std::size_t last_debug_index = 0;
   const auto evaluate = [&](const MpcRollout & rollout, double remaining) {
       MpcTimingScope timing(timing_enabled ? &timing_sample_.scoring_ms : nullptr);
       if (timing_enabled) {++timing_sample_.evaluated_count;}
       const auto trajectory = toTrajectory(rollout);
+      if (results) {last_debug_index = results->twists.size();}
       try {
         const double terminal = terminal_cost(rollout);
         auto score = scoreTrajectory(trajectory, std::isfinite(remaining) ? remaining : -1.0);
@@ -491,10 +602,19 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
         return std::numeric_limits<double>::infinity();
       }
     };
+  const auto selection_observer = [&](const MpcRollout & rollout, MpcFamily family,
+    std::size_t id, double cost) {
+      if (results && !std::isnan(cost)) {
+        // Effort-pruned candidates have an id but no DWB evaluation entry.
+        candidate_debug_indices.resize(id + 1);
+        candidate_debug_indices[id] = last_debug_index;
+      }
+      if (observer) {observer(rollout, family, id, cost);}
+    };
   try {
     const auto solution = [&]() {
         MpcTimingScope timing(timing_enabled ? &timing_sample_.solve_ms : nullptr);
-        return mpc_->solve(initial, evaluate, shift, observer);
+        return mpc_->solve(initial, evaluate, shift, selection_observer, prefer_motion);
       }();
     if (timing_enabled) {timing_sample_.generated_count = solution.generated_count;}
     if (!std::isfinite(solution.cost)) {
@@ -530,6 +650,15 @@ dwb_msgs::msg::TrajectoryScore AckermannMPCController::coreScoringAlgorithm(
         score.total += solution.rollout.effort_cost;
         return score;
       }();
+    if (results) {
+      results->best_index = candidate_debug_indices.at(solution.candidate_id);
+      results->twists.at(results->best_index) = best;
+    }
+    if (prefer_motion && std::abs(solution.rollout.states.at(1).control.velocity) <= 0.001) {
+      RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+        "MPC remains stopped: no feasible candidate with a forward first command above 0.001 m/s "
+        "(global goal distance=%.3f m)", goal_distance);
+    }
     previous_command_ = solution.rollout.states.at(1).control;
     have_command_ = true;
     if (debug_publisher_) {

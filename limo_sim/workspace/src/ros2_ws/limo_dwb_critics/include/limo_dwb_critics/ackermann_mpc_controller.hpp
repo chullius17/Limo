@@ -46,6 +46,8 @@ protected:
   std::unique_ptr<SamplingMpc> mpc_;
   virtual std::int64_t controlTimeNs() const;
   bool open_loop_{true};
+  bool prefer_motion_{true};
+  double motion_goal_tolerance_{0.10};
   double steering_feedback_min_velocity_{0.05};
 
 private:

@@ -15,3 +15,15 @@ float64 command_velocity
 float64 command_steering
 int32 selected_id
 MpcCandidate[] candidates
+# Active avoidance reference from this same cycle; empty when no detour is active.
+string guidance_backend
+geometry_msgs/Pose2D[] guidance_path
+bool guidance_target_valid
+geometry_msgs/Pose2D guidance_target
+# Evaluated reference points, independent of planner activation or success.
+bool path_lookahead_valid
+geometry_msgs/Pose2D path_lookahead
+bool guidance_lookahead_valid
+geometry_msgs/Pose2D guidance_lookahead
+bool guidance_candidate_target_valid
+geometry_msgs/Pose2D guidance_candidate_target

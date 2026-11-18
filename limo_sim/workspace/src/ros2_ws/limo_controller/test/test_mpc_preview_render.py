@@ -54,6 +54,54 @@ def sample_frame():
 class PreviewRenderTest(unittest.TestCase):
     """Check actual image coordinates and independent map/candidate transforms."""
 
+    def test_trigger_region_adds_five_centimeters_all_around_with_round_corners(self):
+        frame = sample_frame()
+        frame.footprint = ((-.2, -.1), (-.2, .1), (.2, .1), (.2, -.1))
+        frame.candidates, frame.selected_id = (), -1
+        options = RenderOptions(pixels_per_meter=200.0)
+        self.assertEqual(options.trigger_margin, .05)
+        self.assertEqual(options.trigger_front_extension, 0.0)
+        baseline = render_preview(frame, RenderOptions(pixels_per_meter=200.0, trigger_margin=0.0))
+        image = render_preview(frame, options)
+        for point in ((.25, .04), (.25, -.04), (-.25, .04), (-.25, -.04),
+                      (.08, .15), (.08, -.15), (.235, .135), (-.235, -.135)):
+            pixel = tuple(round(v) for v in base_to_pixel(point, options))
+            self.assertEqual(image.getpixel(pixel), options.trigger_region_color)
+        # Corners follow a 5 cm circle; diagonal box corners and the interior stay clear.
+        for point in ((.25, .15), (-.25, -.15), (.30, .04), (.225, .04), (.08, .125)):
+            pixel = tuple(round(v) for v in base_to_pixel(point, options))
+            self.assertEqual(image.getpixel(pixel), baseline.getpixel(pixel))
+
+    def test_trigger_region_retains_optional_front_extension_before_the_margin(self):
+        frame = sample_frame()
+        frame.footprint = ((-.2, -.1), (-.2, .1), (.2, .1), (.2, -.1))
+        frame.candidates, frame.selected_id = (), -1
+        options = RenderOptions(pixels_per_meter=200.0, trigger_front_extension=.10)
+        image = render_preview(frame, options)
+        for point in ((.35, .04), (.35, -.04), (-.25, .04), (.28, .15)):
+            pixel = tuple(round(v) for v in base_to_pixel(point, options))
+            self.assertEqual(image.getpixel(pixel), options.trigger_region_color)
+
+    def test_trigger_region_uses_padded_body_footprint_while_mpc_is_idle_and_rotated(self):
+        frame = sample_frame()
+        frame.robot_pose = (1.0, -2.0, math.pi / 2)
+        frame.footprint = ((-.18, -.12), (-.18, .12), (.18, .12), (.18, -.12))
+        options = RenderOptions(pixels_per_meter=200.0)
+        background = PreviewBackground(
+            robot_pose=frame.robot_pose, costmap_size=frame.costmap_size,
+            costmap_resolution=frame.costmap_resolution,
+            costmap_origin=frame.costmap_origin, costmap_data=frame.costmap_data,
+            footprint=frame.footprint)
+        image = render_preview(None, options, 'MPC: waiting', background)
+        pixels = [tuple(round(v) for v in base_to_pixel(point, options))
+                  for point in ((.23, .04), (-.23, .04), (.08, .17), (.08, -.17))]
+        for pixel in pixels:
+            self.assertEqual(image.getpixel(pixel), options.trigger_region_color)
+        hidden = render_preview(None, RenderOptions(pixels_per_meter=200.0, trigger_margin=0.0),
+                                background=background)
+        for pixel in pixels:
+            self.assertNotEqual(hidden.getpixel(pixel), options.trigger_region_color)
+
     def test_robot_frame_uses_ros_axes_and_measured_yaw(self):
         options = RenderOptions()
         self.assertEqual(base_to_pixel((0, 0), options), (480, 480))
@@ -115,6 +163,68 @@ class PreviewRenderTest(unittest.TestCase):
             pixel = tuple(round(value) for value in base_to_pixel((0.9, 0.6), options))
             self.assertEqual(render_preview(frame, options).getpixel(pixel),
                              options.colors[family])
+
+    def test_guidance_reference_uses_snapshot_pose_and_clears_when_inactive(self):
+        frame, options = sample_frame(), RenderOptions()
+        frame.robot_pose = (2.0, 3.0, math.pi / 2)
+        frame.candidates = ()
+        frame.guidance_path = ((2.6, 3.4, 0.0), (2.6, 4.2, 0.0))
+        frame.guidance_target = (2.8, 4.4, 0.0)
+        # World (2.6, 3.8) is base (0.8, -0.6) under this rotated snapshot pose.
+        pixel = tuple(round(v) for v in base_to_pixel((0.8, -0.6), options))
+        target_pixel = tuple(round(v) for v in base_to_pixel((1.4, -0.8), options))
+        for backend in ('DIJKSTRA', 'SMAC'):
+            frame.guidance_backend = backend
+            image = render_preview(frame, options)
+            self.assertEqual(image.getpixel(pixel), options.guidance_path_color)
+            self.assertEqual(image.getpixel(target_pixel), options.guidance_target_color)
+        frame.guidance_path = ()
+        frame.guidance_target = None
+        self.assertNotEqual(render_preview(frame, options).getpixel(pixel), options.guidance_path_color)
+        self.assertNotEqual(render_preview(None, options).getpixel(pixel), options.guidance_path_color)
+        self.assertNotEqual(render_preview(frame, options).getpixel(target_pixel), options.guidance_target_color)
+        self.assertNotEqual(render_preview(None, options).getpixel(target_pixel), options.guidance_target_color)
+
+    def test_lookahead_points_use_snapshot_pose_without_an_avoidance_reference_or_solution(self):
+        frame, options = sample_frame(), RenderOptions()
+        frame.robot_pose = (2.0, 3.0, math.pi / 2)
+        frame.candidates, frame.selected_id = (), -1
+        frame.path_lookahead = (2.8, 4.0, 0.0)
+        frame.guidance_lookahead = (2.0, 4.25, 0.0)
+        frame.guidance_candidate_target = (1.4, 4.5, 0.0)
+        points = (((1.0, -0.8), (-21, 0), options.path_lookahead_color),
+                  ((1.25, 0.0), (0, -11), options.guidance_lookahead_color),
+                  ((1.5, 0.6), (-18, 0), options.guidance_target_color))
+        for backend in ('DIJKSTRA', 'SMAC'):
+            frame.guidance_backend = backend
+            image = render_preview(frame, options)
+            for point, offset, color in points:
+                x, y = base_to_pixel(point, options)
+                self.assertEqual(image.getpixel((round(x + offset[0]), round(y + offset[1]))),
+                                 color)
+        frame.path_lookahead = frame.guidance_lookahead = frame.guidance_candidate_target = None
+        image = render_preview(frame, options)
+        for point, offset, color in points:
+            x, y = base_to_pixel(point, options)
+            self.assertNotEqual(image.getpixel((round(x + offset[0]), round(y + offset[1]))),
+                                color)
+
+    def test_coincident_lookaheads_keep_distinct_symbols_and_active_target(self):
+        frame, options = sample_frame(), RenderOptions()
+        frame.candidates, frame.selected_id = (), -1
+        frame.path_lookahead = frame.guidance_lookahead = frame.guidance_candidate_target = (
+            .9, .75, 0.0)
+        x, y = (round(value) for value in base_to_pixel((.9, .75), options))
+        image = render_preview(frame, options)
+        self.assertEqual(image.getpixel((x - 21, y)), options.path_lookahead_color)
+        self.assertEqual(image.getpixel((x, y - 11)), options.guidance_lookahead_color)
+        self.assertEqual(image.getpixel((x - 18, y)), options.guidance_target_color)
+        self.assertNotEqual(image.getpixel((x, y)), options.guidance_target_color)
+        frame.guidance_target = frame.guidance_candidate_target
+        image = render_preview(frame, options)
+        self.assertEqual(image.getpixel((x, y)), options.guidance_target_color)
+        self.assertEqual(image.getpixel((x - 21, y)), options.path_lookahead_color)
+        self.assertEqual(image.getpixel((x, y - 11)), options.guidance_lookahead_color)
 
     def test_waiting_or_stale_image_does_not_keep_previous_winner(self):
         frame, options = sample_frame(), RenderOptions()
@@ -214,6 +324,10 @@ class PreviewRenderTest(unittest.TestCase):
         for radius in (-0.1, math.nan, math.inf):
             with self.assertRaises(ValueError):
                 RenderOptions(tube_radius=radius).validate()
+            with self.assertRaises(ValueError):
+                RenderOptions(trigger_front_extension=radius).validate()
+            with self.assertRaises(ValueError):
+                RenderOptions(trigger_margin=radius).validate()
 
     def test_source_view_draws_observations_and_omits_the_inflated_master_grid(self):
         frame, options = sample_frame(), RenderOptions()

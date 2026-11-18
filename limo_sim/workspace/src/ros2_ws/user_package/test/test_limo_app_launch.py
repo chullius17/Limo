@@ -137,6 +137,38 @@ def test_mpc_preview_yaml_resolves_despite_empty_parent_argument(monkeypatch, pr
     preview = module.mpc_preview_node(context, controller_yaml, rewritten)[0]
     expected = profile == 'sim' if override == '' else override == 'true'
     assert preview['condition'].evaluate(context) is expected
+    geometry = next(values for values in preview['parameters']
+                    if isinstance(values, dict) and 'trigger_margin' in values)
+    assert geometry['trigger_margin'] == 0.05
+    assert geometry['trigger_front_extension'] == 0.0
+
+
+@pytest.mark.parametrize('geometry', [
+    {'trigger_margin': 0.07, 'trigger_front_extension': 0.12}, {}])
+def test_mpc_preview_uses_trigger_geometry_from_custom_controller(monkeypatch, tmp_path, geometry):
+    from nav2_common.launch import RewrittenYaml
+
+    module = load_subsystem('limo_controller', 'control.launch.py')
+    config = yaml.safe_load(
+        (PACKAGES / 'limo_controller/config/control_sim.yaml').read_text())
+    guidance = config['controller_server']['ros__parameters']['FollowPath'][
+        'MppiPath']['ObstacleGuidance']
+    for name in ('trigger_margin', 'trigger_front_extension'):
+        guidance.pop(name, None)
+    guidance.update(geometry)
+    path = tmp_path / 'controller.yaml'
+    path.write_text(yaml.safe_dump(config))
+    context = launch_context(module, {'controller_params_file': str(path)})
+    controller_yaml = RewrittenYaml(
+        source_file=str(path), root_key='', param_rewrites={}, convert_types=True)
+    preview_defaults = {'trigger_margin': 9.0, 'trigger_front_extension': 9.0}
+    monkeypatch.setattr(module, 'Node', lambda **kwargs: kwargs)
+    preview = module.mpc_preview_node(context, controller_yaml, preview_defaults)[0]
+    merged = {}
+    for values in preview['parameters']:
+        merged.update(values)
+    assert merged['trigger_margin'] == geometry.get('trigger_margin', 0.05)
+    assert merged['trigger_front_extension'] == geometry.get('trigger_front_extension', 0.0)
 
 
 def test_invalid_control_gui_setting_fails(monkeypatch):

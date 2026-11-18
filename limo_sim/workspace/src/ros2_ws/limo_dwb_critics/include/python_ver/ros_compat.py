@@ -303,6 +303,15 @@ class Costmap2D:
                 self.origin_y + (y + 0.5) * self.resolution)
 
 
+class ObstacleLayer(Costmap2D):
+    """Separate marked sensor grid used by the standalone guidance adapter."""
+    def __init__(self, *args, name='obstacle_layer', enabled=True, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.name, self.enabled = name, enabled
+
+    def getName(self): return self.name
+
+
 class Costmap2DROS:
     """Footprint and frame metadata around the standalone grid."""
     def __init__(self, costmap, footprint=None, global_frame="map", base_frame="base_link", plugins=None):

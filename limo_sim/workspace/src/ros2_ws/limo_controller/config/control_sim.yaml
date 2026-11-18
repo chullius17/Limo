@@ -75,11 +75,13 @@ controller_server:
         # Like the Humble smoother: continue the command ramp across cycles
         # even when noisy/lagging odometry still reports near-zero motion.
         feedback: "OPEN_LOOP"
+        prefer_motion: true  # Outside xy_goal_tolerance, prefer a feasible positive first command over stopping.
         Timing:
           enabled: true
           topic: /limo/control/mpc_timing
           publish_rate: 1.0
           log_summary: true
+          csv_directory: "~/.ros/limo_timing"
         Debug:
           enabled: true  # MPC telemetry.
           preview_enabled: true  # Start the image renderer; requires telemetry.
@@ -163,11 +165,24 @@ controller_server:
         scale: 1.0
         ObstacleGuidance:
           enabled: true
+          trigger_layer: "obstacle_layer"  # Only /scan markings initiate obstacle detours.
+          use_smac: true  # false: original Dijkstra; restart controller after switching.
+          Smac:
+            async_planning: true  # Search in background; control never waits for the result.
+            replan_frequency: 4.0  # Maximum search Hz (0.25 s between starts); safe cached routes do not trigger periodic searches.
+            replan_goal_distance: 0.25  # m from the last accepted target; robot connection is checked every cycle.
+            replan_goal_angle: 0.35  # rad (~20 deg), wrapped yaw difference from the last accepted target.
+            failure_advance_distance: 0.25  # m along the original reference before the next free retry target after a failed search.
+            max_iterations: 50000  # Foxy bounds search iterations, not wall time.
+            angle_quantization_bins: 64
+            tolerance: 0.05
           clearance_margin: 0.0  # Footprint critic checks the full oriented robot.
-          trigger_margin: 0.05  # Start detours within 5 cm of the padded footprint; trigger only.
+          trigger_margin: 0.05  # Euclidean margin around the padded footprint; trigger only.
+          trigger_front_extension: 0.0  # Optional additional front extension; trigger only.
+          lookahead_distance: 1.0  # Laser avoidance only; normal path tracking has its own lookahead.
           cost_weight: 2.0
           heading_weight: 2.0
-          rejoin_distance: 0.70
+          rejoin_distance: 0.50  # Advance along the free reference after the lookahead target.
         GoalCritic:
           cost_weight: 5.0
           threshold_to_consider: 1.0

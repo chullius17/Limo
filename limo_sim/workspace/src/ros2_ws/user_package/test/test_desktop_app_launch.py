@@ -88,9 +88,14 @@ def test_desktop_expands_to_viewers_and_overlay_decoder(monkeypatch):
     assert all(node['parameters'][-1]['use_sim_time'] is False for node in nodes)
     gui = next(node for node in nodes if node['name'] == 'control_gui')
     assert gui['executable'] != 'controller_server'
+    preview = next(node for node in nodes if node['name'] == 'mpc_preview')
+    assert preview['parameters'][-1]['trigger_margin'] == 0.05
+    assert preview['parameters'][-1]['trigger_front_extension'] == 0.0
 
 
-def test_desktop_preview_shares_real_controller_geometry(monkeypatch, tmp_path):
+@pytest.mark.parametrize('geometry', [
+    {'trigger_margin': 0.07, 'trigger_front_extension': 0.12}, {}])
+def test_desktop_preview_shares_real_controller_geometry(monkeypatch, tmp_path, geometry):
     config = yaml.safe_load(
         (PACKAGES / 'limo_controller/config/control_real.yaml').read_text())
     assert config['controller_server']['ros__parameters']['FollowPath']['MPC'][
@@ -98,16 +103,26 @@ def test_desktop_preview_shares_real_controller_geometry(monkeypatch, tmp_path):
     config['path_executor']['ros__parameters']['goal_circle_radius'] = 0.35
     config['local_costmap']['local_costmap']['ros__parameters'][
         'path_distance_layer']['tube_radius'] = 0.75
+    guidance = config['controller_server']['ros__parameters']['FollowPath'][
+        'MppiPath']['ObstacleGuidance']
+    for name in ('trigger_margin', 'trigger_front_extension'):
+        guidance.pop(name, None)
+    guidance.update(geometry)
     path = tmp_path / 'controller.yaml'
     path.write_text(yaml.safe_dump(config))
     preview_path = tmp_path / 'preview.yaml'
     preview_path.write_text(yaml.safe_dump({'mpc_preview': {'ros__parameters': {
-        'use_sim_time': True, 'tube_radius': 9.0, 'goal_circle_radius': 9.0}}}))
+        'use_sim_time': True, 'tube_radius': 9.0, 'goal_circle_radius': 9.0,
+        'trigger_margin': 9.0, 'trigger_front_extension': 9.0}}}))
     actions = desktop(monkeypatch, controller_params_file=str(path),
                       mpc_preview_params_file=str(preview_path))
     preview = next(action for action in actions if isinstance(action, dict)
                    and action['name'] == 'mpc_preview')
-    expected = {'use_sim_time': False, 'goal_circle_radius': 0.35, 'tube_radius': 0.75}
+    expected = {
+        'use_sim_time': False, 'goal_circle_radius': 0.35, 'tube_radius': 0.75,
+        'trigger_margin': geometry.get('trigger_margin', 0.05),
+        'trigger_front_extension': geometry.get('trigger_front_extension', 0.0),
+    }
     assert preview['parameters'][-1] == expected
     rewritten = preview['parameters'][0].perform(LaunchContext())
     assert yaml.safe_load(Path(rewritten).read_text())[

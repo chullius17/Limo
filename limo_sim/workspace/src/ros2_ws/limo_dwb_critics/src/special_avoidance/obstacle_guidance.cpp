@@ -168,6 +168,36 @@ double ObstacleGuidance::distance(double x, double y) const
   return weights > 0.0 ? sum / weights : infinity;
 }
 
+std::vector<std::pair<int, int>> ObstacleGuidance::route(int x, int y, double direction) const
+{
+  std::vector<std::pair<int, int>> result;
+  if (!traversable(x, y) || !std::isfinite(distances_[y * width_ + x])) {return result;}
+  for (std::size_t count = 0; count < distances_.size(); ++count) {
+    result.emplace_back(x, y);
+    const auto index = static_cast<std::size_t>(y) * width_ + x;
+    if (distances_[index] == 0.0) {return result;}
+    double best_cost = infinity, best_angle = infinity;
+    int step_x = 0, step_y = 0;
+    for (const auto & step : neighbors_) {
+      const int nx = x + step.x, ny = y + step.y;
+      if (!traversable(nx, ny) ||
+        (step.x && step.y && (!traversable(nx, y) || !traversable(x, ny)))) {continue;}
+      const auto next = static_cast<std::size_t>(ny) * width_ + nx;
+      if (distances_[next] >= distances_[index]) {continue;}
+      const double cost = distances_[next] + step.half_length * (penalties_[index] + penalties_[next]);
+      const double angle = std::abs(std::atan2(
+          std::sin(step.heading - direction), std::cos(step.heading - direction)));
+      if (cost < best_cost - 1e-9 || (std::abs(cost - best_cost) <= 1e-9 && angle < best_angle)) {
+        best_cost = cost; best_angle = angle; step_x = step.x; step_y = step.y;
+      }
+    }
+    if (!step_x && !step_y) {return {};}
+    x += step_x; y += step_y;
+    direction = std::atan2(step_y, step_x);
+  }
+  return {};
+}
+
 double ObstacleGuidance::heading(double x, double y, double current_heading) const
 {
   if (!std::isfinite(x) || !std::isfinite(y) || x < -0.5 || y < -0.5 ||

@@ -22,6 +22,8 @@ public:
   // Coordinates are measured in cells, with integer coordinates at centers.
   double distance(double x, double y) const;
   double heading(double x, double y, double current_heading) const;
+  // On-demand preview of the descending grid route; never changes the field.
+  std::vector<std::pair<int, int>> route(int x, int y, double current_heading) const;
 
 private:
   struct Offset

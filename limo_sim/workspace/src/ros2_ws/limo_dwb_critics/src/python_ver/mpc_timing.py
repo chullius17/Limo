@@ -67,6 +67,11 @@ class MpcTimingPublisher:
         for name, metric in zip(TIMING_FIELDS, w.times):
             add(name + '_mean', metric.mean())
             add(name + '_max', metric.maximum)
+        add('guidance_backend', 'SMAC' if w.guidance_smac else 'DIJKSTRA')
+        add('guidance_plan_calls', w.guidance_plan.count)
+        add('guidance_plan_failures', w.guidance_plan_failures)
+        add('guidance_plan_ms_mean', w.guidance_plan.mean())
+        add('guidance_plan_ms_max', w.guidance_plan.maximum)
         for name, critic in zip(self.critic_names_, self.critic_windows_):
             wall, cpu = 'critic_prepare/' + name, 'critic_prepare_cpu/' + name
             add(wall + '_ms_mean', critic.prepare.mean())
@@ -99,6 +104,10 @@ class MpcTimingPublisher:
             w.rejected += sample.rejected_count
             w.detour_cycles += sample.detouring
             w.grid_updates += sample.grid_updated
+            w.guidance_smac = sample.guidance_smac
+            if sample.guidance_plan_called:
+                w.guidance_plan.add(sample.guidance_plan_ms)
+                w.guidance_plan_failures += sample.guidance_plan_failed
             if now - self.window_start_ < self.period_:
                 return
             self.publisher_.publish(self.report(now))

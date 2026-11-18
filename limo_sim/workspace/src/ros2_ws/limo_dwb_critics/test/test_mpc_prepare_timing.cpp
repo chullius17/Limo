@@ -8,7 +8,9 @@
 #include <vector>
 
 #include "dwb_core/illegal_trajectory_tracker.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
 #include "limo_dwb_critics/ackermann_mpc_controller.hpp"
+#include "limo_dwb_critics/guidance_unavailable.hpp"
 
 namespace limo_dwb_critics
 {
@@ -39,6 +41,36 @@ public:
 
   static bool active(const AckermannMPCController & controller)
   {return controller.timing_sample_active_;}
+
+  static void seedPrediction(AckermannMPCController & controller)
+  {
+    controller.have_time_ = true;
+    controller.have_command_ = true;
+    controller.previous_command_.velocity = .18;
+    controller.previous_command_.steering = .11;
+  }
+
+  static bool predictionCleared(const AckermannMPCController & controller)
+  {
+    return !controller.have_time_ && !controller.have_command_ &&
+           controller.previous_command_.velocity == 0.0 &&
+           controller.previous_command_.steering == 0.0;
+  }
+
+  static void enablePreview(
+    AckermannMPCController & controller, const nav2_util::LifecycleNode::SharedPtr & node,
+    const std::shared_ptr<nav2_costmap_2d::Costmap2DROS> & map)
+  {
+    node->declare_parameter("FollowPath.MPC.Debug.enabled", true);
+    node->declare_parameter("FollowPath.MPC.Debug.publish_rate", 100.0);
+    controller.debug_publisher_ = std::make_unique<MpcDebugPublisher>(
+      node, "FollowPath", map, MpcConfig());
+    controller.debug_publisher_->activate();
+  }
+
+  static void setTransform(
+    AckermannMPCController & controller, const geometry_msgs::msg::TransformStamped & transform)
+  {ASSERT_TRUE(controller.tf_->setTransform(transform, "prepare_timing_test", true));}
 };
 }  // namespace limo_dwb_critics
 
@@ -82,6 +114,12 @@ public:
     last_goal = goal;
     last_plan = plan;
     finiteWork();
+    if (guidance_unavailable) {
+      throw limo_dwb_critics::GuidanceUnavailable(label_, "test reference temporarily blocked");
+    }
+    if (illegal_prepare) {
+      throw dwb_core::IllegalTrajectoryException(label_, "test fatal prepare failure");
+    }
     if (throw_prepare) {throw std::runtime_error(label_ + " prepare failure");}
     return prepare_result;
   }
@@ -95,8 +133,12 @@ public:
   }
 
   double scoreTrajectory(const dwb_msgs::msg::Trajectory2D &) override {return 0.0;}
+  void reset() override {++reset_calls;}
 
   bool prepare_result{true};
+  bool guidance_unavailable{false};
+  bool illegal_prepare{false};
+  int reset_calls{0};
   bool throw_prepare{false};
   bool throw_debrief{false};
   geometry_msgs::msg::Pose2D last_pose;
@@ -422,6 +464,84 @@ TEST_F(MpcPrepareTimingTest, OuterCyclesClearOldTimingsAfterSuccessAndDifferentF
   EXPECT_DOUBLE_EQ(run3D().twist.angular.z, -.17);
   EXPECT_TRUE(AckermannMPCControllerTestPeer::sample(*controller_).success);
   EXPECT_FALSE(AckermannMPCControllerTestPeer::active(*controller_));
+  expectUnlocked();
+}
+
+TEST_F(MpcPrepareTimingTest, TemporaryMissingGuidanceStopsWithoutResettingCriticsAndCanResume)
+{
+  AckermannMPCControllerTestPeer::enableOuterTiming(*controller_, node_);
+  EXPECT_DOUBLE_EQ(run3D().twist.linear.x, .23);
+  critics_[1]->guidance_unavailable = true;
+  AckermannMPCControllerTestPeer::seedPrediction(*controller_);
+  for (int cycle = 0; cycle < 2; ++cycle) {
+    events_.clear();
+    const auto command = run3D();
+    EXPECT_EQ(command.header.frame_id, map_->getBaseFrameID());
+    EXPECT_GT(rclcpp::Time(command.header.stamp).nanoseconds(), 0);
+    EXPECT_DOUBLE_EQ(command.twist.linear.x, 0.0);
+    EXPECT_DOUBLE_EQ(command.twist.linear.y, 0.0);
+    EXPECT_DOUBLE_EQ(command.twist.angular.z, 0.0);
+    EXPECT_EQ(events_, (std::vector<std::string>{"plan", "A.prepare", "B.prepare"}));
+    EXPECT_TRUE(AckermannMPCControllerTestPeer::predictionCleared(*controller_));
+    EXPECT_FALSE(AckermannMPCControllerTestPeer::sample(*controller_).success);
+    EXPECT_FALSE(AckermannMPCControllerTestPeer::active(*controller_));
+    for (const auto & critic : critics_) {EXPECT_EQ(critic->reset_calls, 0);}
+    expectUnlocked();
+  }
+  critics_[1]->guidance_unavailable = false;
+  events_.clear();
+  const auto resumed = run3D();
+  EXPECT_DOUBLE_EQ(resumed.twist.linear.x, .23);
+  EXPECT_DOUBLE_EQ(resumed.twist.angular.z, -.17);
+  EXPECT_TRUE(AckermannMPCControllerTestPeer::sample(*controller_).success);
+  EXPECT_EQ(events_, (std::vector<std::string>{
+    "plan", "A.prepare", "B.prepare", "C.prepare", "core", "A.debrief", "B.debrief", "C.debrief"}));
+  for (const auto & critic : critics_) {EXPECT_EQ(critic->reset_calls, 0);}
+  expectUnlocked();
+
+  // Ordinary fatal critic errors must still reach the controller server.
+  critics_[1]->illegal_prepare = true;
+  EXPECT_THROW(run3D(), dwb_core::IllegalTrajectoryException);
+  EXPECT_FALSE(AckermannMPCControllerTestPeer::sample(*controller_).success);
+  expectUnlocked();
+}
+
+TEST_F(MpcPrepareTimingTest, MissingGuidancePublishesAnEmptyPreviewInTheCostmapFrame)
+{
+  AckermannMPCControllerTestPeer::enablePreview(*controller_, node_, map_);
+  auto receiver = std::make_shared<rclcpp::Node>("waiting_preview_receiver");
+  limo_interfaces::msg::MpcDebug::SharedPtr snapshot;
+  auto subscription = receiver->create_subscription<limo_interfaces::msg::MpcDebug>(
+    "/limo/control/mpc_debug", rclcpp::QoS(1).best_effort(),
+    [&](limo_interfaces::msg::MpcDebug::SharedPtr msg) {snapshot = msg;});
+  geometry_msgs::msg::TransformStamped transform;
+  transform.header.frame_id = "odom";
+  transform.child_frame_id = "map";
+  transform.transform.translation.x = 1.0;
+  transform.transform.translation.y = 2.0;
+  transform.transform.rotation.z = std::sqrt(.5);
+  transform.transform.rotation.w = std::sqrt(.5);
+  AckermannMPCControllerTestPeer::setTransform(*controller_, transform);
+  robot_.header.frame_id = "map";
+  critics_[1]->guidance_unavailable = true;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (!snapshot && std::chrono::steady_clock::now() < deadline) {
+    EXPECT_DOUBLE_EQ(run3D().twist.linear.x, 0.0);
+    rclcpp::spin_some(receiver);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  ASSERT_NE(snapshot, nullptr);
+  EXPECT_EQ(snapshot->header.frame_id, "odom");
+  EXPECT_NEAR(snapshot->robot_pose.x, 1.0, 1e-12);
+  EXPECT_NEAR(snapshot->robot_pose.y, 2.12, 1e-12);
+  EXPECT_NEAR(snapshot->robot_pose.theta, std::acos(-1.0) / 2.0, 1e-12);
+  EXPECT_EQ(snapshot->generated_count, 0U);
+  EXPECT_EQ(snapshot->selected_id, -1);
+  EXPECT_TRUE(snapshot->candidates.empty());
+  EXPECT_TRUE(snapshot->guidance_path.empty());
+  EXPECT_FALSE(snapshot->guidance_target_valid);
+  EXPECT_DOUBLE_EQ(snapshot->command_velocity, 0.0);
+  EXPECT_EQ(snapshot->costmap.data.size(), 400U);
   expectUnlocked();
 }
 }  // namespace

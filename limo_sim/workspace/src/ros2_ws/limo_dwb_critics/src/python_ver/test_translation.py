@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from ...include.python_ver.sampling_mpc import MpcConfig, MpcControl, MpcState, MpcFamily
 from ...include.python_ver.ros_compat import (
-    Costmap2D, Costmap2DROS, LocalNode, Header, Point, Pose, Pose2D, PoseStamped,
+    Costmap2D, Costmap2DROS, ObstacleLayer, LocalNode, Header, Point, Pose, Pose2D, PoseStamped,
     Path, Path2D, Twist, Twist2D, Trajectory2D, IllegalTrajectoryException,
     NoLegalTrajectoriesException, PlannerException,
 )
@@ -223,6 +223,80 @@ class TranslationTests(unittest.TestCase):
         grid.costs[:] = [0] * (80 * 80)
         critic.prepare(Pose2D(), Twist2D(), path.poses[-1], path)
         self.assertFalse(critic.detouring())
+
+    def test_smac_mode_requires_an_explicit_native_planner_adapter(self):
+        node = LocalNode({'FollowPath.MppiPath.ObstacleGuidance.enabled': True,
+                          'FollowPath.MppiPath.ObstacleGuidance.use_smac': True})
+        critic = MppiPathCritic(node=node, name='MppiPath', costmap_ros=grid_host())
+        with self.assertRaisesRegex(ValueError, 'injected Nav2'):
+            critic.onInit()
+
+    def test_only_marked_laser_cells_trigger_guidance_with_the_five_centimeter_margin(self):
+        host = grid_host()
+        laser = ObstacleLayer(80, 80, .05, origin_x=-1.75, origin_y=-1.85, costs=[255]*6400)
+        host.plugins.append(laser)
+        node = LocalNode({'FollowPath.MppiPath.ObstacleGuidance.enabled': True,
+                          'FollowPath.MppiPath.ObstacleGuidance.trigger_layer': 'obstacle_layer',
+                          'FollowPath.MppiPath.ObstacleGuidance.trigger_margin': .05})
+        critic = MppiPathCritic(node=node, name='MppiPath', costmap_ros=host)
+        critic.onInit()
+        path = Path2D(poses=[Pose2D(i*.05, 0) for i in range(38)])
+        grid = host.getCostmap()
+        grid.setCost(*grid.worldToMap(.825, .025), 254)
+        critic.prepare(Pose2D(), Twist2D(), path.poses[-1], path)
+        self.assertFalse(critic.guidancePlanCalled())
+        grid.costs[:] = [0]*6400
+        laser.costs[:] = [0]*6400
+        laser.setCost(*laser.worldToMap(.825, .175), 254)
+        grid.setCost(*grid.worldToMap(.825, .175), 254)
+        critic.prepare(Pose2D(), Twist2D(), path.poses[-1], path)
+        self.assertTrue(critic.detouring())
+        laser.enabled = False
+        critic.reset()
+        critic.prepare(Pose2D(), Twist2D(), path.poses[-1], path)
+        self.assertFalse(critic.guidancePlanCalled())
+
+    def test_missing_sensor_layer_does_not_fall_back_to_the_master(self):
+        node = LocalNode({'FollowPath.MppiPath.ObstacleGuidance.enabled': True,
+                          'FollowPath.MppiPath.ObstacleGuidance.trigger_layer': 'obstacle_layer'})
+        critic = MppiPathCritic(node=node, name='MppiPath', costmap_ros=grid_host())
+        with self.assertRaisesRegex(ValueError, 'must name an ObstacleLayer'):
+            critic.onInit()
+
+    def test_injected_smac_receives_arrival_yaw_and_exports_its_reference(self):
+        class Planner:
+            def createPlan(self, start, goal):
+                self.goal = goal
+                return Path(deepcopy(start.header), [start, goal])
+        planner, host = Planner(), grid_host()
+        node = LocalNode({'FollowPath.MppiPath.ObstacleGuidance.enabled': True,
+                          'FollowPath.MppiPath.ObstacleGuidance.use_smac': True})
+        critic = MppiPathCritic(node=node, name='MppiPath', costmap_ros=host, smac_planner=planner)
+        critic.onInit()
+        host.getCostmap().setCost(50, 43, 254)
+        reference = Path2D(poses=[Pose2D(i * .05, 0, .4) for i in range(38)])
+        critic.prepare(Pose2D(), Twist2D(), reference.poses[-1], reference)
+        self.assertTrue(critic.detouring())
+        self.assertAlmostEqual(planner.goal.pose.orientation.z, math.sin(.2))
+        self.assertTrue(critic.guidanceReference(Pose2D()))
+        self.assertTrue(math.isinf(critic.guidance_.distance(40, 40)))
+        critic.reset()
+        self.assertEqual(critic.guidanceReference(Pose2D()), [])
+
+    def test_dijkstra_preview_route_keeps_field_and_respects_blocked_corners(self):
+        guide = ObstacleGuidance()
+        costs = [0] * 36
+        costs[1 * 6 + 2] = 254
+        guide.update(6, 6, .1, costs, 0, 0)
+        self.assertTrue(guide.setTarget(4, 4))
+        before = list(guide.distances_)
+        route = guide.route(1, 1, 0)
+        self.assertEqual(route[-1], (4, 4))
+        for (x, y), (nx, ny) in zip(route, route[1:]):
+            self.assertTrue(guide.traversable(nx, ny))
+            if nx != x and ny != y:
+                self.assertTrue(guide.traversable(nx, y) and guide.traversable(x, ny))
+        self.assertEqual(before, guide.distances_)
 
     def test_timing_windows_count_only_called_critics(self):
         clock = [0.0]

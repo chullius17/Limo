@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,18 @@ struct MpcTimingSample
   double thread_cpu_ms{0.0};
   double prepare_ms{0.0};
   double guidance_grid_ms{0.0};
+  double guidance_plan_ms{0.0};
+  bool guidance_plan_called{false};
+  bool guidance_plan_failed{false};
+  bool guidance_smac{false};
+  // In async mode a call records a consumed worker completion, including an
+  // ignored stale result. Its elapsed time is independent of cycle_ms.
+  bool guidance_async{false};
+  bool guidance_plan_running{false};
+  bool guidance_plan_discarded{false};
+  std::int64_t guidance_plan_start_steady_ns{0};
+  std::uint64_t guidance_plan_epoch{0};
+  double guidance_replan_hz{0.0};
   double solve_ms{0.0};
   double scoring_ms{0.0};
   double debug_ms{0.0};
@@ -73,6 +86,7 @@ private:
   {
     double sum{0.0};
     double maximum{0.0};
+    double minimum{0.0};
     std::uint64_t count{0};
     void add(double value) noexcept;
     double mean() const noexcept {return count ? sum / count : 0.0;}
@@ -88,6 +102,33 @@ private:
     std::uint64_t rejected{0};
     std::uint64_t detour_cycles{0};
     std::uint64_t grid_updates{0};
+    Metric guidance_plan;
+    std::uint64_t guidance_plan_failures{0};
+    std::uint64_t guidance_async_cycles{0};
+    std::uint64_t guidance_plan_running_cycles{0};
+    std::uint64_t guidance_async_completions{0};
+    std::uint64_t guidance_plan_discarded{0};
+    bool guidance_smac{false};
+    double guidance_replan_hz{0.0};
+    Metric guidance_plan_interval;
+    std::uint64_t guidance_rate_limit_violations{0};
+    std::uint64_t guidance_cadence_resets{0};
+    std::uint64_t guidance_cache_cycles{0};
+    std::uint64_t guidance_waiting_cycles{0};
+  };
+  struct Cadence
+  {
+    bool interval_valid{false};
+    double interval_ms{0.0};
+    bool rate_limit_violation{false};
+    bool reset{false};
+  };
+  struct PlanHistory
+  {
+    std::int64_t start_ns{0};
+    std::uint64_t epoch{0};
+    bool smac{false};
+    bool valid{false};
   };
   struct CriticWindow
   {
@@ -97,6 +138,11 @@ private:
   };
   diagnostic_msgs::msg::DiagnosticArray report(Clock::time_point now) const;
   void reset() noexcept;
+  void openCsv(const std::string & directory) noexcept;
+  Cadence cadence(const MpcTimingSample & sample) noexcept;
+  void writeCsv(
+    const MpcTimingSample & sample, Clock::time_point now, const Cadence & cadence) noexcept;
+  void flushCsv() noexcept;
 
   nav2_util::LifecycleNode::SharedPtr node_;
   rclcpp_lifecycle::LifecyclePublisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr publisher_;
@@ -105,11 +151,17 @@ private:
   std::chrono::duration<double> period_{};
   Clock::time_point window_start_{};
   Window window_{};
+  PlanHistory plan_history_{};
   std::vector<std::string> critic_names_;
   std::vector<CriticWindow> critic_windows_;
   double budget_ms_;
   bool log_summary_{false};
   bool active_{false};
+  std::ofstream csv_;
+  std::string csv_path_;
+  std::uint64_t csv_session_{0};
+  std::uint64_t csv_cycle_{0};
+  Clock::time_point csv_last_flush_{};
 };
 
 }  // namespace limo_dwb_critics

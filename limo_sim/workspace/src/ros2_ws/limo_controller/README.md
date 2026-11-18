@@ -54,6 +54,14 @@ the budget is 59 before deduplication. Telemetry labels this family
 `Partenza lenta` in the preview. See [Pianificazione.md](limo_controller/Pianificazione.md)
 for all trajectory groups.
 
+Both profiles enable `FollowPath.MPC.prefer_motion`. Outside the final global
+goal's `FollowPath.xy_goal_tolerance` (0.10 m), MPC selects the cheapest feasible
+candidate whose first reachable command moves forward, even if stopping has a
+lower cost. Collision, steering/acceleration limits and the terminal tube remain
+mandatory. Stopping is still available when no forward candidate is feasible
+and near the final goal; a temporary avoidance target does not enable the goal
+exception. Reconfigure the controller after changing this parameter.
+
 Both profiles enable `FollowPath.MppiPath.ObstacleGuidance`: when a newly observed
 obstacle blocks the reference, MPC scores progress through free space toward
 a clear rejoin point instead of straight-line progress into the obstacle.
@@ -64,8 +72,73 @@ in both profiles so its sign locks cannot prevent exiting the detour. See the
 for parameters and local-map/kinematic limitations. Rebuild both
 `limo_dwb_critics` and `limo_controller`, then restart the control application.
 
-Both profiles trigger detours when the oriented footprint would collide or pass
-within about 5 cm of an obstacle (`trigger_margin: 0.05`). This anticipates the
+Both profiles trigger detours only from `/scan` marks in `obstacle_layer`, when
+the oriented reference footprint plus a uniform 5 cm Euclidean margin
+(`trigger_margin: 0.05`), intersects a laser obstacle. The margin covers the
+front, sides and rear, with round corners; `trigger_front_extension` defaults
+to 0.0. Semantic costs and unknown sensor cells do not
+initiate detours. Dijkstra and SMAC share the same logic: detection checks the
+robot-to-reference connector and the local reference up to the separate
+`ObstacleGuidance.lookahead_distance: 1.0` m. Normal path following retains
+`PathFollowCritic.lookahead_distance: 1.25` m. The detour target starts at the
+1.0 m lookahead point, advances to a free reference point
+if blocked, then proceeds up to another 0.50 m along consecutive free points.
+SMAC then checks the final candidate's full filled, oriented footprint against
+the current map and skips invalid candidates forward without a search attempt.
+The center-based straightening distance and Dijkstra selection remain unchanged.
+Dijkstra replans on every active controller cycle. SMAC validates the full
+cached route and robot connection on every active cycle, and requests a search on
+activation, when the cache is missing or invalid, or when the desired rejoin
+target moves at least `ObstacleGuidance.Smac.replan_goal_distance: 0.25` m or
+changes heading by at least `replan_goal_angle: 0.35` rad (about 20 degrees).
+Both changes are measured from the last accepted target; heading uses the
+wrapped angular difference. A safe cached route with a stable target causes
+no periodic searches. `Smac.replan_frequency: 4.0` is a maximum search rate
+(at least 0.25 s between actual worker starts), including failed attempts.
+The last actual start survives reference, detour and deactivation resets;
+discarded worker results also retain their place in this cadence. Setting
+the frequency to zero only removes this rate cap; setting both target
+thresholds to zero forces searches on each eligible cycle for legacy benchmarks.
+The MPC retains its configured frequency. In SMAC mode, alignment and the
+terminal tube follow its reference, with the remaining local reference appended
+after rejoining. After each actual failed search,
+`Smac.failure_advance_distance: 0.25` m advances the next retry candidate along
+the original reference to the next free point at or beyond that arc distance.
+The advance clamps to the last available reference point if less than 0.25 m
+remains, provided that endpoint is free.
+Cooldown cycles do not advance it. Retry demand overrides the 0.25 m/0.35 rad
+target-change thresholds and remains subject to the 4 Hz cap. A failed target
+update retains the old accepted target and route while the route remains safe.
+Success clears the pending retry but keeps the advanced target as the earliest
+allowed target until a new reference or the end of the detour resets it. This
+prevents the next cycle from retreating to an earlier nominal target.
+The available reference and local map bound possible target extension, and the
+target never advances beyond the final global goal. A clipped local reference
+end is not necessarily that final goal; a later snapshot may expose more path.
+If target selection finds no candidate, the safe cached route remains in use.
+Without a safe route, the controller commands zero velocity and retries when
+eligible without immediately aborting navigation; preview snapshots stay fresh
+with old candidates cleared.
+
+`ObstacleGuidance.Smac.async_planning: true` uses one persistent native worker
+with no request queue or concurrent search. Requests own immutable copies of the
+costmap, footprint, start and target. The active controller call consumes a
+finished result without waiting for native completion, then fully revalidates
+the route, robot and target connections, clearance and oriented footprint on
+the current map. It continues using an old route only while that route remains
+safe; otherwise it sends zero velocity while planning. New references, detour
+resets and lifecycle deactivation invalidate old generations, preventing late
+results from restoring obsolete routes. `async_planning: false` retains
+synchronous search for deterministic benchmarks. Copying the map and validating
+routes still consume controller time; Foxy's iteration bound is not a worker
+wall-time deadline.
+
+SMAC rejection logs separate start/goal footprint and clearance prechecks,
+native exceptions or empty routes, snapshot route validation, and
+`current_map_validation` when a completed route fails live-map checks. Failure
+details retain pose/cell and clearance context; footprint, clearance and motion
+constraints remain enforced.
+The normal progress timeout still applies. This anticipates the
 switch to detour scoring without enlarging the guidance grid's hard clearance.
 Both profiles use a 4 s
 prediction horizon, forward motion or stopping, and retain detour scoring until
@@ -303,11 +376,49 @@ The preview Python code is grouped in `limo_controller/mpc_preview/`:
 the preview, and `sources.py` decodes laser and semantic observations.
 The ROS executable is `mpc_preview`.
 
+The active avoidance reference is drawn in dark blue and labeled `DIJKSTRA`
+or `SMAC`; the selected MPC prediction remains green and the global path magenta.
+An orange dot with a white border marks the actual temporary rejoin target.
+The dot disappears when avoidance ends or the snapshot expires.
+Labeled markers also show the normal MPC lookahead, the laser-trigger
+lookahead and the prospective rejoin target, even without an avoidance path
+or after a failed search. These are the actual reference points evaluated by
+the controller in that snapshot; unavailable points and stale snapshots do
+not leave old markers visible. Coincident lookaheads retain separate labels.
+An orange contour shows a uniform 5 cm Euclidean margin around the padded
+controller footprint (`ObstacleGuidance.trigger_margin: 0.05`), with round
+corners and a clear interior. It remains visible from the live footprint before
+START and while MPC telemetry is paused. Both application launches share the
+controller's configured margin and optional front extension (0.0 m by default)
+with the preview; the top legend shows their values.
+The reference comes from the same controller snapshot, and disappears when no
+detour is active or the snapshot is stale. Select the backend with
+`FollowPath.MppiPath.ObstacleGuidance.use_smac` (`true` in simulation, `false`
+on the real profile). Restart the controller after switching. After this
+telemetry-interface update, rebuild `limo_interfaces`, `limo_dwb_critics` and
+`limo_controller`, then restart both the controller and preview.
+
 `FollowPath.MPC.Debug.enabled` enables telemetry on `/limo/control/mpc_debug`.
 It is explicitly `true` in both `control_sim.yaml` and `control_real.yaml`.
 The control GUI contains only the control buttons and current status label; it does
 not subscribe to MPC telemetry or images. Read numerical telemetry in a separate
 terminal with `ros2 topic echo /limo/control/mpc_debug --no-arr`.
+Timing CSVs are written to `~/.ros/limo_timing` (`/root/.ros/limo_timing` in
+Docker). `ros2 run limo_dwb_critics analyze_mpc_timing.py --latest` summarizes
+MPC and SMAC/Dijkstra search times, including failures. In async mode,
+`plan_called=1` records one consumed worker completion, including discarded
+results; submissions and running cycles are not attempts or failures.
+`plan_ms` measures background worker duration and can exceed `cycle_ms` while
+the controller stays within budget. Controller `cpu_ms` excludes the worker;
+live-map acceptance checks remain in controller preparation. The appended
+`plan_async`, `plan_running` and `plan_discarded` columns preserve the original
+30 column positions. Diagnostics and the analyzer count async completions,
+in-flight cycles and discarded results separately. Actual worker-start
+timestamps and result epochs let the report check SMAC's 250 ms spacing at
+4 Hz within epochs independently of search duration; historical short intervals
+across epochs are listed separately. The runtime cap also spans reference and
+detour resets. Older CSVs without async columns remain
+supported.
 `FollowPath.MPC.Debug.preview_enabled` starts the image renderer: it is `true`
 in `control_sim.yaml` and `false` in `control_real.yaml`. For the real robot,
 `desktop_app.launch.py` starts the renderer on the PC by default; open

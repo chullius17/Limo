@@ -152,6 +152,36 @@ limo_interfaces::msg::MpcCandidate MpcDebugPublisher::candidate(
   return msg;
 }
 
+void MpcDebugPublisher::setGuidance(
+  const std::string & backend, const std::vector<geometry_msgs::msg::Pose2D> & path,
+  const geometry_msgs::msg::Pose2D * target)
+{
+  if (!collecting_) {return;}
+  frame_.guidance_backend = backend;
+  frame_.guidance_target_valid = target != nullptr;
+  frame_.guidance_target = target ? *target : geometry_msgs::msg::Pose2D();
+  frame_.guidance_path.clear();
+  const std::size_t keep = std::min<std::size_t>(512, path.size());
+  frame_.guidance_path.reserve(keep);
+  for (std::size_t i = 0; i < keep; ++i) {
+    const std::size_t index = keep < 2 ? 0 : i * (path.size() - 1) / (keep - 1);
+    frame_.guidance_path.push_back(path[index]);
+  }
+}
+
+void MpcDebugPublisher::setLookaheads(
+  const geometry_msgs::msg::Pose2D * path, const geometry_msgs::msg::Pose2D * guidance,
+  const geometry_msgs::msg::Pose2D * candidate)
+{
+  if (!collecting_) {return;}
+  frame_.path_lookahead_valid = path != nullptr;
+  frame_.path_lookahead = path ? *path : geometry_msgs::msg::Pose2D();
+  frame_.guidance_lookahead_valid = guidance != nullptr;
+  frame_.guidance_lookahead = guidance ? *guidance : geometry_msgs::msg::Pose2D();
+  frame_.guidance_candidate_target_valid = candidate != nullptr;
+  frame_.guidance_candidate_target = candidate ? *candidate : geometry_msgs::msg::Pose2D();
+}
+
 void MpcDebugPublisher::finish(const MpcSolution & solution)
 {
   if (!collecting_) {return;}

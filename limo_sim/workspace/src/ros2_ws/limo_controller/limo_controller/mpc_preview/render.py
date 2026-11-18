@@ -61,6 +61,12 @@ class PreviewFrame:
     generated_count: int
     selected_id: int
     candidates: tuple
+    guidance_backend: str = ''
+    guidance_path: tuple = ()
+    guidance_target: tuple = None
+    path_lookahead: tuple = None
+    guidance_lookahead: tuple = None
+    guidance_candidate_target: tuple = None
 
 
 @dataclass
@@ -101,6 +107,13 @@ class RenderOptions:
     colors: tuple = field(default_factory=lambda: DEFAULT_COLORS)
     selected_color: tuple = (0, 180, 65)
     global_path_color: tuple = (190, 40, 140)
+    guidance_path_color: tuple = (0, 70, 145)
+    guidance_target_color: tuple = (255, 125, 0)
+    path_lookahead_color: tuple = (0, 135, 170)
+    guidance_lookahead_color: tuple = (145, 45, 190)
+    trigger_margin: float = 0.05
+    trigger_front_extension: float = 0.0
+    trigger_region_color: tuple = (255, 145, 0)
     tube_radius: float = 0.30
     tube_line_width: int = 2
     goal_circle_radius: float = 0.20
@@ -135,6 +148,10 @@ class RenderOptions:
             raise ValueError('Invalid path tube radius or line width')
         if not math.isfinite(self.goal_circle_radius) or not 0 <= self.goal_circle_radius <= 10.0:
             raise ValueError('Goal circle radius must be finite and between 0 and 10 meters')
+        for name in ('trigger_margin', 'trigger_front_extension'):
+            value = getattr(self, name)
+            if not math.isfinite(value) or not 0 <= value <= 10.0:
+                raise ValueError(name + ' must be finite and between 0 and 10 meters')
         if not (1 <= self.line_width <= 30 and 1 <= self.selected_line_width <= 30
                 and 8 <= self.font_size <= 72):
             raise ValueError('Invalid line width or font size')
@@ -149,7 +166,9 @@ class RenderOptions:
                 or not isinstance(self.source_laser_cost, int)
                 or not 0 <= self.source_laser_cost <= 100):
             raise ValueError('Point class costs must be integers in [0, 100]')
-        colors = self.colors + (self.selected_color, self.global_path_color,
+        colors = self.colors + (self.selected_color, self.global_path_color, self.guidance_path_color,
+                                self.guidance_target_color, self.path_lookahead_color,
+                                self.guidance_lookahead_color, self.trigger_region_color,
                                 self.costmap_point_color, self.free_color,
                                 self.laser_color, self.semantic_color,
                                 self.inflated_color, self.critical_color,
@@ -323,6 +342,25 @@ def _tube_outline(points, size, radius, width):
         draw.line((start, end), fill=255, width=2 * radius + 1)
     for x, y in points:
         draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=255)
+    return _mask_outline(mask, width)
+
+
+@lru_cache(maxsize=2)
+def _footprint_outline(points, size, radius, width):
+    """Outline a polygon's Euclidean offset, with round corners and a clear interior."""
+    mask = Image.new('L', size, 0)
+    draw = ImageDraw.Draw(mask)
+    draw.polygon(points, fill=255)
+    for start, end in zip(points, points[1:] + points[:1]):
+        draw.line((start, end), fill=255, width=2 * radius + 1)
+    for x, y in points:
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=255)
+    return _mask_outline(mask, width)
+
+
+def _mask_outline(mask, width):
+    """Keep only the outer pixels of a filled geometry, preserving its interior."""
+    size = mask.size
     # Taking the boundary of the union avoids drawing false internal edges at
     # bends, overlapping segments and self-intersections. The interior stays clear.
     inner = mask
@@ -411,6 +449,13 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
                     traces.line(points, fill=color, width=options.line_width)
         image = Image.alpha_composite(image.convert('RGBA'), overlay).convert('RGB')
         draw = ImageDraw.Draw(image)
+        reference = [base_to_pixel(world_to_base(pose, frame.robot_pose), options)
+                     for pose in frame.guidance_path]
+        if len(reference) >= 2:
+            draw.line(reference, fill=(255, 255, 255), width=options.line_width + 6)
+            draw.line(reference, fill=options.guidance_path_color, width=options.line_width + 2)
+            _arrow(draw, reference[-2], reference[-1], options.guidance_path_color,
+                   options.line_width + 2)
         if winner is not None:
             points = [base_to_pixel(world_to_base(pose, frame.robot_pose), options)
                       for pose in winner.poses]
@@ -420,6 +465,43 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
                 end = points[-1]
                 draw.ellipse((end[0] - 4, end[1] - 4, end[0] + 4, end[1] + 4),
                              fill=options.selected_color)
+        markers = ((frame.path_lookahead, 'MPC lookahead', options.path_lookahead_color, -25),
+                   (frame.guidance_lookahead, 'Avoidance lookahead',
+                    options.guidance_lookahead_color, -5),
+                   (frame.guidance_candidate_target, 'Rejoin candidate',
+                    options.guidance_target_color, 15))
+        for pose, label, color, label_offset in markers:
+            if pose is None:
+                continue
+            x, y = base_to_pixel(world_to_base(pose, frame.robot_pose), options)
+            text_position = (x + 26, y + label_offset)
+            draw.text(text_position, label, fill=color, font=font,
+                      stroke_width=2, stroke_fill=(255, 255, 255))
+        for index, (pose, label, color, label_offset) in enumerate(markers):
+            if pose is None:
+                continue
+            x, y = base_to_pixel(world_to_base(pose, frame.robot_pose), options)
+            if index == 0:
+                # The long cross and smaller diamond remain distinct when coincident.
+                for line in ((x - 21, y, x + 21, y), (x, y - 21, x, y + 21)):
+                    draw.line(line, fill=(255, 255, 255), width=5)
+                    draw.line(line, fill=color, width=3)
+            elif index == 1:
+                diamond = ((x, y - 11), (x + 11, y), (x, y + 11), (x - 11, y),
+                           (x, y - 11))
+                draw.line(diamond, fill=(255, 255, 255), width=5)
+                draw.line(diamond, fill=color, width=3)
+            elif (frame.guidance_target is None
+                  or math.hypot(pose[0] - frame.guidance_target[0],
+                                pose[1] - frame.guidance_target[1]) > 1e-6):
+                draw.ellipse((x - 18, y - 18, x + 18, y + 18),
+                             outline=(255, 255, 255), width=5)
+                draw.ellipse((x - 18, y - 18, x + 18, y + 18), outline=color, width=3)
+        if frame.guidance_target is not None:
+            x, y = base_to_pixel(world_to_base(frame.guidance_target, frame.robot_pose), options)
+            draw.ellipse((x - 10, y - 10, x + 10, y + 10), fill=(255, 255, 255))
+            draw.ellipse((x - 7, y - 7, x + 7, y + 7),
+                         fill=options.guidance_target_color, outline=(40, 40, 40), width=1)
     if global_path and options.goal_circle_radius > 0:
         end_x, end_y = base_to_pixel(global_path[-1], options)
         radius = options.goal_circle_radius * options.pixels_per_meter
@@ -429,6 +511,14 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
     if view is not None:
         polygon = [base_to_pixel(point, options) for point in view.footprint]
         if len(polygon) >= 3:
+            if options.trigger_margin > 0 or options.trigger_front_extension > 0:
+                front = max(point[0] for point in view.footprint)
+                region = tuple(base_to_pixel((x + options.trigger_front_extension
+                                         if abs(x - front) <= 1e-9 else x, y), options)
+                               for x, y in view.footprint)
+                radius = max(0, round(options.trigger_margin * options.pixels_per_meter))
+                outline = _footprint_outline(region, image.size, radius, options.line_width)
+                image.paste(options.trigger_region_color, (0, 0), outline)
             draw.line(polygon + [polygon[0]], fill=(255, 255, 255), width=7)
             draw.line(polygon + [polygon[0]], fill=(20, 30, 45), width=3)
 
@@ -451,6 +541,15 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
     draw.rectangle((0, 0, options.image_width, 70), fill=options.background_color)
     draw.text((16, 10), title, fill=(20, 30, 45), font=font)
     draw.text((16, 36), detail, fill=(60, 65, 75), font=font)
+    if (view is not None and len(view.footprint) >= 3
+            and (options.trigger_margin > 0 or options.trigger_front_extension > 0)):
+        x, y = ((options.image_width - 340, 10) if options.image_width >= 640 else (16, 54))
+        draw.line((x, y + 8, x + 24, y + 8), fill=options.trigger_region_color, width=3)
+        label = f'Trigger margin {options.trigger_margin:.2f} m'
+        if options.trigger_front_extension > 0:
+            label += f' / front +{options.trigger_front_extension:.2f} m'
+        draw.text((x + 30, y), label,
+                  fill=(30, 35, 45), font=font)
     source_costs = sources is not None and options.source_cost_colors
     if source_costs or (sources is None and options.costmap_colormap == 'jet'):
         x, y, width = options.image_width - 270, 82, 240
@@ -467,7 +566,7 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
             tick = x + (width - 1) * cost / top
             draw.text((tick - (0 if cost == 0 else 14), y + 40), str(cost),
                       fill=(30, 35, 45), font=font)
-    legend_y = options.image_height - 172
+    legend_y = options.image_height - 198
     draw.rectangle((0, legend_y, options.image_width, options.image_height),
                    fill=options.background_color)
     for index, label in enumerate(LABELS):
@@ -510,6 +609,14 @@ def render_preview(frame, options, status='', background=None, global_path=(), s
         map_label = ('Jet: 0-253 | black=254 lethal, gray=255 unknown'
                      if options.costmap_colormap == 'jet' else
                      'Costmap: light=free, orange=inflation, dark=obstacle')
-    draw.text((16, legend_y + 145), f'Grid: {options.grid_spacing:g} m | ' + map_label,
+    if frame is not None:
+        y = legend_y + 145
+        draw.line((16, y + 8, 40, y + 8), fill=options.guidance_path_color, width=4)
+        reference_label = f'Avoidance reference: {frame.guidance_backend or "none"}'
+        reference_label += f' | {len(frame.guidance_path)} points' if frame.guidance_path else ' | inactive'
+        if frame.guidance_target is not None:
+            reference_label += ' | orange: temporary target'
+        draw.text((46, y), reference_label, fill=(30, 35, 45), font=font)
+    draw.text((16, legend_y + 171), f'Grid: {options.grid_spacing:g} m | ' + map_label,
               fill=(60, 65, 75), font=font)
     return image

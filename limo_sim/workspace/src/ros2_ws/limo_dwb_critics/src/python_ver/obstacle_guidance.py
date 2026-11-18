@@ -13,6 +13,8 @@ class ObstacleGuidance:
         self.clearance_offsets_, self.neighbors_, self.queue_ = [], [], []
         self.penalty_lookup_ = [0.0] * 256
 
+    # clearance: distance to maintain form the obstacles for the robot's center
+    # cost_weight: penalty to high cost cells
     def update(self, width, height, resolution, costs, clearance, cost_weight):
         if (width <= 0 or height <= 0 or costs is None or
                 not math.isfinite(resolution) or resolution <= 0 or
@@ -112,6 +114,30 @@ class ObstacleGuidance:
                     total += weight * value
                     weights += weight
         return total / weights if weights > 0 else math.inf
+
+    def route(self, x, y, direction):
+        """Extract the descending route for telemetry without changing Dijkstra."""
+        if not self.traversable(x, y) or not math.isfinite(self.distances_[y*self.width_+x]):
+            return []
+        result = []
+        for _ in range(len(self.distances_)):
+            result.append((x, y))
+            index = y*self.width_+x
+            if self.distances_[index] == 0:
+                return result
+            best = None
+            for step, nxt in self._neighbors(x, y):
+                if self.distances_[nxt] >= self.distances_[index]:
+                    continue
+                cost = self.distances_[nxt]+step.half_length*(self.penalties_[index]+self.penalties_[nxt])
+                angle = abs(math.atan2(math.sin(step.heading-direction), math.cos(step.heading-direction)))
+                if best is None or cost < best[0]-1e-9 or (abs(cost-best[0])<=1e-9 and angle<best[1]):
+                    best = cost, angle, step
+            if best is None:
+                return []
+            step = best[2]
+            x, y, direction = x+step.x, y+step.y, step.heading
+        return []
 
     def heading(self, x, y, current_heading):
         if not self._valid_coordinates(x, y):

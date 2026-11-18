@@ -3,9 +3,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <fstream>
+#include <future>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -13,8 +16,11 @@
 #include "dwb_core/exceptions.hpp"
 #include "dwb_core/illegal_trajectory_tracker.hpp"
 #include "limo_dwb_critics/ackermann_mpc_controller.hpp"
+#include "limo_dwb_critics/guidance_unavailable.hpp"
 #include "limo_dwb_critics/mppi_cost_critics.hpp"
 #include "nav2_costmap_2d/cost_values.hpp"
+#include "nav2_costmap_2d/footprint_collision_checker.hpp"
+#include "nav2_costmap_2d/obstacle_layer.hpp"
 #include "nav_2d_utils/conversions.hpp"
 
 namespace
@@ -37,6 +43,15 @@ nav_2d_msgs::msg::Path2D straightPath()
   }
   return result;
 }
+
+void expectLookahead(const geometry_msgs::msg::Pose2D * point,
+  double x, double y = 0.0, double yaw = 0.0, double x_tolerance = 1e-9)
+{
+  ASSERT_NE(point, nullptr);
+  EXPECT_NEAR(point->x, x, x_tolerance);
+  EXPECT_NEAR(point->y, y, 1e-9);
+  EXPECT_NEAR(point->theta, yaw, 1e-9);
+}
 }  // namespace
 
 class MppiCostsTest : public ::testing::Test
@@ -54,6 +69,38 @@ protected:
     // Nav2's controller_server declares this before configuring its plugin;
     // mirror that lifecycle here so the YAML's frequency override is visible.
     node_->declare_parameter("controller_frequency", rclcpp::ParameterValue(20.0));
+    // Synthetic regression cycles must not mix with runtime timing captures.
+    node_->declare_parameter("FollowPath.MPC.Timing.csv_directory", std::string());
+    node_->set_parameter(rclcpp::Parameter("FollowPath.MPC.Timing.csv_directory", std::string()));
+    // Exercise each backend explicitly below, independently of runtime tuning.
+    node_->declare_parameter("FollowPath.MppiPath.ObstacleGuidance.use_smac", false);
+    node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.use_smac", false));
+    // Preserve deterministic synchronous regressions while runtime profiles
+    // use the worker. The dedicated async fixture opts in explicitly below.
+    node_->declare_parameter("FollowPath.MppiPath.ObstacleGuidance.Smac.async_planning", false);
+    node_->set_parameter(rclcpp::Parameter(
+      "FollowPath.MppiPath.ObstacleGuidance.Smac.async_planning", false));
+    // Existing scoring regressions and backend benchmarks deliberately plan
+    // every cycle. Dedicated cadence tests below exercise runtime thresholds.
+    node_->declare_parameter("FollowPath.MppiPath.ObstacleGuidance.Smac.replan_frequency", 0.0);
+    node_->set_parameter(rclcpp::Parameter(
+      "FollowPath.MppiPath.ObstacleGuidance.Smac.replan_frequency", 0.0));
+    node_->declare_parameter("FollowPath.MppiPath.ObstacleGuidance.Smac.replan_goal_distance", 0.0);
+    node_->set_parameter(rclcpp::Parameter(
+      "FollowPath.MppiPath.ObstacleGuidance.Smac.replan_goal_distance", 0.0));
+    node_->declare_parameter("FollowPath.MppiPath.ObstacleGuidance.Smac.replan_goal_angle", 0.0);
+    node_->set_parameter(rclcpp::Parameter(
+      "FollowPath.MppiPath.ObstacleGuidance.Smac.replan_goal_angle", 0.0));
+    // Legacy route and event regressions retry the same target. Exercise
+    // forward movement after a failed search in its dedicated fixture below.
+    node_->declare_parameter("FollowPath.MppiPath.ObstacleGuidance.Smac.failure_advance_distance", 0.0);
+    node_->set_parameter(rclcpp::Parameter(
+      "FollowPath.MppiPath.ObstacleGuidance.Smac.failure_advance_distance", 0.0));
+    // Most fixtures model a single fused grid. Sensor provenance is exercised
+    // explicitly with a separate ObstacleLayer in the laser-trigger tests.
+    node_->declare_parameter("FollowPath.MppiPath.ObstacleGuidance.trigger_layer", std::string());
+    node_->set_parameter(rclcpp::Parameter(
+      "FollowPath.MppiPath.ObstacleGuidance.trigger_layer", std::string()));
     if (!structuredPipeline()) {
       // Keep the legacy sampler/critic regression suite independent of the
       // newly selected runtime strategy. Structured integration is tested below.
@@ -69,6 +116,8 @@ protected:
       override("FollowPath.MPC.batch_size", rclcpp::ParameterValue(simulation ? 768 : 128));
       override("FollowPath.MPC.control_segments", rclcpp::ParameterValue(5));
       override("FollowPath.MPC.Debug.samples_per_family", rclcpp::ParameterValue(6));
+      override("FollowPath.MppiPath.PathFollowCritic.lookahead_distance", rclcpp::ParameterValue(1.25));
+      override("FollowPath.MppiPath.ObstacleGuidance.lookahead_distance", rclcpp::ParameterValue(1.25));
       override("FollowPath.MppiObstacle.full_footprint_check", rclcpp::ParameterValue(false));
       override("FollowPath.min_vel_x", rclcpp::ParameterValue(simulation ? -0.1 : 0.0));
     }
@@ -105,6 +154,38 @@ protected:
     costmap_->getCostmap()->setCost(mx, my, cost);
   }
 
+  std::shared_ptr<nav2_costmap_2d::ObstacleLayer> addLaserTriggerLayer()
+  {
+    laser_tf_ = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
+    auto laser = std::make_shared<nav2_costmap_2d::ObstacleLayer>();
+    laser->initialize(costmap_->getLayeredCostmap(), "obstacle_layer", laser_tf_.get(),
+      costmap_, nullptr, nullptr);
+    costmap_->getLayeredCostmap()->addPlugin(laser);
+    const auto * map = costmap_->getCostmap();
+    // A rolling sensor layer can have a different origin from the fused map.
+    laser->resizeMap(map->getSizeInCellsX(), map->getSizeInCellsY(), map->getResolution(),
+      map->getOriginX() + .25, map->getOriginY() + .15);
+    clearLaser(laser);
+    node_->set_parameter(rclcpp::Parameter(
+      "FollowPath.MppiPath.ObstacleGuidance.trigger_layer", std::string("obstacle_layer")));
+    return laser;
+  }
+
+  void clearLaser(const std::shared_ptr<nav2_costmap_2d::ObstacleLayer> & laser,
+    unsigned char cost = nav2_costmap_2d::FREE_SPACE)
+  {
+    std::fill(laser->getCharMap(), laser->getCharMap() +
+      laser->getSizeInCellsX() * laser->getSizeInCellsY(), cost);
+  }
+
+  void setLaserCost(const std::shared_ptr<nav2_costmap_2d::ObstacleLayer> & laser,
+    double x, double y, unsigned char cost = nav2_costmap_2d::LETHAL_OBSTACLE)
+  {
+    unsigned int mx, my;
+    ASSERT_TRUE(laser->worldToMap(x, y, mx, my));
+    laser->setCost(mx, my, cost);
+  }
+
   template<typename Critic>
   void initialize(Critic & critic, std::string name)
   {
@@ -114,6 +195,7 @@ protected:
 
   rclcpp_lifecycle::LifecycleNode::SharedPtr node_;
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_;
+  std::shared_ptr<tf2_ros::Buffer> laser_tf_;
 };
 
 class MppiOnlineCostsTest : public MppiCostsTest
@@ -152,7 +234,1779 @@ public:
   bool guidanceTraversable(unsigned int x, unsigned int y) const
   {return guidance_.traversable(x, y);}
   std::size_t startIndex() const {return start_index_;}
+  const auto & smacPath() const {return smac_path_;}
+  const auto & smacGoal() const {return smac_goal_;}
+  double failedSmacGoalProgress() const {return smac_failed_goal_progress_;}
+  const auto & targetPose() const {return path_[target_index_];}
+  bool hasDijkstraField() const
+  {
+    auto * map = costmap_ros_->getCostmap();
+    return std::isfinite(guidance_.distance(
+      -map->getOriginX() / map->getResolution() - 0.5,
+      -map->getOriginY() / map->getResolution() - 0.5));
+  }
+  void replacePlanner(nav2_core::GlobalPlanner::Ptr planner)
+  {
+    smac_planner_->deactivate();
+    smac_planner_ = std::move(planner);
+  }
+  void elapseSmacPlanPeriod()
+  {
+    ASSERT_TRUE(smac_last_search_start_.has_value());
+    if (smac_last_plan_start_) {*smac_last_plan_start_ -= std::chrono::milliseconds(251);}
+    *smac_last_search_start_ -= std::chrono::milliseconds(251);
+  }
+  std::int64_t limiterStartSteadyNs() const
+  {
+    return smac_last_search_start_ ? std::chrono::duration_cast<std::chrono::nanoseconds>(
+      smac_last_search_start_->time_since_epoch()).count() : 0;
+  }
+  bool waitForSmacResult() const
+  {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (smac_worker_ && smac_worker_->busy()) {
+      if (std::chrono::steady_clock::now() >= deadline) {return false;}
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return smac_worker_ != nullptr;
+  }
 };
+
+class LocalGuidanceBackendsTest : public MppiOnlineCostsTest,
+  public ::testing::WithParamInterface<bool> {};
+
+INSTANTIATE_TEST_CASE_P(DijkstraAndSmac, LocalGuidanceBackendsTest, ::testing::Bool());
+
+TEST_P(LocalGuidanceBackendsTest, PlansAroundObstacleWithoutRunningTheOtherBackend)
+{
+  costmap_->getCostmap()->resizeMap(250, 250, 0.02, -2.5, -2.5);
+  clearMap();
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.use_smac", GetParam()));
+  for (double x = 0.8; x < 1.0; x += 0.025) {
+    for (double y = -0.08; y < 0.08; y += 0.025) {setCost(x, y, 254);}
+  }
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  critic.setTimingEnabled(true);
+  const auto path = pathBehindCube();
+  const auto * map = costmap_->getCostmap();
+  const std::vector<unsigned char> original_costs(map->getCharMap(),
+    map->getCharMap() + map->getSizeInCellsX() * map->getSizeInCellsY());
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2.4, 0), path));
+  ASSERT_TRUE(critic.detouring());
+  EXPECT_EQ(critic.usesSmac(), GetParam());
+  EXPECT_EQ(critic.hasDijkstraField(), !GetParam());
+  EXPECT_EQ(critic.smacPath().empty(), !GetParam());
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  EXPECT_GT(critic.guidancePlanMs(), 0.0);
+  EXPECT_GT(critic.guidancePlanStartSteadyNs(), 0);
+  EXPECT_EQ(critic.guidancePlanEpoch(), GetParam() ? 1U : 0U);
+  EXPECT_DOUBLE_EQ(critic.guidanceReplanHz(), 0.0);
+  EXPECT_TRUE(std::equal(original_costs.begin(), original_costs.end(), map->getCharMap()));
+  const auto reference = critic.guidanceReference(pose(0, 0));
+  ASSERT_GE(reference.size(), 2U);
+  EXPECT_NEAR(reference.back().x, GetParam() ? critic.smacGoal().x : critic.targetPose().x, 0.10);
+  if (GetParam()) {
+    double lateral = 0.0;
+    for (const auto & point : critic.smacPath()) {lateral = std::max(lateral, std::abs(point.y));}
+    EXPECT_GT(lateral, 0.15);
+    EXPECT_NEAR(critic.smacPath().back().x, critic.smacGoal().x, 0.10);
+  }
+  // A fixed live grid isolates backend preparation; initialization is excluded.
+  double plan_sum = 0.0, plan_max = 0.0, prepare_sum = 0.0;
+  for (int i = 0; i < 23; ++i) {
+    const auto begin = std::chrono::steady_clock::now();
+    ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2.4, 0), path));
+    const auto elapsed = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - begin).count();
+    if (i < 3) {continue;}
+    plan_sum += critic.guidancePlanMs();
+    plan_max = std::max(plan_max, critic.guidancePlanMs());
+    prepare_sum += elapsed;
+  }
+  std::cout << "GUIDANCE_BENCH backend=" << (GetParam() ? "SMAC" : "DIJKSTRA")
+            << " calls=20 search_mean_ms=" << plan_sum / 20.0
+            << " search_max_ms=" << plan_max
+            << " prepare_mean_ms=" << prepare_sum / 20.0 << std::endl;
+  clearMap();
+  // Both backends exit once the detection clears and the robot is back on
+  // the original reference; reaching the temporary SMAC goal is unnecessary.
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2.4, 0), path));
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_DOUBLE_EQ(critic.guidancePlanMs(), 0.0);
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), 0);
+  EXPECT_TRUE(critic.guidanceReference(pose(0, 0)).empty());
+}
+
+class RecordingLocalPlanner : public nav2_core::GlobalPlanner
+{
+public:
+  geometry_msgs::msg::PoseStamped arrival;
+  std::vector<geometry_msgs::msg::Pose2D> via;
+  bool empty{false};
+  int calls{0};
+  void configure(rclcpp_lifecycle::LifecycleNode::SharedPtr, std::string,
+    std::shared_ptr<tf2_ros::Buffer>, std::shared_ptr<nav2_costmap_2d::Costmap2DROS>) override {}
+  void activate() override {}
+  void deactivate() override {}
+  void cleanup() override {}
+  nav_msgs::msg::Path createPlan(const geometry_msgs::msg::PoseStamped & start,
+    const geometry_msgs::msg::PoseStamped & goal) override
+  {
+    ++calls;
+    arrival = goal;
+    nav_msgs::msg::Path result;
+    result.header = start.header;
+    if (empty) {return result;}
+    result.poses.push_back(start);
+    for (const auto & point : via) {
+      auto stamped = start;
+      stamped.pose.position.x = point.x;
+      stamped.pose.position.y = point.y;
+      stamped.pose.orientation.z = std::sin(point.theta * 0.5);
+      stamped.pose.orientation.w = std::cos(point.theta * 0.5);
+      result.poses.push_back(stamped);
+    }
+    result.poses.push_back(goal);
+    return result;
+  }
+};
+
+// Each call keeps its own response and remains blocked until explicitly
+// released. All observations are synchronized with the planning thread.
+class BlockingLocalPlanner : public nav2_core::GlobalPlanner
+{
+public:
+  void configure(rclcpp_lifecycle::LifecycleNode::SharedPtr, std::string,
+    std::shared_ptr<tf2_ros::Buffer>, std::shared_ptr<nav2_costmap_2d::Costmap2DROS>) override {}
+  void activate() override {}
+  void deactivate() override {}
+  void cleanup() override {}
+
+  nav_msgs::msg::Path createPlan(const geometry_msgs::msg::PoseStamped & start,
+    const geometry_msgs::msg::PoseStamped & goal) override
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    goals_.push_back(goal);
+    starts_.push_back(std::chrono::steady_clock::now());
+    const auto call = goals_.size();
+    const bool empty = empty_;
+    ++active_;
+    max_active_ = std::max(max_active_, active_);
+    changed_.notify_all();
+    changed_.wait(lock, [&]() {return release_all_ || released_ >= call;});
+    --active_;
+    lock.unlock();
+    nav_msgs::msg::Path result;
+    result.header = start.header;
+    if (!empty) {result.poses = {start, goal};}
+    return result;
+  }
+
+  bool waitForCalls(std::size_t count,
+    std::chrono::milliseconds timeout = std::chrono::seconds(2))
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return changed_.wait_for(lock, timeout, [&]() {return goals_.size() >= count;});
+  }
+  void release(std::size_t count)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    released_ = std::max(released_, count);
+    changed_.notify_all();
+  }
+  void releaseAll()
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    release_all_ = true;
+    changed_.notify_all();
+  }
+  void setEmpty(bool empty)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    empty_ = empty;
+  }
+  std::size_t calls() const
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return goals_.size();
+  }
+  std::size_t active() const
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return active_;
+  }
+  std::size_t maxActive() const
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return max_active_;
+  }
+  geometry_msgs::msg::PoseStamped goal(std::size_t call) const
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return goals_.at(call - 1);
+  }
+  std::chrono::steady_clock::time_point started(std::size_t call) const
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return starts_.at(call - 1);
+  }
+
+private:
+  mutable std::mutex mutex_;
+  std::condition_variable changed_;
+  std::vector<geometry_msgs::msg::PoseStamped> goals_;
+  std::vector<std::chrono::steady_clock::time_point> starts_;
+  std::size_t released_{0};
+  std::size_t active_{0};
+  std::size_t max_active_{0};
+  bool empty_{false};
+  bool release_all_{false};
+};
+
+class ReleaseBlockedPlanner
+{
+public:
+  explicit ReleaseBlockedPlanner(std::shared_ptr<BlockingLocalPlanner> planner)
+  : planner_(std::move(planner)) {}
+  ~ReleaseBlockedPlanner() {planner_->releaseAll();}
+
+private:
+  std::shared_ptr<BlockingLocalPlanner> planner_;
+};
+
+class SmacCadenceTest : public MppiOnlineCostsTest
+{
+protected:
+  void SetUp() override
+  {
+    MppiOnlineCostsTest::SetUp();
+    node_->set_parameter(rclcpp::Parameter(
+      "FollowPath.MppiPath.ObstacleGuidance.Smac.replan_frequency", 4.0));
+    node_->set_parameter(rclcpp::Parameter(
+      "FollowPath.MppiPath.ObstacleGuidance.Smac.replan_goal_distance", .25));
+    node_->set_parameter(rclcpp::Parameter(
+      "FollowPath.MppiPath.ObstacleGuidance.Smac.replan_goal_angle", .35));
+    node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.use_smac", true));
+    node_->set_parameter(rclcpp::Parameter(
+      "FollowPath.MppiPath.ObstacleGuidance.lookahead_distance", .5));
+    laser_ = addLaserTriggerLayer();
+    // Isolate sensor triggering from route validity, which uses the master.
+    setLaserCost(laser_, .725, .025);
+  }
+
+  std::shared_ptr<nav2_costmap_2d::ObstacleLayer> laser_;
+};
+
+class SmacAsyncTest : public SmacCadenceTest
+{
+protected:
+  void SetUp() override
+  {
+    SmacCadenceTest::SetUp();
+    node_->set_parameter(rclcpp::Parameter(
+      "FollowPath.MppiPath.ObstacleGuidance.Smac.async_planning", true));
+  }
+
+  template<typename Prepare>
+  bool prepareWithoutWaiting(Prepare prepare, const std::shared_ptr<BlockingLocalPlanner> & planner)
+  {
+    auto result = std::async(std::launch::async, [&]() {
+        try {return prepare();} catch (const limo_dwb_critics::GuidanceUnavailable &) {
+          return false;
+        }
+      });
+    const auto status = result.wait_for(std::chrono::seconds(2));
+    // A synchronous regression must fail without leaving either the future's
+    // destructor or the critic's worker join waiting on the test planner.
+    if (status != std::future_status::ready) {planner->releaseAll();}
+    EXPECT_EQ(status, std::future_status::ready);
+    return result.get();
+  }
+};
+
+TEST_F(SmacAsyncTest, FirstPrepareReturnsWhilePlanningAndPublishesTimingOnlyOnCompletion)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<BlockingLocalPlanner>();
+  ReleaseBlockedPlanner release(planner);
+  critic.replacePlanner(planner);
+  critic.setTimingEnabled(true);
+  const auto path = pathBehindCube();
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+  const auto submitted = std::chrono::steady_clock::now();
+  EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+  ASSERT_TRUE(planner->waitForCalls(1));
+  EXPECT_TRUE(critic.guidanceAsync());
+  EXPECT_TRUE(critic.guidancePlanRunning());
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  EXPECT_DOUBLE_EQ(critic.guidancePlanMs(), 0.0);
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), 0);
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_TRUE(critic.smacPath().empty());
+
+  EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+  EXPECT_EQ(planner->calls(), 1U);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  const auto released = std::chrono::steady_clock::now();
+  planner->release(1);
+  ASSERT_TRUE(critic.waitForSmacResult());
+  ASSERT_TRUE(prepare());
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanRunning());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  EXPECT_FALSE(critic.guidancePlanDiscarded());
+  EXPECT_GT(critic.guidancePlanMs(), 0.0);
+  const double held_worker_ms = std::chrono::duration<double, std::milli>(
+    released - planner->started(1)).count();
+  EXPECT_GE(critic.guidancePlanMs(), held_worker_ms);
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), critic.limiterStartSteadyNs());
+  const auto submitted_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+    submitted.time_since_epoch()).count();
+  const auto planner_entered_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+    planner->started(1).time_since_epoch()).count();
+  EXPECT_GE(critic.guidancePlanStartSteadyNs(), submitted_ns);
+  EXPECT_LE(critic.guidancePlanStartSteadyNs(), planner_entered_ns);
+  EXPECT_TRUE(critic.detouring());
+  EXPECT_FALSE(critic.smacPath().empty());
+
+  ASSERT_TRUE(prepare());
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_DOUBLE_EQ(critic.guidancePlanMs(), 0.0);
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), 0);
+}
+
+TEST_F(SmacAsyncTest, KeepsSafeCacheDuringRetargetWithOneWorkerAndNoQueuedRequests)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<BlockingLocalPlanner>();
+  ReleaseBlockedPlanner release(planner);
+  critic.replacePlanner(planner);
+  const auto path = pathBehindCube();
+  const auto prepare = [&](double x) {
+      return critic.prepare(pose(x, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+  EXPECT_FALSE(prepareWithoutWaiting([&]() {return prepare(0);}, planner));
+  ASSERT_TRUE(planner->waitForCalls(1));
+  planner->release(1);
+  ASSERT_TRUE(critic.waitForSmacResult());
+  ASSERT_TRUE(prepare(0));
+  const auto accepted_path = critic.smacPath();
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  const auto accepted_goal = *critic.guidanceTarget();
+
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepareWithoutWaiting([&]() {return prepare(.3);}, planner));
+  ASSERT_TRUE(planner->waitForCalls(2));
+  for (double x : {.6, .9, .3}) {
+    ASSERT_TRUE(prepareWithoutWaiting([&]() {return prepare(x);}, planner));
+    EXPECT_TRUE(critic.guidancePlanRunning());
+    EXPECT_FALSE(critic.guidancePlanCalled());
+    EXPECT_FALSE(critic.guidancePlanFailed());
+    EXPECT_EQ(critic.smacPath(), accepted_path);
+    ASSERT_NE(critic.guidanceTarget(), nullptr);
+    EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, accepted_goal.x);
+    EXPECT_FALSE(critic.guidanceReference(pose(x, 0)).empty());
+    EXPECT_EQ(planner->calls(), 2U);
+    EXPECT_EQ(planner->active(), 1U);
+  }
+  EXPECT_EQ(planner->maxActive(), 1U);
+  planner->release(2);
+  ASSERT_TRUE(critic.waitForSmacResult());
+  ASSERT_TRUE(prepare(.3));
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, planner->goal(2).pose.position.x);
+  ASSERT_TRUE(prepare(.3));
+  EXPECT_FALSE(planner->waitForCalls(3, std::chrono::milliseconds(30)));
+  EXPECT_FALSE(critic.guidancePlanRunning());
+}
+
+TEST_F(SmacAsyncTest, RejectsCompletedRouteAgainstCurrentFullFootprint)
+{
+  const auto margin = "FollowPath.MppiPath.ObstacleGuidance.clearance_margin";
+  if (!node_->has_parameter(margin)) {node_->declare_parameter(margin, 0.0);}
+  node_->set_parameter(rclcpp::Parameter(margin, 0.0));
+  std::vector<geometry_msgs::msg::Point> footprint(4);
+  footprint[0].x = -.45; footprint[0].y = -.04;
+  footprint[1].x = -.45; footprint[1].y = .04;
+  footprint[2].x = .45; footprint[2].y = .04;
+  footprint[3].x = .45; footprint[3].y = -.04;
+  costmap_->setRobotFootprint(footprint);
+  clearLaser(laser_);
+  setLaserCost(laser_, .525, .325);
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<BlockingLocalPlanner>();
+  ReleaseBlockedPlanner release(planner);
+  critic.replacePlanner(planner);
+  auto path = pathBehindCube();
+  const double yaw = std::acos(-1.0) / 2.0;
+  for (auto & point : path.poses) {point.theta = yaw;}
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0, yaw), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+  EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+  ASSERT_TRUE(planner->waitForCalls(1));
+  // The worker's captured map is free. This later obstacle intersects the
+  // long oriented footprint while every path center remains traversable.
+  setCost(.525, .325, nav2_costmap_2d::LETHAL_OBSTACLE);
+  planner->release(1);
+  ASSERT_TRUE(critic.waitForSmacResult());
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  unsigned int x, y;
+  ASSERT_TRUE(costmap_->getCostmap()->worldToMap(.525, 0, x, y));
+  EXPECT_TRUE(critic.guidanceTraversable(x, y));
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_TRUE(critic.guidancePlanFailed());
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_TRUE(critic.smacPath().empty());
+  EXPECT_EQ(critic.guidanceTarget(), nullptr);
+  EXPECT_EQ(planner->calls(), 1U);
+}
+
+TEST_F(SmacAsyncTest, ResetAndNewReferenceDiscardInFlightCompletion)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<BlockingLocalPlanner>();
+  ReleaseBlockedPlanner release(planner);
+  critic.replacePlanner(planner);
+  critic.setTimingEnabled(true);
+  auto path = pathBehindCube();
+  const auto prepare = [&](double y) {
+      return critic.prepare(pose(0, y), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+  EXPECT_FALSE(prepareWithoutWaiting([&]() {return prepare(0);}, planner));
+  ASSERT_TRUE(planner->waitForCalls(1));
+  // Model a submission stamp older than the worker's actual start. A stale
+  // completion must restore the actual clock before considering a retry.
+  critic.elapseSmacPlanPeriod();
+  const auto provisional_start = critic.limiterStartSteadyNs();
+  critic.reset();
+  EXPECT_EQ(critic.limiterStartSteadyNs(), provisional_start);
+  for (auto & point : path.poses) {point.y = .5;}
+  clearLaser(laser_);
+  setLaserCost(laser_, .725, .525);
+  EXPECT_FALSE(prepareWithoutWaiting([&]() {return prepare(.5);}, planner));
+  EXPECT_EQ(planner->calls(), 1U);
+  EXPECT_TRUE(critic.smacPath().empty());
+  planner->release(1);
+  ASSERT_TRUE(critic.waitForSmacResult());
+  EXPECT_FALSE(prepareWithoutWaiting([&]() {return prepare(.5);}, planner));
+  EXPECT_TRUE(critic.guidancePlanDiscarded());
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_TRUE(critic.smacPath().empty());
+  EXPECT_EQ(critic.guidanceTarget(), nullptr);
+  EXPECT_EQ(critic.limiterStartSteadyNs(), critic.guidancePlanStartSteadyNs());
+  EXPECT_GT(critic.limiterStartSteadyNs(), provisional_start);
+  EXPECT_EQ(planner->calls(), 1U);
+  EXPECT_FALSE(critic.guidancePlanRunning());
+  critic.elapseSmacPlanPeriod();
+  EXPECT_FALSE(prepareWithoutWaiting([&]() {return prepare(.5);}, planner));
+  ASSERT_TRUE(planner->waitForCalls(2));
+  EXPECT_DOUBLE_EQ(planner->goal(1).pose.position.y, 0.0);
+  EXPECT_DOUBLE_EQ(planner->goal(2).pose.position.y, .5);
+  planner->release(2);
+  ASSERT_TRUE(critic.waitForSmacResult());
+  ASSERT_TRUE(prepare(.5));
+  EXPECT_FALSE(critic.guidancePlanDiscarded());
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->y, .5);
+  ASSERT_FALSE(critic.smacPath().empty());
+  for (const auto & point : critic.smacPath()) {EXPECT_DOUBLE_EQ(point.y, .5);}
+}
+
+TEST_F(SmacAsyncTest, DrainsDiscardedCompletionAfterReturningToNormalReference)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<BlockingLocalPlanner>();
+  ReleaseBlockedPlanner release(planner);
+  critic.replacePlanner(planner);
+  const auto path = pathBehindCube();
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+  EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+  ASSERT_TRUE(planner->waitForCalls(1));
+  clearLaser(laser_);
+  ASSERT_TRUE(prepareWithoutWaiting(prepare, planner));
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_TRUE(critic.smacPath().empty());
+  planner->release(1);
+  ASSERT_TRUE(critic.waitForSmacResult());
+
+  ASSERT_TRUE(prepare());
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_TRUE(critic.guidancePlanDiscarded());
+  EXPECT_FALSE(critic.guidancePlanRunning());
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_TRUE(critic.smacPath().empty());
+  EXPECT_EQ(critic.guidanceTarget(), nullptr);
+  EXPECT_EQ(planner->calls(), 1U);
+
+  // A normal cycle consumes the stale result while preserving its actual
+  // search start, so a fresh laser trigger still observes the cooldown.
+  setLaserCost(laser_, .725, .025);
+  EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanDiscarded());
+  EXPECT_EQ(planner->calls(), 1U);
+  EXPECT_FALSE(critic.guidancePlanRunning());
+  critic.elapseSmacPlanPeriod();
+  EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+  ASSERT_TRUE(planner->waitForCalls(2));
+  planner->release(2);
+  ASSERT_TRUE(critic.waitForSmacResult());
+  ASSERT_TRUE(prepare());
+  EXPECT_TRUE(critic.detouring());
+  EXPECT_FALSE(critic.guidancePlanDiscarded());
+  EXPECT_FALSE(critic.smacPath().empty());
+}
+
+TEST_F(SmacAsyncTest, CadenceUsesActualWorkerStartsAndNeverStartsDuringAnActiveSearch)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<BlockingLocalPlanner>();
+  planner->setEmpty(true);
+  ReleaseBlockedPlanner release(planner);
+  critic.replacePlanner(planner);
+  critic.setTimingEnabled(true);
+  const auto path = pathBehindCube();
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+  EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+  ASSERT_TRUE(planner->waitForCalls(1));
+  EXPECT_DOUBLE_EQ(critic.guidanceReplanHz(), 4.0);
+  const auto earliest_retry = planner->started(1) + std::chrono::milliseconds(250);
+  // Let the real cooldown expire while the first native call is held, so a
+  // retry may start immediately after consuming its completed failure.
+  std::this_thread::sleep_until(earliest_retry);
+  EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+  EXPECT_EQ(planner->calls(), 1U);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  planner->release(1);
+  ASSERT_TRUE(critic.waitForSmacResult());
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_TRUE(critic.guidancePlanFailed());
+  EXPECT_EQ(planner->calls(), 1U);
+  EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+  ASSERT_TRUE(planner->waitForCalls(2));
+  EXPECT_GE(planner->started(2) - planner->started(1), std::chrono::milliseconds(250));
+  EXPECT_EQ(planner->maxActive(), 1U);
+  planner->release(2);
+  ASSERT_TRUE(critic.waitForSmacResult());
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+  EXPECT_EQ(planner->calls(), 2U);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanRunning());
+}
+
+TEST_F(SmacAsyncTest, AdvancesCandidateOnlyAfterConsumedWorkerFailure)
+{
+  node_->set_parameter(rclcpp::Parameter(
+    "FollowPath.MppiPath.ObstacleGuidance.Smac.failure_advance_distance", .25));
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<BlockingLocalPlanner>();
+  planner->setEmpty(true);
+  ReleaseBlockedPlanner release(planner);
+  critic.replacePlanner(planner);
+  const auto path = pathBehindCube();
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+  EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+  ASSERT_TRUE(planner->waitForCalls(1));
+  const double first_goal = planner->goal(1).pose.position.x;
+  for (int cycle = 0; cycle < 3; ++cycle) {
+    EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+    EXPECT_FALSE(critic.guidancePlanCalled());
+    EXPECT_FALSE(critic.guidancePlanFailed());
+    ASSERT_NE(critic.guidanceCandidateTarget(), nullptr);
+    EXPECT_DOUBLE_EQ(critic.guidanceCandidateTarget()->x, first_goal);
+    EXPECT_DOUBLE_EQ(critic.failedSmacGoalProgress(), 0.0);
+  }
+  planner->release(1);
+  ASSERT_TRUE(critic.waitForSmacResult());
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_TRUE(critic.guidancePlanFailed());
+  EXPECT_GT(critic.failedSmacGoalProgress(), 0.0);
+  critic.elapseSmacPlanPeriod();
+  EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+  ASSERT_TRUE(planner->waitForCalls(2));
+  EXPECT_NEAR(planner->goal(2).pose.position.x - first_goal, .25, .051);
+  const double second_goal = planner->goal(2).pose.position.x;
+  for (int cycle = 0; cycle < 3; ++cycle) {
+    EXPECT_FALSE(prepareWithoutWaiting(prepare, planner));
+    ASSERT_NE(critic.guidanceCandidateTarget(), nullptr);
+    EXPECT_DOUBLE_EQ(critic.guidanceCandidateTarget()->x, second_goal);
+    EXPECT_EQ(planner->calls(), 2U);
+    EXPECT_FALSE(critic.guidancePlanCalled());
+  }
+}
+
+TEST_F(SmacCadenceTest, ChoosesTargetsUsingTheFilledFootprintAndReferenceOrientation)
+{
+  std::vector<geometry_msgs::msg::Point> footprint(4);
+  footprint[0].x = -.45; footprint[0].y = -.10;
+  footprint[1].x = -.45; footprint[1].y = .10;
+  footprint[2].x = .45; footprint[2].y = .10;
+  footprint[3].x = .45; footprint[3].y = -.10;
+  costmap_->setRobotFootprint(footprint);
+  setCost(1.325, .025, nav2_costmap_2d::LETHAL_OBSTACLE);
+  setLaserCost(laser_, .525, .325);  // Also trigger the rotated footprint.
+  auto * map = costmap_->getCostmap();
+  nav2_costmap_2d::FootprintCollisionChecker<nav2_costmap_2d::Costmap2D *> checker(map);
+  // The obstacle lies inside the nominal footprint, away from its center and
+  // all polygon edges. An edge-only collision checker therefore sees free space.
+  EXPECT_DOUBLE_EQ(checker.footprintCostAtPose(1.0, 0.0, 0.0, footprint), 0.0);
+  unsigned int mx, my;
+  ASSERT_TRUE(map->worldToMap(1.0, 0, mx, my));
+  EXPECT_EQ(map->getCost(mx, my), nav2_costmap_2d::FREE_SPACE);
+
+  for (double yaw : {0.0, std::acos(-1.0) / 2.0}) {
+    SCOPED_TRACE(yaw);
+    InspectableMppiPathCritic critic;
+    initialize(critic, "MppiPath");
+    auto planner = std::make_shared<RecordingLocalPlanner>();
+    planner->empty = true;
+    critic.replacePlanner(planner);
+    auto path = pathBehindCube();
+    for (auto & point : path.poses) {point.theta = yaw;}
+    EXPECT_THROW(critic.prepare(pose(0, 0, yaw), nav_2d_msgs::msg::Twist2D(),
+        path.poses.back(), path), limo_dwb_critics::GuidanceUnavailable);
+    EXPECT_TRUE(critic.guidanceTraversable(mx, my));
+    ASSERT_EQ(planner->calls, 1);
+    ASSERT_NE(critic.guidanceCandidateTarget(), nullptr);
+    const auto candidate = *critic.guidanceCandidateTarget();
+    EXPECT_DOUBLE_EQ(planner->arrival.pose.position.x, candidate.x);
+    EXPECT_DOUBLE_EQ(candidate.theta, yaw);
+    EXPECT_LE(candidate.x, path.poses.back().x);
+    if (yaw == 0.0) {
+      EXPECT_NEAR(candidate.x, 1.8, .051);
+      EXPECT_GT(candidate.x, 1.325 + .4);
+    } else {
+      // Rotating the same long body removes the nominal target collision.
+      EXPECT_NEAR(candidate.x, 1.0, .051);
+    }
+  }
+}
+
+TEST_F(SmacCadenceTest, MissingFootprintSafeTargetsDoNotDispatchOrAdvancePastTheReference)
+{
+  std::vector<geometry_msgs::msg::Point> footprint(4);
+  footprint[0].x = -.45; footprint[0].y = -.10;
+  footprint[1].x = -.45; footprint[1].y = .10;
+  footprint[2].x = .45; footprint[2].y = .10;
+  footprint[3].x = .45; footprint[3].y = -.10;
+  costmap_->setRobotFootprint(footprint);
+  enum class Blocker {Lethal, Unknown, MapEdge};
+  for (const auto blocker : {Blocker::Lethal, Blocker::Unknown, Blocker::MapEdge}) {
+    SCOPED_TRACE(static_cast<int>(blocker));
+    costmap_->getCostmap()->resizeMap(
+      blocker == Blocker::MapEdge ? 76 : 100, 100, .05, -2.5, -2.5);
+    clearMap();
+    if (blocker != Blocker::MapEdge) {
+      setCost(1.325, .025, blocker == Blocker::Lethal ?
+        nav2_costmap_2d::LETHAL_OBSTACLE : nav2_costmap_2d::NO_INFORMATION);
+    }
+    InspectableMppiPathCritic critic;
+    initialize(critic, "MppiPath");
+    auto planner = std::make_shared<RecordingLocalPlanner>();
+    planner->empty = true;
+    critic.replacePlanner(planner);
+    auto path = straightPath();  // Clipped at x=1.5, before any footprint fits.
+    const auto prepare = [&]() {
+        return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2.4, 0), path);
+      };
+    for (int cycle = 0; cycle < 3; ++cycle) {
+      EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+      EXPECT_EQ(planner->calls, 0);
+      EXPECT_FALSE(critic.guidancePlanCalled());
+      EXPECT_FALSE(critic.guidancePlanFailed());
+      EXPECT_DOUBLE_EQ(critic.failedSmacGoalProgress(), 0.0);
+      EXPECT_EQ(critic.guidanceCandidateTarget(), nullptr);
+      EXPECT_EQ(critic.guidanceTarget(), nullptr);
+      EXPECT_TRUE(critic.smacPath().empty());
+      EXPECT_NE(critic.guidanceLookahead(), nullptr);
+    }
+    // Extending the reference permits a forward endpoint beyond the interior
+    // obstacle. For a map-edge rejection, restore room for the whole body.
+    if (blocker == Blocker::MapEdge) {
+      costmap_->getCostmap()->resizeMap(100, 100, .05, -2.5, -2.5);
+      clearMap();
+    }
+    path = pathBehindCube();
+    EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+    EXPECT_EQ(planner->calls, 1);
+    EXPECT_TRUE(critic.guidancePlanCalled());
+    ASSERT_NE(critic.guidanceCandidateTarget(), nullptr);
+    EXPECT_LE(critic.guidanceCandidateTarget()->x, path.poses.back().x);
+  }
+}
+
+TEST_F(SmacCadenceTest, ReusesAcceptedRouteWhileUpdatingProspectiveLookaheads)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  critic.replacePlanner(planner);
+  critic.setTimingEnabled(true);
+  const auto path = pathBehindCube();
+  const auto prepare = [&](double x) {
+      return critic.prepare(pose(x, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  ASSERT_TRUE(prepare(0));
+  ASSERT_TRUE(critic.detouring());
+  EXPECT_EQ(planner->calls, 1);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  const auto epoch = critic.guidancePlanEpoch();
+  EXPECT_GT(epoch, 0U);
+  EXPECT_GT(critic.guidancePlanStartSteadyNs(), 0);
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), critic.limiterStartSteadyNs());
+  EXPECT_DOUBLE_EQ(critic.guidanceReplanHz(), 4.0);
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  const auto accepted = *critic.guidanceTarget();
+  EXPECT_NEAR(accepted.x, 1.0, .051);
+
+  for (int cycle = 0; cycle < 3; ++cycle) {
+    ASSERT_TRUE(prepare(.25));
+    ASSERT_TRUE(critic.detouring());
+    EXPECT_EQ(planner->calls, 1);
+    EXPECT_FALSE(critic.guidancePlanCalled());
+    EXPECT_FALSE(critic.guidancePlanFailed());
+    EXPECT_DOUBLE_EQ(critic.guidancePlanMs(), 0.0);
+    EXPECT_EQ(critic.guidancePlanStartSteadyNs(), 0);
+    EXPECT_EQ(critic.guidancePlanEpoch(), epoch);
+    ASSERT_NE(critic.guidanceTarget(), nullptr);
+    EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, accepted.x);
+    expectLookahead(critic.pathLookahead(), 1.50);
+    expectLookahead(critic.guidanceLookahead(), .75);
+    expectLookahead(critic.guidanceCandidateTarget(), 1.25, 0, 0, .051);
+    EXPECT_FALSE(critic.guidanceReference(pose(.25, 0)).empty());
+  }
+
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare(.25));
+  EXPECT_EQ(planner->calls, 2);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), critic.limiterStartSteadyNs());
+  EXPECT_EQ(critic.guidancePlanEpoch(), epoch);
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  ASSERT_NE(critic.guidanceCandidateTarget(), nullptr);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, critic.guidanceCandidateTarget()->x);
+  EXPECT_GT(critic.guidanceTarget()->x, accepted.x + .15);
+}
+
+TEST_F(SmacCadenceTest, ElapsedCooldownDoesNotReplanAnUnchangedSafeRoute)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  critic.replacePlanner(planner);
+  critic.setTimingEnabled(true);
+  const auto path = pathBehindCube();
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  ASSERT_TRUE(prepare());
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  const auto accepted = *critic.guidanceTarget();
+  const auto accepted_path = critic.smacPath();
+  const auto epoch = critic.guidancePlanEpoch();
+  for (int cycle = 0; cycle < 3; ++cycle) {
+    critic.elapseSmacPlanPeriod();
+    ASSERT_TRUE(prepare());
+    EXPECT_EQ(planner->calls, 1);
+    EXPECT_FALSE(critic.guidancePlanCalled());
+    EXPECT_FALSE(critic.guidancePlanFailed());
+    EXPECT_DOUBLE_EQ(critic.guidancePlanMs(), 0.0);
+    EXPECT_EQ(critic.guidancePlanStartSteadyNs(), 0);
+    EXPECT_EQ(critic.guidancePlanEpoch(), epoch);
+    EXPECT_TRUE(critic.detouring());
+    ASSERT_NE(critic.guidanceTarget(), nullptr);
+    EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, accepted.x);
+    EXPECT_EQ(critic.smacPath(), accepted_path);
+  }
+}
+
+TEST_F(SmacCadenceTest, AccumulatesGoalMovementFromTheLastAcceptedTarget)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  critic.replacePlanner(planner);
+  const auto path = pathBehindCube();
+  const auto prepare = [&](double x) {
+      return critic.prepare(pose(x, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  ASSERT_TRUE(prepare(0));
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  const auto accepted = *critic.guidanceTarget();
+  for (double x : {.1, .2}) {
+    critic.elapseSmacPlanPeriod();
+    ASSERT_TRUE(prepare(x));
+    EXPECT_EQ(planner->calls, 1);
+    EXPECT_FALSE(critic.guidancePlanCalled());
+    ASSERT_NE(critic.guidanceCandidateTarget(), nullptr);
+    EXPECT_GT(critic.guidanceCandidateTarget()->x, accepted.x);
+    EXPECT_LT(critic.guidanceCandidateTarget()->x - accepted.x, .25);
+    ASSERT_NE(critic.guidanceTarget(), nullptr);
+    EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, accepted.x);
+  }
+
+  // Each step is small, but the accepted target has now moved over 25 cm.
+  ASSERT_TRUE(prepare(.3));
+  EXPECT_EQ(planner->calls, 2);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  ASSERT_NE(critic.guidanceCandidateTarget(), nullptr);
+  EXPECT_GE(critic.guidanceTarget()->x - accepted.x, .25);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, critic.guidanceCandidateTarget()->x);
+}
+
+TEST_F(SmacCadenceTest, ReplansForWrappedArrivalYawChanges)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  critic.replacePlanner(planner);
+  auto path = pathBehindCube();
+  const double pi = std::acos(-1.0);
+  // Keep the trigger inside the swept footprint when the reference faces back.
+  setLaserCost(laser_, .325, .025);
+  const auto prepare = [&](double yaw) {
+      for (auto & point : path.poses) {point.theta = yaw;}
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  ASSERT_TRUE(prepare(-pi + .1));
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  const auto accepted = *critic.guidanceTarget();
+  critic.elapseSmacPlanPeriod();
+  // Crossing the wrap changes yaw by only -0.2 rad, below the 0.35 rad threshold.
+  ASSERT_TRUE(prepare(pi - .1));
+  EXPECT_EQ(planner->calls, 1);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->theta, accepted.theta);
+
+  // The wrapped change is now -0.5 rad, with no positional movement.
+  ASSERT_TRUE(prepare(pi - .4));
+  EXPECT_EQ(planner->calls, 2);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, accepted.x);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->y, accepted.y);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->theta, pi - .4);
+}
+
+TEST_F(SmacCadenceTest, FailedMovedGoalKeepsTheAcceptedRouteAndRetriesAfterCooldown)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  critic.replacePlanner(planner);
+  const auto path = pathBehindCube();
+  const auto prepare = [&](double x) {
+      return critic.prepare(pose(x, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  ASSERT_TRUE(prepare(0));
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  const auto accepted = *critic.guidanceTarget();
+  const auto accepted_path = critic.smacPath();
+  planner->empty = true;
+  for (int attempt = 2; attempt <= 3; ++attempt) {
+    critic.elapseSmacPlanPeriod();
+    ASSERT_TRUE(prepare(.3));
+    EXPECT_EQ(planner->calls, attempt);
+    EXPECT_TRUE(critic.guidancePlanCalled());
+    EXPECT_TRUE(critic.guidancePlanFailed());
+    EXPECT_TRUE(critic.detouring());
+    ASSERT_NE(critic.guidanceTarget(), nullptr);
+    EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, accepted.x);
+    EXPECT_EQ(critic.smacPath(), accepted_path);
+    ASSERT_NE(critic.guidanceCandidateTarget(), nullptr);
+    EXPECT_GE(critic.guidanceCandidateTarget()->x - accepted.x, .25);
+
+    ASSERT_TRUE(prepare(.3));
+    EXPECT_EQ(planner->calls, attempt);
+    EXPECT_FALSE(critic.guidancePlanCalled());
+    EXPECT_FALSE(critic.guidancePlanFailed());
+  }
+
+  planner->empty = false;
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare(.3));
+  EXPECT_EQ(planner->calls, 4);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, critic.guidanceCandidateTarget()->x);
+  EXPECT_GE(critic.guidanceTarget()->x - accepted.x, .25);
+}
+
+TEST_F(SmacCadenceTest, ThrottlesFailedSearchesWithoutAcceptingAMissingRoute)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  planner->empty = true;
+  critic.replacePlanner(planner);
+  critic.setTimingEnabled(true);
+  const auto path = pathBehindCube();
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_EQ(planner->calls, 1);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_TRUE(critic.guidancePlanFailed());
+  EXPECT_FALSE(critic.detouring());
+  const auto first_start = critic.guidancePlanStartSteadyNs();
+  const auto epoch = critic.guidancePlanEpoch();
+  EXPECT_GT(first_start, 0);
+  EXPECT_EQ(first_start, critic.limiterStartSteadyNs());
+  EXPECT_GT(epoch, 0U);
+
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_EQ(planner->calls, 1);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  EXPECT_DOUBLE_EQ(critic.guidancePlanMs(), 0.0);
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), 0);
+  EXPECT_EQ(critic.guidancePlanEpoch(), epoch);
+  EXPECT_EQ(critic.guidanceTarget(), nullptr);
+
+  critic.elapseSmacPlanPeriod();
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_EQ(planner->calls, 2);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_TRUE(critic.guidancePlanFailed());
+  EXPECT_GT(critic.guidancePlanStartSteadyNs(), first_start);
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), critic.limiterStartSteadyNs());
+  EXPECT_EQ(critic.guidancePlanEpoch(), epoch);
+  // Recovery also waits for the next scheduled attempt; controller cycles
+  // between searches must not command motion without an accepted reference.
+  planner->empty = false;
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_EQ(planner->calls, 2);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), 0);
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 3);
+  EXPECT_TRUE(critic.detouring());
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), critic.limiterStartSteadyNs());
+  EXPECT_EQ(critic.guidancePlanEpoch(), epoch);
+}
+
+TEST_F(SmacCadenceTest, MeasuresActualAttemptStartsAndDelimitsIndependentDetours)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  critic.replacePlanner(planner);
+  critic.setTimingEnabled(true);
+  const auto path = pathBehindCube();
+  const auto prepare = [&](double x = 0.0) {
+      return critic.prepare(pose(x, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+  EXPECT_EQ(critic.guidancePlanEpoch(), 0U);
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), 0);
+  ASSERT_TRUE(prepare());
+  const auto first_start = critic.guidancePlanStartSteadyNs();
+  const auto epoch = critic.guidancePlanEpoch();
+  ASSERT_GT(first_start, 0);
+  EXPECT_EQ(first_start, critic.limiterStartSteadyNs());
+  EXPECT_EQ(epoch, 1U);
+
+  ASSERT_TRUE(prepare(.3));
+  EXPECT_EQ(planner->calls, 1);
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), 0);
+  EXPECT_EQ(critic.guidancePlanEpoch(), epoch);
+  ASSERT_NE(critic.guidanceCandidateTarget(), nullptr);
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  EXPECT_GE(critic.guidanceCandidateTarget()->x - critic.guidanceTarget()->x, .25);
+  // Use the real limiter clock here: telemetry must measure start-to-start
+  // spacing, rather than controller completion or the duration of createPlan.
+  const auto first_time = std::chrono::steady_clock::time_point(
+    std::chrono::nanoseconds(first_start));
+  std::this_thread::sleep_until(first_time + std::chrono::milliseconds(250));
+  ASSERT_TRUE(prepare(.3));
+  EXPECT_EQ(planner->calls, 2);
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), critic.limiterStartSteadyNs());
+  EXPECT_GE(critic.guidancePlanStartSteadyNs() - first_start, 250000000LL);
+  EXPECT_EQ(critic.guidancePlanEpoch(), epoch);
+
+  clearLaser(laser_);
+  for (int cycle = 0; cycle < 3; ++cycle) {
+    ASSERT_TRUE(prepare());
+    EXPECT_FALSE(critic.detouring());
+    EXPECT_EQ(critic.guidancePlanStartSteadyNs(), 0);
+    EXPECT_EQ(critic.guidancePlanEpoch(), epoch);
+  }
+  setLaserCost(laser_, .725, .025);
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 3);
+  EXPECT_EQ(critic.guidancePlanEpoch(), epoch + 1);
+  EXPECT_GT(critic.guidancePlanStartSteadyNs(), 0);
+  critic.reset();
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 4);
+  EXPECT_EQ(critic.guidancePlanEpoch(), epoch + 2);
+  EXPECT_EQ(critic.guidancePlanStartSteadyNs(), critic.limiterStartSteadyNs());
+}
+
+TEST_F(SmacCadenceTest, RejectsNewCollisionsBetweenScheduledSearches)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  planner->via = {pose(0, .4), pose(.7, .4)};
+  critic.replacePlanner(planner);
+  const auto path = pathBehindCube();
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 1);
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  const auto accepted = *critic.guidanceTarget();
+  // Block the cached detour beyond its 50 cm lookahead without changing the
+  // prospective target on the original reference.
+  setCost(.325, .425, nav2_costmap_2d::LETHAL_OBSTACLE);
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_EQ(planner->calls, 1);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_EQ(critic.guidanceTarget(), nullptr);
+  EXPECT_TRUE(critic.guidanceReference(pose(0, 0)).empty());
+  ASSERT_NE(critic.guidanceCandidateTarget(), nullptr);
+  EXPECT_DOUBLE_EQ(critic.guidanceCandidateTarget()->x, accepted.x);
+  EXPECT_DOUBLE_EQ(critic.guidanceCandidateTarget()->y, accepted.y);
+
+  planner->via = {pose(0, -.4), pose(.7, -.4)};
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 2);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  EXPECT_TRUE(critic.detouring());
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, accepted.x);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->y, accepted.y);
+}
+
+TEST_F(SmacCadenceTest, RetainsSafeRouteWhenNoNewCandidateIsAvailable)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  critic.replacePlanner(planner);
+  const auto path = pathBehindCube();
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path));
+  EXPECT_EQ(planner->calls, 1);
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  const auto accepted = *critic.guidanceTarget();
+  // The accepted route ends at x=1.0. Block only the original reference
+  // farther ahead, leaving that route and its full footprint collision free.
+  auto * map = costmap_->getCostmap();
+  for (unsigned int y = 0; y < map->getSizeInCellsY(); ++y) {
+    for (unsigned int x = 0; x < map->getSizeInCellsX(); ++x) {
+      double wx, wy;
+      map->mapToWorld(x, y, wx, wy);
+      if (wx >= 1.2 && std::abs(wy) < .05) {
+        map->setCost(x, y, nav2_costmap_2d::LETHAL_OBSTACLE);
+      }
+    }
+  }
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(critic.prepare(pose(.75, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path));
+  EXPECT_TRUE(critic.detouring());
+  EXPECT_EQ(planner->calls, 1);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  EXPECT_EQ(critic.guidanceCandidateTarget(), nullptr);
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, accepted.x);
+  EXPECT_FALSE(critic.guidanceReference(pose(.75, 0)).empty());
+}
+
+TEST_F(SmacCadenceTest, KeepsWaitingForASafeDetourOffTheReferenceAfterLaserClears)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  critic.replacePlanner(planner);
+  const auto path = pathBehindCube();
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path));
+  EXPECT_EQ(planner->calls, 1);
+
+  clearLaser(laser_);
+  setCost(.325, .025, nav2_costmap_2d::LETHAL_OBSTACLE);
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, .2), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+  // A stopped detour must remain pending while the robot is off the original
+  // path, even after the sensor trigger clears and guidance_active_ is false.
+  for (int cycle = 0; cycle < 2; ++cycle) {
+    EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+    EXPECT_EQ(planner->calls, 1);
+    EXPECT_FALSE(critic.guidancePlanCalled());
+    EXPECT_FALSE(critic.detouring());
+    EXPECT_EQ(critic.guidanceTarget(), nullptr);
+  }
+
+  planner->via = {pose(0, .4), pose(.7, .4)};
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 2);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  EXPECT_TRUE(critic.detouring());
+}
+
+TEST_F(SmacCadenceTest, NewDetourAndReferenceResetRespectSearchCooldown)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  critic.replacePlanner(planner);
+  const auto path = pathBehindCube();
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 1);
+  const auto first_epoch = critic.guidancePlanEpoch();
+  const auto first_start = critic.limiterStartSteadyNs();
+  clearLaser(laser_);
+  ASSERT_TRUE(prepare());
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  setLaserCost(laser_, .725, .025);
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_EQ(planner->calls, 1);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_EQ(critic.limiterStartSteadyNs(), first_start);
+  EXPECT_EQ(critic.guidancePlanEpoch(), first_epoch);
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 2);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_TRUE(critic.detouring());
+  EXPECT_EQ(critic.guidancePlanEpoch(), first_epoch + 1);
+
+  critic.reset();
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_EQ(planner->calls, 2);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_EQ(critic.guidancePlanEpoch(), first_epoch + 1);
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 3);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_TRUE(critic.detouring());
+  EXPECT_EQ(critic.guidancePlanEpoch(), first_epoch + 2);
+}
+
+class SmacFailureAdvanceTest : public SmacCadenceTest
+{
+protected:
+  void SetUp() override
+  {
+    SmacCadenceTest::SetUp();
+    node_->set_parameter(rclcpp::Parameter(
+      "FollowPath.MppiPath.ObstacleGuidance.Smac.failure_advance_distance", .25));
+  }
+};
+
+TEST_F(SmacFailureAdvanceTest, AdvancesOnlyAfterActualFailuresWhileTheRobotIsStationary)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  planner->empty = true;
+  critic.replacePlanner(planner);
+  const auto path = pathBehindCube();
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  double previous_goal = 0.0;
+  for (int attempt = 1; attempt <= 4; ++attempt) {
+    if (attempt > 1) {critic.elapseSmacPlanPeriod();}
+    EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+    EXPECT_EQ(planner->calls, attempt);
+    EXPECT_TRUE(critic.guidancePlanCalled());
+    EXPECT_TRUE(critic.guidancePlanFailed());
+    EXPECT_EQ(critic.guidanceTarget(), nullptr);
+    const double failed_goal = planner->arrival.pose.position.x;
+    if (attempt == 1) {
+      EXPECT_NEAR(failed_goal, 1.0, .051);
+    } else {
+      EXPECT_NEAR(failed_goal - previous_goal, .25, .051);
+    }
+    previous_goal = failed_goal;
+
+    double next_goal = 0.0;
+    for (int cycle = 0; cycle < 3; ++cycle) {
+      EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+      EXPECT_EQ(planner->calls, attempt);
+      EXPECT_FALSE(critic.guidancePlanCalled());
+      EXPECT_FALSE(critic.guidancePlanFailed());
+      ASSERT_NE(critic.guidanceCandidateTarget(), nullptr);
+      if (cycle == 0) {
+        next_goal = critic.guidanceCandidateTarget()->x;
+        EXPECT_NEAR(next_goal - failed_goal, .25, .051);
+      }
+      EXPECT_DOUBLE_EQ(critic.guidanceCandidateTarget()->x, next_goal);
+      EXPECT_DOUBLE_EQ(planner->arrival.pose.position.x, failed_goal);
+    }
+  }
+}
+
+TEST_F(SmacFailureAdvanceTest, AdvancesAlongReferenceArcThroughACorner)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  planner->empty = true;
+  critic.replacePlanner(planner);
+  auto path = straightPath();
+  path.poses.resize(23);  // Turn after x=1.1, within the next 25 cm advance.
+  for (int i = 1; i <= 20; ++i) {
+    path.poses.push_back(pose(1.1, .05 * i, std::acos(-1.0) / 2.0));
+  }
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  const double failed_x = planner->arrival.pose.position.x;
+  EXPECT_NEAR(failed_x, 1.0, .051);
+  critic.elapseSmacPlanPeriod();
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_EQ(planner->calls, 2);
+  const auto & advanced = planner->arrival.pose.position;
+  EXPECT_NEAR(advanced.x, 1.1, 1e-9);
+  EXPECT_NEAR((advanced.x - failed_x) + advanced.y, .25, .051);
+  EXPECT_GT(advanced.y, .05);
+}
+
+TEST_F(SmacFailureAdvanceTest, PreservesForwardProgressAcrossIdenticalReferenceLaps)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  planner->empty = true;
+  critic.replacePlanner(planner);
+  auto path = straightPath();
+  path.poses = {
+    pose(0, 0), pose(1, 0), pose(1, 1), pose(0, 1), pose(0, 0),
+    pose(1, 0), pose(1, 1), pose(0, 1), pose(0, 0)};
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  for (int attempt = 1; attempt <= 9; ++attempt) {
+    if (attempt > 1) {critic.elapseSmacPlanPeriod();}
+    EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+    EXPECT_EQ(planner->calls, attempt);
+    EXPECT_TRUE(critic.guidancePlanFailed());
+    const auto index = static_cast<std::size_t>(std::min(attempt, 8));
+    EXPECT_DOUBLE_EQ(planner->arrival.pose.position.x, path.poses[index].x);
+    EXPECT_DOUBLE_EQ(planner->arrival.pose.position.y, path.poses[index].y);
+    // Equal pose and yaw on both laps cannot distinguish a rewind spatially.
+    EXPECT_DOUBLE_EQ(critic.failedSmacGoalProgress(), static_cast<double>(index));
+
+    EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+    EXPECT_EQ(planner->calls, attempt);
+    EXPECT_FALSE(critic.guidancePlanCalled());
+    const auto next = std::min(index + 1, path.poses.size() - 1);
+    expectLookahead(critic.guidanceCandidateTarget(), path.poses[next].x, path.poses[next].y);
+    EXPECT_DOUBLE_EQ(critic.failedSmacGoalProgress(), static_cast<double>(index));
+  }
+}
+
+TEST_F(SmacFailureAdvanceTest, ClampsAdvancesAndContinuesRetryingAtTheFinalGoal)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  planner->empty = true;
+  critic.replacePlanner(planner);
+  auto path = straightPath();
+  path.poses.resize(23);  // The final goal at 1.1 is less than one advance away.
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_LT(planner->arrival.pose.position.x, path.poses.back().x);
+  for (int attempt = 2; attempt <= 4; ++attempt) {
+    critic.elapseSmacPlanPeriod();
+    EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+    EXPECT_EQ(planner->calls, attempt);
+    EXPECT_TRUE(critic.guidancePlanCalled());
+    EXPECT_TRUE(critic.guidancePlanFailed());
+    EXPECT_DOUBLE_EQ(planner->arrival.pose.position.x, path.poses.back().x);
+    expectLookahead(critic.guidanceCandidateTarget(), path.poses.back().x);
+
+    EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+    EXPECT_EQ(planner->calls, attempt);
+    EXPECT_FALSE(critic.guidancePlanCalled());
+    expectLookahead(critic.guidanceCandidateTarget(), path.poses.back().x);
+  }
+}
+
+TEST_F(SmacFailureAdvanceTest, KeepsASafeCacheAndRetriesAnAdvancedGoalBelowTheMovementThreshold)
+{
+  node_->set_parameter(rclcpp::Parameter(
+    "FollowPath.MppiPath.ObstacleGuidance.Smac.replan_goal_distance", .5));
+  setLaserCost(laser_, .325, .025);
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  critic.replacePlanner(planner);
+  auto path = pathBehindCube();
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  ASSERT_TRUE(prepare());
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  const auto accepted = *critic.guidanceTarget();
+  const auto accepted_path = critic.smacPath();
+  // An arrival-angle change requests a search without moving its position.
+  for (auto & point : path.poses) {point.theta = .5;}
+  planner->empty = true;
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 2);
+  EXPECT_TRUE(critic.guidancePlanFailed());
+  EXPECT_EQ(critic.smacPath(), accepted_path);
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, accepted.x);
+
+  // Restore yaw so neither accepted-goal threshold can request the retry.
+  for (auto & point : path.poses) {point.theta = 0.0;}
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 2);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_EQ(critic.smacPath(), accepted_path);
+  ASSERT_NE(critic.guidanceCandidateTarget(), nullptr);
+  const auto advanced = *critic.guidanceCandidateTarget();
+  EXPECT_NEAR(advanced.x - accepted.x, .25, .051);
+  EXPECT_LT(advanced.x - accepted.x, .5);
+  EXPECT_DOUBLE_EQ(advanced.theta, accepted.theta);
+
+  planner->empty = false;
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 3);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  EXPECT_DOUBLE_EQ(critic.guidanceTarget()->x, advanced.x);
+
+  // Clearing the failure after success must retain the forward target floor.
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 3);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  expectLookahead(critic.guidanceCandidateTarget(), advanced.x);
+  expectLookahead(critic.guidanceTarget(), advanced.x);
+}
+
+TEST_F(SmacFailureAdvanceTest, ClearsFailureAndAdvanceStateForNewDetoursAndReferenceResets)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  planner->empty = true;
+  critic.replacePlanner(planner);
+  const auto path = pathBehindCube();
+  const auto prepare = [&](double x = 0.0) {
+      return critic.prepare(pose(x, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  const double nominal = planner->arrival.pose.position.x;
+  planner->empty = false;
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare());
+  EXPECT_GT(planner->arrival.pose.position.x, nominal + .15);
+  clearLaser(laser_);
+  ASSERT_TRUE(prepare());
+  EXPECT_FALSE(critic.detouring());
+  setLaserCost(laser_, .725, .025);
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 3);
+  EXPECT_DOUBLE_EQ(planner->arrival.pose.position.x, nominal);
+
+  planner->empty = true;
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare(.3));
+  EXPECT_TRUE(critic.guidancePlanFailed());
+  planner->empty = false;
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare(.3));
+  EXPECT_GT(planner->arrival.pose.position.x, nominal + .4);
+  critic.reset();
+  critic.elapseSmacPlanPeriod();
+  ASSERT_TRUE(prepare());
+  EXPECT_EQ(planner->calls, 6);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_DOUBLE_EQ(planner->arrival.pose.position.x, nominal);
+}
+
+TEST_F(SmacFailureAdvanceTest, SkipsBlockedAdvancePointsAndStopsAtAClippedReferenceEndpoint)
+{
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  critic.setTimingEnabled(true);
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  planner->empty = true;
+  critic.replacePlanner(planner);
+  auto path = straightPath();
+  const auto final_goal = pose(2.4, 0);  // The local reference is clipped before this goal.
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), final_goal, path);
+    };
+
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  const double nominal_goal = planner->arrival.pose.position.x;
+  const double blocked_x = nominal_goal + .25;
+  setCost(blocked_x, 0, nav2_costmap_2d::LETHAL_OBSTACLE);
+  critic.elapseSmacPlanPeriod();
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  // Skip center-free candidates whose footprints still touch the blocked
+  // advance point, then dispatch only the fitting clipped endpoint.
+  EXPECT_EQ(planner->calls, 2);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_TRUE(critic.guidancePlanFailed());
+  EXPECT_GT(critic.guidancePlanMs(), 0.0);
+  EXPECT_GT(critic.guidancePlanStartSteadyNs(), 0);
+  ASSERT_NE(critic.guidanceCandidateTarget(), nullptr);
+  const auto advanced_goal = *critic.guidanceCandidateTarget();
+  EXPECT_GT(advanced_goal.x, blocked_x);
+  unsigned int mx, my;
+  ASSERT_TRUE(costmap_->getCostmap()->worldToMap(
+    advanced_goal.x, advanced_goal.y, mx, my));
+  EXPECT_TRUE(critic.guidanceTraversable(mx, my));
+  EXPECT_DOUBLE_EQ(advanced_goal.x, path.poses.back().x);
+  EXPECT_DOUBLE_EQ(planner->arrival.pose.position.x, advanced_goal.x);
+  EXPECT_DOUBLE_EQ(critic.failedSmacGoalProgress(), advanced_goal.x);
+  EXPECT_FALSE(critic.detouring());
+
+  clearMap();
+  critic.elapseSmacPlanPeriod();
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_EQ(planner->calls, 3);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_TRUE(critic.guidancePlanFailed());
+  EXPECT_DOUBLE_EQ(planner->arrival.pose.position.x, path.poses.back().x);
+  EXPECT_LT(planner->arrival.pose.position.x, final_goal.x);
+  critic.elapseSmacPlanPeriod();
+  EXPECT_THROW(prepare(), limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_EQ(planner->calls, 4);
+  EXPECT_DOUBLE_EQ(planner->arrival.pose.position.x, path.poses.back().x);
+}
+
+TEST_P(LocalGuidanceBackendsTest, ReportsCurrentLookaheadsWithoutCalculatingADetour)
+{
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.use_smac", GetParam()));
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  if (GetParam()) {critic.replacePlanner(planner);}
+  const auto path = pathBehindCube();
+  EXPECT_EQ(critic.pathLookahead(), nullptr);
+  EXPECT_EQ(critic.guidanceLookahead(), nullptr);
+  EXPECT_EQ(critic.guidanceCandidateTarget(), nullptr);
+
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path));
+  expectLookahead(critic.pathLookahead(), 1.25);
+  expectLookahead(critic.guidanceLookahead(), 1.25);
+  expectLookahead(critic.guidanceCandidateTarget(), 1.75);
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_EQ(critic.guidanceTarget(), nullptr);
+  EXPECT_TRUE(critic.guidanceReference(pose(0, 0)).empty());
+  EXPECT_EQ(planner->calls, 0);
+
+  // These are poses considered in this cycle, not a retained detour target.
+  ASSERT_TRUE(critic.prepare(pose(.25, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path));
+  expectLookahead(critic.pathLookahead(), 1.50);
+  expectLookahead(critic.guidanceLookahead(), 1.50);
+  expectLookahead(critic.guidanceCandidateTarget(), 2.0);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_EQ(planner->calls, 0);
+
+  ASSERT_FALSE(critic.prepare(pose(.25, 0), nav_2d_msgs::msg::Twist2D(),
+    path.poses.back(), nav_2d_msgs::msg::Path2D()));
+  EXPECT_EQ(critic.pathLookahead(), nullptr);
+  EXPECT_EQ(critic.guidanceLookahead(), nullptr);
+  EXPECT_EQ(critic.guidanceCandidateTarget(), nullptr);
+}
+
+TEST_P(LocalGuidanceBackendsTest, HalfMeterLookaheadUsesTheSameTriggerAndTargetForBothBackends)
+{
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.lookahead_distance", .5));
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.use_smac", GetParam()));
+  const auto laser = addLaserTriggerLayer();
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  if (GetParam()) {critic.replacePlanner(planner);}
+  const auto path = pathBehindCube();
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+  ASSERT_TRUE(prepare());
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_NEAR(critic.targetPose().x, 1.25, 1e-9);
+  expectLookahead(critic.pathLookahead(), 1.25);
+  expectLookahead(critic.guidanceLookahead(), .5);
+  expectLookahead(critic.guidanceCandidateTarget(), 1.0);
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_EQ(planner->calls, 0);
+  // Shortening laser anticipation must not pull normal four-second
+  // predictions toward a 50 cm target and favor the short startup action.
+  dwb_msgs::msg::Trajectory2D normal_forward, startup;
+  normal_forward.poses = {pose(0, 0), pose(1.0, 0)};
+  startup.poses = {pose(0, 0), pose(.3, 0)};
+  EXPECT_LT(critic.scoreTrajectory(normal_forward), critic.scoreTrajectory(startup));
+  // This cell is beyond the half-meter reference plus the extended front.
+  setLaserCost(laser, .825, .025);
+  ASSERT_TRUE(prepare());
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_NEAR(critic.targetPose().x, 1.25, 1e-9);
+  clearLaser(laser);
+  // Isolate the laser trigger from fused-grid planning. This mark lies in the
+  // 5 cm margin plus conservative cell coverage. Rejoin adds another 50 cm.
+  setLaserCost(laser, .725, .025);
+  ASSERT_TRUE(prepare());
+  ASSERT_TRUE(critic.detouring());
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  EXPECT_NEAR(critic.guidanceTarget()->x, 1.0, .051);
+  EXPECT_NEAR(critic.guidanceTarget()->y, 0.0, 1e-9);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  EXPECT_EQ(planner->calls, GetParam() ? 1 : 0);
+  expectLookahead(critic.pathLookahead(), 1.25);
+  expectLookahead(critic.guidanceLookahead(), .5);
+  expectLookahead(critic.guidanceCandidateTarget(), 1.0);
+}
+
+TEST_F(MppiOnlineCostsTest, SmacUsesReferenceArrivalYawAndKeepsOnlyACollisionFreeCachedRoute)
+{
+  node_->declare_parameter("FollowPath.MppiPath.ObstacleGuidance.clearance_margin", 0.0);
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.clearance_margin", 0.0));
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.use_smac", true));
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  critic.replacePlanner(planner);
+  auto path = pathBehindCube();
+  for (auto & point : path.poses) {point.theta = 0.4;}
+  // A valid nearby obstacle triggers guidance without obstructing the straight route.
+  setCost(0.525, 0.175, 254);
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2.4, 0), path));
+  ASSERT_TRUE(critic.detouring());
+  EXPECT_EQ(planner->arrival.header.frame_id, "odom");
+  EXPECT_NEAR(planner->arrival.pose.orientation.z, std::sin(0.2), 1e-12);
+  EXPECT_NEAR(planner->arrival.pose.orientation.w, std::cos(0.2), 1e-12);
+  planner->empty = true;
+  EXPECT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2.4, 0), path));
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_TRUE(critic.guidancePlanFailed());
+  EXPECT_TRUE(critic.detouring());
+  EXPECT_FALSE(critic.hasDijkstraField());
+  EXPECT_FALSE(critic.smacPath().empty());
+  const auto calls = planner->calls;
+  // Every active cycle retries the planner, and an unsafe cached route is rejected.
+  setCost(0.325, 0.025, 254);
+  EXPECT_THROW(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2.4, 0), path),
+    limo_dwb_critics::GuidanceUnavailable);
+  EXPECT_EQ(planner->calls, calls + 1);
+  EXPECT_FALSE(critic.detouring());
+  // A failed search still exports the original points considered this cycle.
+  expectLookahead(critic.pathLookahead(), 1.25, 0.0, .4);
+  expectLookahead(critic.guidanceLookahead(), 1.25, 0.0, .4);
+  expectLookahead(critic.guidanceCandidateTarget(), 1.75, 0.0, .4);
+  // The next cycle can recover without a new navigation goal.
+  setCost(0.325, 0.025, nav2_costmap_2d::FREE_SPACE);
+  planner->empty = false;
+  EXPECT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2.4, 0), path));
+  EXPECT_EQ(planner->calls, calls + 2);
+  EXPECT_TRUE(critic.detouring());
+}
+
+TEST_P(LocalGuidanceBackendsTest, UsesTheLocalLookaheadAndRobotConnectorOnEveryActiveCycle)
+{
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.use_smac", GetParam()));
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  if (GetParam()) {critic.replacePlanner(planner);}
+  const auto path = pathBehindCube();
+  const auto prepare = [&](const geometry_msgs::msg::Pose2D & robot) {
+      return critic.prepare(robot, nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+  // This laser-sized lethal cell is beyond the footprint band of the 1.25 m
+  // local lookahead. A longer remaining reference must not trigger avoidance.
+  setCost(1.625, .175, 254);
+  ASSERT_TRUE(prepare(pose(0, 0)));
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_EQ(planner->calls, 0);
+  clearMap();
+  // The robot-to-reference connector is part of the trigger, even when the
+  // footprint swept along the reference itself never reaches this cell.
+  setCost(-.125, .325, 254);
+  for (int cycle = 0; cycle < 3; ++cycle) {
+    ASSERT_TRUE(prepare(pose(0, .5)));
+    EXPECT_TRUE(critic.detouring());
+    EXPECT_TRUE(critic.guidancePlanCalled());
+    EXPECT_FALSE(critic.guidancePlanFailed());
+    ASSERT_NE(critic.guidanceTarget(), nullptr);
+    EXPECT_NEAR(critic.guidanceTarget()->x, 1.75, 1e-9);
+    EXPECT_NEAR(critic.guidanceTarget()->y, 0.0, 1e-9);
+  }
+  EXPECT_EQ(planner->calls, GetParam() ? 3 : 0);
+  clearMap();
+  // Removing the detection does not end an ongoing detour while the robot
+  // remains farther than 15 cm from the original local reference.
+  ASSERT_TRUE(prepare(pose(0, .2)));
+  EXPECT_TRUE(critic.detouring());
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_EQ(planner->calls, GetParam() ? 4 : 0);
+  ASSERT_TRUE(prepare(pose(0, .1)));
+  EXPECT_FALSE(critic.detouring());
+  EXPECT_FALSE(critic.guidancePlanCalled());
+  EXPECT_EQ(critic.guidanceTarget(), nullptr);
+  EXPECT_TRUE(critic.guidanceReference(pose(0, .1)).empty());
+}
+
+TEST_P(LocalGuidanceBackendsTest, RejoinTargetAdvancesFromLookaheadAlongTheReference)
+{
+  costmap_->getCostmap()->resizeMap(250, 250, .02, -2.5, -2.5);
+  clearMap();
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.use_smac", GetParam()));
+  const auto laser = addLaserTriggerLayer();
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  if (GetParam()) {critic.replacePlanner(planner);}
+  nav_2d_msgs::msg::Path2D reference;
+  reference.header.frame_id = "odom";
+  for (int i = 0; i <= 20; ++i) {reference.poses.push_back(pose(i * .05, 0));}
+  for (int i = 1; i <= 20; ++i) {reference.poses.push_back(pose(1, i * .05));}
+  for (int i = 1; i <= 20; ++i) {reference.poses.push_back(pose(1 + i * .05, 1));}
+  // The target/scoring comparison needs both candidate center paths free.
+  setLaserCost(laser, .51, -.09);
+  ASSERT_TRUE(critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), reference.poses.back(), reference));
+  ASSERT_TRUE(critic.detouring());
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  // The 1.25 m lookahead is (1,.25); the next free 50 cm follows the bend.
+  // The target stays on a reference sample, so allow one 5 cm interval.
+  EXPECT_NEAR(critic.guidanceTarget()->x, 1.0, 1e-9);
+  EXPECT_NEAR(critic.guidanceTarget()->y, .75, .051);
+  EXPECT_NEAR(critic.guidanceTarget()->theta, 0.0, 1e-9);
+  // SMAC replaces path_ with its diagonal reference. Diagnostic points must
+  // retain the original bent reference used to decide where to rejoin.
+  expectLookahead(critic.pathLookahead(), 1.0, .25);
+  expectLookahead(critic.guidanceLookahead(), 1.0, .25);
+  expectLookahead(critic.guidanceCandidateTarget(), 1.0, critic.guidanceTarget()->y);
+  if (GetParam()) {
+    // The MPC attraction and terminal tube still follow the selected SMAC
+    // reference, and its suffix continues beyond the temporary target.
+    EXPECT_NEAR(critic.activeGuidancePoints().back()[0], 2.0, 1e-9);
+    EXPECT_NEAR(critic.activeGuidancePoints().back()[1], 1.0, 1e-9);
+    const auto middle = pose(.5, .5 * critic.guidanceTarget()->y);
+    EXPECT_TRUE(critic.guidanceTubeContains(middle, .3));
+    dwb_msgs::msg::Trajectory2D on_smac, on_global;
+    on_smac.poses = {pose(0, 0), middle};
+    on_global.poses = {pose(0, 0), pose(.5, 0)};
+    EXPECT_LT(critic.scoreTrajectory(on_smac), critic.scoreTrajectory(on_global));
+  }
+}
+
+TEST_P(LocalGuidanceBackendsTest, RejoinSkipsBlockedLookaheadAndStopsAtTheNextBlockedRun)
+{
+  costmap_->getCostmap()->resizeMap(250, 250, .02, -2.5, -2.5);
+  clearMap();
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.use_smac", GetParam()));
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  auto planner = std::make_shared<RecordingLocalPlanner>();
+  planner->via = {pose(.5, -.4), pose(1.45, -.4)};
+  if (GetParam()) {critic.replacePlanner(planner);}
+  const auto path = pathBehindCube();
+  for (double x = .95; x < 1.35; x += .02) {
+    for (double y = -.05; y < .05; y += .02) {setCost(x, y, 254);}
+  }
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), path.poses.back(), path);
+    };
+  ASSERT_TRUE(prepare());
+  ASSERT_TRUE(critic.detouring());
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  // The target starts at the first traversable point past the occupied
+  // lookahead and leaves about 50 cm of free reference for the rejoin.
+  const double unobstructed_target = critic.guidanceTarget()->x;
+  EXPECT_GE(unobstructed_target, 1.9);
+  EXPECT_LE(unobstructed_target, 2.05);
+  // A subsequent inscribed-cost run is blocked in the shared guidance grid,
+  // without placing a new lethal cell inside the chosen arrival footprint.
+  for (double x = 1.7; x < 1.9; x += .02) {
+    for (double y = -.05; y < .05; y += .02) {setCost(x, y, 253);}
+  }
+  ASSERT_TRUE(prepare());
+  ASSERT_TRUE(critic.detouring());
+  ASSERT_NE(critic.guidanceTarget(), nullptr);
+  EXPECT_GT(critic.guidanceTarget()->x, 1.4);
+  EXPECT_LT(critic.guidanceTarget()->x, 1.7);
+  EXPECT_LT(critic.guidanceTarget()->x, unobstructed_target);
+  EXPECT_TRUE(critic.guidancePlanCalled());
+  EXPECT_FALSE(critic.guidancePlanFailed());
+  EXPECT_EQ(planner->calls, GetParam() ? 2 : 0);
+}
 
 TEST_F(MppiCostsTest, GuidanceGridTracksOffPathChangesEvenWhileReferenceIsFree)
 {
@@ -389,7 +2243,7 @@ INSTANTIATE_TEST_CASE_P(
   RealAndSimulation, MppiGuidanceProfilesTest,
   ::testing::Values(LIMO_MPC_PARAMS_PATH, LIMO_MPC_SIM_PARAMS_PATH));
 
-TEST_P(MppiGuidanceProfilesTest, ProfileControlsEarlyDetourBesideCube)
+TEST_P(MppiGuidanceProfilesTest, UniformMarginTriggersBeforeTheFootprintReachesTheCube)
 {
   addCube();
   auto path = pathBehindCube();
@@ -400,9 +2254,8 @@ TEST_P(MppiGuidanceProfilesTest, ProfileControlsEarlyDetourBesideCube)
   initialize(critic, "MppiPath");
   ASSERT_TRUE(critic.prepare(
     pose(0.0, 0.66), nav_2d_msgs::msg::Twist2D(), pose(2.4, 0.66), path));
-  // A physically valid close pass triggers anticipation only in the real
-  // profile. Simulation retains collision-only activation (default margin 0).
-  EXPECT_EQ(critic.detouring(), std::string(GetParam()) == LIMO_MPC_PARAMS_PATH);
+  // The 5 cm side margin and cell area trigger before the body hits the cube.
+  EXPECT_TRUE(critic.detouring());
   dwb_msgs::msg::Trajectory2D stopped;
   stopped.poses = {pose(0, 0.66), pose(0, 0.66)};
   dwb_msgs::msg::Trajectory2D forward;
@@ -410,10 +2263,101 @@ TEST_P(MppiGuidanceProfilesTest, ProfileControlsEarlyDetourBesideCube)
   EXPECT_LT(critic.scoreTrajectory(forward), critic.scoreTrajectory(stopped));
 }
 
+TEST_P(MppiGuidanceProfilesTest, OnlyLaserMarksWithinFiveCentimetersOfTheFootprintStartDetours)
+{
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.lookahead_distance", .5));
+  const auto laser = addLaserTriggerLayer();
+  for (const bool use_smac : {false, true}) {
+    clearMap();
+    clearLaser(laser, nav2_costmap_2d::NO_INFORMATION);
+    node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.use_smac", use_smac));
+    InspectableMppiPathCritic critic;
+    initialize(critic, "MppiPath");
+    const auto prepare = [&]() {
+        return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2.4, 0), pathBehindCube());
+      };
+    // A semantic/static lethal cell in the master is not a laser detection;
+    // unobserved sensor cells (255) must not initiate a detour either.
+    setCost(0.525, 0.025, nav2_costmap_2d::LETHAL_OBSTACLE);
+    ASSERT_TRUE(prepare());
+    EXPECT_FALSE(critic.detouring());
+    EXPECT_FALSE(critic.guidancePlanCalled());
+    EXPECT_NEAR(critic.targetPose().x, 1.25, 1e-9);
+    limo_dwb_critics::MppiObstacleCritic obstacle;
+    initialize(obstacle, "MppiObstacle");
+    ASSERT_TRUE(obstacle.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(), pose(2.4, 0), pathBehindCube()));
+    dwb_msgs::msg::Trajectory2D collision;
+    collision.poses = {pose(0.525, 0.025), pose(0.525, 0.025)};
+    EXPECT_THROW(obstacle.scoreTrajectory(collision), dwb_core::IllegalTrajectoryException);
+    clearMap();
+    // Cells beyond the uniform margin must not trigger, including at corners.
+    for (const auto & mark : {pose(.525, .225), pose(-.275, .025), pose(.775, .025),
+      pose(-.225, .175)})
+    {
+      clearLaser(laser);
+      setLaserCost(laser, mark.x, mark.y);
+      ASSERT_TRUE(prepare());
+      EXPECT_FALSE(critic.detouring());
+      EXPECT_FALSE(critic.guidancePlanCalled());
+    }
+    // Sensor-only marks isolate triggering from fused-grid planning. The
+    // conservative cell envelope applies to the front, both sides and rear.
+    for (const auto & mark : {pose(.725, .025), pose(.525, .175),
+      pose(.525, -.175), pose(-.225, .025)})
+    {
+      clearLaser(laser);
+      setLaserCost(laser, mark.x, mark.y);
+      ASSERT_TRUE(prepare());
+      EXPECT_TRUE(critic.detouring());
+      EXPECT_TRUE(critic.guidancePlanCalled());
+      EXPECT_FALSE(critic.guidancePlanFailed());
+      critic.reset();
+      clearLaser(laser);
+      ASSERT_TRUE(prepare());
+      EXPECT_FALSE(critic.detouring());
+      EXPECT_FALSE(critic.guidancePlanCalled());
+    }
+  }
+}
+
+TEST_F(MppiCostsTest, MissingLaserTriggerLayerCannotFallBackToTheMaster)
+{
+  node_->set_parameter(rclcpp::Parameter(
+    "FollowPath.MppiPath.ObstacleGuidance.trigger_layer", std::string("obstacle_layer")));
+  InspectableMppiPathCritic critic;
+  EXPECT_THROW(initialize(critic, "MppiPath"), std::invalid_argument);
+}
+
+TEST_F(MppiCostsTest, ZeroTriggerMarginStillChecksTheOriginalFootprint)
+{
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.lookahead_distance", .5));
+  node_->declare_parameter("FollowPath.MppiPath.ObstacleGuidance.trigger_front_extension", 0.0);
+  node_->set_parameter(rclcpp::Parameter(
+    "FollowPath.MppiPath.ObstacleGuidance.trigger_front_extension", 0.0));
+  node_->declare_parameter("FollowPath.MppiPath.ObstacleGuidance.trigger_margin", 0.0);
+  node_->set_parameter(rclcpp::Parameter(
+    "FollowPath.MppiPath.ObstacleGuidance.trigger_margin", 0.0));
+  const auto laser = addLaserTriggerLayer();
+  InspectableMppiPathCritic critic;
+  initialize(critic, "MppiPath");
+  const auto reference = straightPath();
+  const auto prepare = [&]() {
+      return critic.prepare(pose(0, 0), nav_2d_msgs::msg::Twist2D(),
+        reference.poses.back(), reference);
+    };
+  setLaserCost(laser, .725, .025);
+  ASSERT_TRUE(prepare());
+  EXPECT_FALSE(critic.detouring());
+  clearLaser(laser);
+  setLaserCost(laser, .625, .025);
+  ASSERT_TRUE(prepare());
+  EXPECT_TRUE(critic.detouring());
+}
+
 TEST_F(MppiCostsTest, EarlyDetourDoesNotRejectEscapeFromProximityBand)
 {
   // Use cell centers: a boundary coordinate can round into the adjacent cell.
-  setCost(0.125, 0.175, nav2_costmap_2d::LETHAL_OBSTACLE);
+  setCost(0.275, 0.075, nav2_costmap_2d::LETHAL_OBSTACLE);
   InspectableMppiPathCritic critic;
   limo_dwb_critics::MppiObstacleCritic obstacle;
   initialize(critic, "MppiPath");
@@ -429,7 +2373,7 @@ TEST_F(MppiCostsTest, EarlyDetourDoesNotRejectEscapeFromProximityBand)
   EXPECT_TRUE(std::isfinite(critic.scoreTrajectory(escape)));
   EXPECT_TRUE(std::isfinite(obstacle.scoreTrajectory(escape)));
   dwb_msgs::msg::Trajectory2D collision;
-  collision.poses = {pose(0, 0), pose(0.125, 0.175)};
+  collision.poses = {pose(0, 0), pose(0.275, 0.075)};
   EXPECT_THROW(obstacle.scoreTrajectory(collision), dwb_core::IllegalTrajectoryException);
 }
 
@@ -452,10 +2396,11 @@ TEST_F(MppiCostsTest, EarlyDetourUsesOrientedFootprintAndIgnoresSoftCosts)
   ASSERT_TRUE(prepare());
   EXPECT_FALSE(critic.detouring());
   clearMap();
-  setCost(0.15, 0.55, 120);  // Inflation alone does not trigger the proximity test.
+  // The margin also covers the footprint's front after rotation into world +y.
+  setCost(0.025, 1.475, 120);  // Inflation alone does not trigger the proximity test.
   ASSERT_TRUE(prepare());
   EXPECT_FALSE(critic.detouring());
-  setCost(0.15, 0.55, nav2_costmap_2d::LETHAL_OBSTACLE);
+  setCost(0.025, 1.475, nav2_costmap_2d::LETHAL_OBSTACLE);
   ASSERT_TRUE(prepare());
   EXPECT_TRUE(critic.detouring());
 }
@@ -1053,6 +2998,131 @@ TEST_F(StructuredPipelineTest, DebugExportsAllStructuredCandidatesAndTerminalTub
   EXPECT_GT(families[5], 0);
   EXPECT_GT(families[6], 0);
   EXPECT_EQ(families[7], 3);
+  controller.deactivate();
+  controller.cleanup();
+}
+
+class SmacControllerProfilesTest : public StructuredPipelineTest,
+  public ::testing::WithParamInterface<const char *>
+{
+protected:
+  const char * parameterFile() const override {return GetParam();}
+  void SetUp() override
+  {
+    StructuredPipelineTest::SetUp();
+    // These export regressions retain their original reference geometry as
+    // runtime obstacle detection is tuned independently.
+    const auto parameter = "FollowPath.MppiPath.ObstacleGuidance.lookahead_distance";
+    if (!node_->has_parameter(parameter)) {node_->declare_parameter(parameter, 1.25);}
+    node_->set_parameter(rclcpp::Parameter(parameter, 1.25));
+  }
+};
+
+INSTANTIATE_TEST_CASE_P(RealAndSimulation, SmacControllerProfilesTest,
+  ::testing::Values(LIMO_MPC_PARAMS_PATH, LIMO_MPC_SIM_PARAMS_PATH));
+
+TEST_P(SmacControllerProfilesTest, ReferenceIsExportedWithTheControllerCycleAndClearsOnNewPlan)
+{
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.use_smac", true));
+  // Isolate native-reference snapshot export from fused-grid obstacle search.
+  const auto laser = addLaserTriggerLayer();
+  setLaserCost(laser, .725, .025);
+  auto receiver = std::make_shared<rclcpp::Node>("guidance_preview_receiver");
+  limo_interfaces::msg::MpcDebug::SharedPtr snapshot;
+  auto subscription = receiver->create_subscription<limo_interfaces::msg::MpcDebug>(
+    "/limo/control/mpc_debug", rclcpp::QoS(1).best_effort(),
+    [&](limo_interfaces::msg::MpcDebug::SharedPtr msg) {snapshot = msg;});
+  limo_dwb_critics::AckermannMPCController controller;
+  controller.configure(node_, "FollowPath", tf_, costmap_);
+  controller.activate();
+  controller.setPlan(reference_);
+  const auto capture = [&]() {
+      for (int attempt = 0; attempt < 100 && !snapshot; ++attempt) {
+        controller.computeVelocityCommands(current(), geometry_msgs::msg::Twist());
+        rclcpp::spin_some(receiver);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+    };
+  capture();
+  ASSERT_NE(snapshot, nullptr);
+  EXPECT_EQ(snapshot->guidance_backend, "SMAC");
+  ASSERT_GE(snapshot->guidance_path.size(), 2U);
+  EXPECT_TRUE(snapshot->guidance_target_valid);
+  EXPECT_NEAR(snapshot->guidance_target.x, 1.75, .051);
+  EXPECT_NEAR(snapshot->guidance_target.y, 0.0, 1e-9);
+  ASSERT_TRUE(snapshot->path_lookahead_valid);
+  ASSERT_TRUE(snapshot->guidance_lookahead_valid);
+  ASSERT_TRUE(snapshot->guidance_candidate_target_valid);
+  // DWB may prune the pose at zero; allow one reference sample in x.
+  expectLookahead(&snapshot->path_lookahead, 1.25, 0.0, 0.0, .051);
+  expectLookahead(&snapshot->guidance_lookahead, snapshot->path_lookahead.x);
+  expectLookahead(&snapshot->guidance_candidate_target, 1.75, 0.0, 0.0, .051);
+  expectLookahead(&snapshot->guidance_candidate_target, snapshot->guidance_target.x,
+    snapshot->guidance_target.y, snapshot->guidance_target.theta);
+  EXPECT_LE(snapshot->guidance_path.size(), 512U);
+  EXPECT_EQ(snapshot->header.frame_id, "odom");
+  EXPECT_EQ(snapshot->costmap.header.stamp, snapshot->header.stamp);
+  EXPECT_GT(snapshot->candidates.size(), 0U);
+  clearMap();
+  clearLaser(laser);
+  controller.setPlan(reference_);
+  snapshot.reset();
+  capture();
+  ASSERT_NE(snapshot, nullptr);
+  EXPECT_EQ(snapshot->guidance_backend, "SMAC");
+  EXPECT_TRUE(snapshot->guidance_path.empty());
+  EXPECT_FALSE(snapshot->guidance_target_valid);
+  // A fresh plan with no laser intersection still publishes all considered
+  // lookaheads, while keeping the active avoidance target unset.
+  ASSERT_TRUE(snapshot->path_lookahead_valid);
+  ASSERT_TRUE(snapshot->guidance_lookahead_valid);
+  ASSERT_TRUE(snapshot->guidance_candidate_target_valid);
+  expectLookahead(&snapshot->path_lookahead, 1.25, 0.0, 0.0, .051);
+  expectLookahead(&snapshot->guidance_lookahead, snapshot->path_lookahead.x);
+  expectLookahead(&snapshot->guidance_candidate_target, 1.75, 0.0, 0.0, .051);
+  controller.deactivate();
+  controller.cleanup();
+}
+
+TEST_P(SmacControllerProfilesTest, UnavailableGuidanceStillExportsConsideredLookaheads)
+{
+  node_->set_parameter(rclcpp::Parameter("FollowPath.MppiPath.ObstacleGuidance.use_smac", true));
+  const auto laser = addLaserTriggerLayer();
+  setLaserCost(laser, .725, .025);
+  auto * map = costmap_->getCostmap();
+  std::fill(map->getCharMap(), map->getCharMap() +
+    map->getSizeInCellsX() * map->getSizeInCellsY(), nav2_costmap_2d::LETHAL_OBSTACLE);
+  auto receiver = std::make_shared<rclcpp::Node>("unavailable_guidance_preview_receiver");
+  limo_interfaces::msg::MpcDebug::SharedPtr snapshot;
+  auto subscription = receiver->create_subscription<limo_interfaces::msg::MpcDebug>(
+    "/limo/control/mpc_debug", rclcpp::QoS(1).best_effort(),
+    [&](limo_interfaces::msg::MpcDebug::SharedPtr msg) {snapshot = msg;});
+  limo_dwb_critics::AckermannMPCController controller;
+  controller.configure(node_, "FollowPath", tf_, costmap_);
+  controller.activate();
+  controller.setPlan(reference_);
+  // No free rejoin exists, so this reaches the waiting branch without an
+  // expensive native SMAC search. Its empty frame must retain useful points.
+  for (int attempt = 0; attempt < 100 && !snapshot; ++attempt) {
+    geometry_msgs::msg::TwistStamped command;
+    ASSERT_NO_THROW(command = controller.computeVelocityCommands(current(), geometry_msgs::msg::Twist()));
+    EXPECT_DOUBLE_EQ(command.twist.linear.x, 0.0);
+    EXPECT_DOUBLE_EQ(command.twist.angular.z, 0.0);
+    rclcpp::spin_some(receiver);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  ASSERT_NE(snapshot, nullptr);
+  EXPECT_EQ(snapshot->guidance_backend, "SMAC");
+  EXPECT_TRUE(snapshot->guidance_path.empty());
+  EXPECT_FALSE(snapshot->guidance_target_valid);
+  EXPECT_TRUE(snapshot->candidates.empty());
+  EXPECT_EQ(snapshot->selected_id, -1);
+  EXPECT_DOUBLE_EQ(snapshot->command_velocity, 0.0);
+  ASSERT_TRUE(snapshot->path_lookahead_valid);
+  ASSERT_TRUE(snapshot->guidance_lookahead_valid);
+  EXPECT_FALSE(snapshot->guidance_candidate_target_valid);
+  expectLookahead(&snapshot->path_lookahead, 1.25, 0.0, 0.0, .051);
+  expectLookahead(&snapshot->guidance_lookahead, snapshot->path_lookahead.x);
   controller.deactivate();
   controller.cleanup();
 }

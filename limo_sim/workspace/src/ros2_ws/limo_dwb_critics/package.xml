@@ -29,6 +29,8 @@
   <depend>nav_msgs</depend>
   <depend>limo_inflation</depend>
   <depend>diagnostic_msgs</depend>
+  <exec_depend>smac_planner</exec_depend>
+  <exec_depend>python3</exec_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
 

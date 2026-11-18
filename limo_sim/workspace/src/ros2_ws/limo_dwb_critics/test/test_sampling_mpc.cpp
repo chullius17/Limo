@@ -15,6 +15,178 @@ using limo_dwb_critics::MpcRollout;
 using limo_dwb_critics::MpcState;
 using limo_dwb_critics::SamplingMpc;
 
+namespace
+{
+MpcConfig motionPreferenceConfig()
+{
+  MpcConfig config;
+  config.time_steps = 20;
+  config.batch_size = 64;
+  config.velocity_samples = 3;
+  config.curvature_samples = 3;
+  config.min_velocity = 0.0;
+  config.acceleration_weight = 0.0;
+  config.steering_weight = 0.0;
+  config.steering_command_weight = 0.0;
+  config.steering_rate_change_weight = 0.0;
+  return config;
+}
+}  // namespace
+
+TEST(SamplingMpc, MotionPreferenceEvaluatesForwardCandidatesDespiteCheaperStop)
+{
+  const auto config = motionPreferenceConfig();
+  SamplingMpc baseline(config), preferred(config);
+  const auto objective = [](const MpcRollout & rollout, double) {
+      return rollout.states[1].control.velocity > 0.001 ? 5.0 : 0.0;
+    };
+  const auto stopped = baseline.solve(MpcState(), objective);
+  ASSERT_TRUE(std::isfinite(stopped.cost));
+  EXPECT_DOUBLE_EQ(stopped.cost, 0.0);
+  EXPECT_DOUBLE_EQ(stopped.rollout.states[1].control.velocity, 0.0);
+
+  bool saw_forward_candidate = false;
+  const auto result = preferred.solve(MpcState(),
+    [&](const MpcRollout & rollout, double remaining) {
+      if (rollout.states[1].control.velocity > 0.001 && !saw_forward_candidate) {
+        saw_forward_candidate = true;
+        // A zero-cost stop must not short-circuit all critics for forward motion.
+        EXPECT_TRUE(std::isinf(remaining));
+        EXPECT_GT(remaining, 0.0);
+      }
+      return objective(rollout, remaining);
+    }, 1, {}, true);
+  ASSERT_TRUE(saw_forward_candidate);
+  ASSERT_TRUE(std::isfinite(result.cost));
+  EXPECT_DOUBLE_EQ(result.cost, 5.0);
+  EXPECT_GT(result.rollout.states[1].control.velocity, 0.001);
+}
+
+TEST(SamplingMpc, MotionPreferenceDoesNotTreatSubThresholdCommandsAsDeparture)
+{
+  for (const double initial_velocity : {0.0006, 0.001}) {
+    SamplingMpc model(motionPreferenceConfig());
+    MpcState initial;
+    initial.control.velocity = initial_velocity;
+    bool saw_sub_threshold = false;
+    const auto result = model.solve(initial,
+      [&](const MpcRollout & rollout, double) {
+        const double velocity = rollout.states[1].control.velocity;
+        if (velocity > 0.001) {return 5.0;}
+        if (velocity > 0.0) {
+          saw_sub_threshold = true;
+          return 0.0;
+        }
+        return 1.0;
+      }, 1, {}, true);
+    ASSERT_TRUE(saw_sub_threshold);
+    ASSERT_TRUE(std::isfinite(result.cost));
+    EXPECT_GT(result.rollout.states[1].control.velocity, 0.001);
+    EXPECT_DOUBLE_EQ(result.cost, 5.0);
+  }
+}
+
+TEST(SamplingMpc, MotionPreferenceKeepsSafeStopWhenAllForwardPredictionsCollide)
+{
+  SamplingMpc model(motionPreferenceConfig());
+  std::size_t rejected_forward = 0;
+  const auto result = model.solve(MpcState(),
+    [&](const MpcRollout & rollout, double) {
+      if (rollout.states[1].control.velocity > 0.001) {
+        ++rejected_forward;
+        return std::numeric_limits<double>::infinity();
+      }
+      return 0.0;
+    }, 1, {}, true);
+  EXPECT_GT(rejected_forward, 0u);
+  ASSERT_TRUE(std::isfinite(result.cost));
+  EXPECT_DOUBLE_EQ(result.rollout.states[1].control.velocity, 0.0);
+  EXPECT_EQ(result.family, limo_dwb_critics::MpcFamily::Braking);
+}
+
+TEST(SamplingMpc, MotionPreferenceReportsFailureWhenEveryPredictionIsInvalid)
+{
+  SamplingMpc model(motionPreferenceConfig());
+  model.solve(MpcState(), [](const MpcRollout &, double) {return 0.0;}, 1, {}, true);
+  ASSERT_TRUE(model.hasWarmStart());
+  const auto result = model.solve(MpcState(), [](const MpcRollout &, double) {
+      return std::numeric_limits<double>::infinity();
+    }, 1, {}, true);
+  EXPECT_FALSE(std::isfinite(result.cost));
+  EXPECT_TRUE(result.rollout.states.empty());
+  EXPECT_FALSE(model.hasWarmStart());
+}
+
+TEST(SamplingMpc, MotionPreferenceRequiresForwardMotionInTheIssuedCommand)
+{
+  SamplingMpc model(motionPreferenceConfig());
+  std::size_t future_only_candidates = 0;
+  const auto result = model.solve(MpcState(),
+    [&](const MpcRollout & rollout, double) {
+      if (rollout.states[1].control.velocity > 0.001) {
+        return std::numeric_limits<double>::infinity();
+      }
+      for (const auto & state : rollout.states) {
+        if (state.control.velocity > 0.001) {
+          ++future_only_candidates;
+          return 1.0;
+        }
+      }
+      return 0.0;
+    }, 1, {}, true);
+  ASSERT_GT(future_only_candidates, 0u);
+  ASSERT_TRUE(std::isfinite(result.cost));
+  EXPECT_DOUBLE_EQ(result.cost, 0.0);
+  EXPECT_EQ(result.family, limo_dwb_critics::MpcFamily::Braking);
+  for (const auto & state : result.rollout.states) {
+    EXPECT_DOUBLE_EQ(state.control.velocity, 0.0);
+  }
+}
+
+TEST(SamplingMpc, MotionPreferenceAcceptsTheSmallInitialStartupCommand)
+{
+  auto config = motionPreferenceConfig();
+  config.structured_actions = true;
+  config.startup_enabled = true;
+  config.control_segments = 3;
+  config.batch_size = 59;
+  config.time_steps = 80;
+  SamplingMpc model(config);
+  const auto result = model.solve(MpcState(),
+    [&](const MpcRollout & rollout, double) {
+      const double velocity = rollout.states[1].control.velocity;
+      if (velocity <= 0.001) {return 0.0;}
+      if (velocity > config.startup_acceleration * config.dt + 1e-12) {
+        return std::numeric_limits<double>::infinity();
+      }
+      return 100.0 + std::abs(rollout.states.back().y);
+    }, 1, {}, true);
+  ASSERT_TRUE(std::isfinite(result.cost));
+  EXPECT_EQ(result.family, limo_dwb_critics::MpcFamily::Startup);
+  EXPECT_NEAR(result.rollout.states[1].control.velocity, 0.0025, 1e-12);
+  EXPECT_GT(result.cost, 0.0);
+}
+
+TEST(SamplingMpc, MotionPreferenceMinimizesCostAmongFeasibleForwardPredictions)
+{
+  SamplingMpc model(motionPreferenceConfig());
+  double lowest_forward_cost = std::numeric_limits<double>::infinity();
+  std::size_t forward_count = 0;
+  const auto result = model.solve(MpcState(),
+    [&](const MpcRollout & rollout, double) {
+      if (rollout.states[1].control.velocity <= 0.001) {return 0.0;}
+      const auto & end = rollout.states.back();
+      const double cost = 1.0 + std::pow(end.x - 0.3, 2) + std::pow(end.y - 0.05, 2);
+      if (cost < lowest_forward_cost) {lowest_forward_cost = cost;}
+      ++forward_count;
+      return cost;
+    }, 1, {}, true);
+  ASSERT_GT(forward_count, 1u);
+  ASSERT_TRUE(std::isfinite(result.cost));
+  EXPECT_GT(result.rollout.states[1].control.velocity, 0.001);
+  EXPECT_DOUBLE_EQ(result.cost, lowest_forward_cost);
+}
+
 TEST(SamplingMpc, ThreeSlowStartsRampFromRestAndHoldAbsoluteSteeringReferences)
 {
   for (const double dt : {0.05, 0.10}) {

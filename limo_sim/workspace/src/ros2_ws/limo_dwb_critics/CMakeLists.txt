@@ -32,18 +32,24 @@ find_package(nav2_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(limo_inflation REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
+find_package(Threads REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
   src/ackermann_kinematics_critic.cpp
   src/sampling_mpc.cpp
   src/ackermann_mpc_controller.cpp
   src/mppi_cost_critics.cpp
-  src/obstacle_guidance.cpp
+  src/special_avoidance/obstacle_avoidance.cpp
+  src/special_avoidance/obstacle_guidance.cpp
+  src/special_avoidance/smac_guidance.cpp
+  src/special_avoidance/smac_worker.cpp
+  src/special_avoidance/smac_avoidance.cpp
   src/mpc_debug.cpp
   src/mpc_timing.cpp
   src/mpc_prepare_timing.cpp
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
+target_link_libraries(${PROJECT_NAME} Threads::Threads)
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
@@ -87,8 +93,13 @@ install(
 install(DIRECTORY include/ DESTINATION include)
 install(FILES limo_dwb_critics_plugins.xml DESTINATION share/${PROJECT_NAME})
 install(FILES limo_mpc_controller_plugins.xml README.md DESTINATION share/${PROJECT_NAME})
+install(PROGRAMS tools/analyze_mpc_timing.py DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
+  find_package(PythonInterp 3 REQUIRED)
+  add_test(NAME test_analyze_mpc_timing
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_analyze_mpc_timing.py)
+  set_tests_properties(test_analyze_mpc_timing PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_ackermann_kinematics test/test_ackermann_kinematics.cpp)
   target_link_libraries(test_ackermann_kinematics ${PROJECT_NAME})

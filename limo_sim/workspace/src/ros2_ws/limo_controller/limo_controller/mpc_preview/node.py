@@ -282,6 +282,12 @@ class MpcPreview(Node):
         meta = msg.costmap.metadata
         q = meta.origin.orientation
         origin_yaw = self._yaw(q)
+
+        def optional_pose(name):
+            pose = getattr(msg, name, None)
+            return ((pose.x, pose.y, pose.theta)
+                    if pose is not None and getattr(msg, name + '_valid', False) else None)
+
         self.frame = PreviewFrame(
             robot_pose=(msg.robot_pose.x, msg.robot_pose.y, msg.robot_pose.theta),
             footprint=tuple((p.x, p.y) for p in msg.footprint.points),
@@ -294,6 +300,12 @@ class MpcPreview(Node):
             command_velocity=msg.command_velocity, command_steering=msg.command_steering,
             model_dt=msg.model_dt, time_steps=msg.time_steps,
             generated_count=msg.generated_count, selected_id=msg.selected_id,
+            guidance_backend=getattr(msg, 'guidance_backend', ''),
+            guidance_path=tuple((p.x, p.y, p.theta) for p in getattr(msg, 'guidance_path', ())),
+            guidance_target=optional_pose('guidance_target'),
+            path_lookahead=optional_pose('path_lookahead'),
+            guidance_lookahead=optional_pose('guidance_lookahead'),
+            guidance_candidate_target=optional_pose('guidance_candidate_target'),
             candidates=tuple(Candidate(c.candidate_id, c.family, c.score_status, c.total_cost,
                                        tuple((p.x, p.y, p.theta) for p in c.poses))
                              for c in msg.candidates),

@@ -73,6 +73,15 @@ def debug_message(frame):
                      poses=[Pose2D(x=x, y=y, theta=yaw) for x, y, yaw in c.poses])
         for c in frame.candidates
     ]
+    msg.guidance_backend = frame.guidance_backend
+    msg.guidance_path = [Pose2D(x=x, y=y, theta=yaw) for x, y, yaw in frame.guidance_path]
+    for name in ('guidance_target', 'path_lookahead', 'guidance_lookahead',
+                 'guidance_candidate_target'):
+        pose = getattr(frame, name)
+        setattr(msg, name + '_valid', pose is not None)
+        if pose is not None:
+            x, y, yaw = pose
+            setattr(msg, name, Pose2D(x=x, y=y, theta=yaw))
     return msg
 
 
@@ -100,7 +109,14 @@ def test_ros_snapshot_becomes_png_and_stale_paths_disappear_without_clock_update
     subscription = transport.create_subscription(
         CompressedImage, '/test_mpc_preview/image/compressed', images.append, image_qos)
     publisher = transport.create_publisher(MpcDebug, '/test_mpc_preview/debug', qos)
-    msg = debug_message(sample_frame())
+    frame = sample_frame()
+    frame.guidance_backend = 'SMAC'
+    frame.guidance_path = ((0.6, -0.8, 0.0), (1.2, -0.8, 0.0))
+    frame.guidance_target = (1.4, -1.0, 0.0)
+    frame.path_lookahead = (1.2, -1.5, 0.0)
+    frame.guidance_lookahead = (.8, -1.6, 0.0)
+    frame.guidance_candidate_target = (.5, -1.5, 0.0)
+    msg = debug_message(frame)
     try:
         deadline = time.monotonic() + 4.0
         while time.monotonic() < deadline and not any(
@@ -113,6 +129,20 @@ def test_ros_snapshot_becomes_png_and_stale_paths_disappear_without_clock_update
         decoded = Image.open(BytesIO(bytes(fresh.data)))
         assert decoded.size == (640, 640)
         assert decoded.getpixel((260, 220)) == (0, 180, 65)
+        assert preview.frame.guidance_backend == 'SMAC'
+        assert preview.frame.guidance_path == frame.guidance_path
+        assert decoded.getpixel((400, 230)) == (0, 70, 145)
+        assert preview.frame.guidance_target == frame.guidance_target
+        assert decoded.getpixel((420, 180)) == (255, 125, 0)
+        assert preview.frame.path_lookahead == frame.path_lookahead
+        assert preview.frame.guidance_lookahead == frame.guidance_lookahead
+        assert preview.frame.guidance_candidate_target == frame.guidance_candidate_target
+        marker_pixels = (((449, 200), preview.options.path_lookahead_color),
+                         ((480, 229), preview.options.guidance_lookahead_color),
+                         ((452, 270), preview.options.guidance_target_color))
+        for pixel, color in marker_pixels:
+            assert decoded.getpixel(pixel) == color
+        assert decoded.getpixel((315, 299)) == preview.options.trigger_region_color
         # No /clock is ever published: ROS time stays at zero.
         assert preview.get_clock().now().nanoseconds == 0
         images.clear()
@@ -122,6 +152,16 @@ def test_ros_snapshot_becomes_png_and_stale_paths_disappear_without_clock_update
             executor.spin_once(timeout_sec=0.02)
         stale = next(image for image in images if image.header.stamp.sec == 0)
         assert Image.open(BytesIO(bytes(stale.data))).getpixel((260, 220)) != (0, 180, 65)
+        assert Image.open(BytesIO(bytes(stale.data))).getpixel((400, 230)) != (0, 70, 145)
+        assert Image.open(BytesIO(bytes(stale.data))).getpixel((420, 180)) != (255, 125, 0)
+        for pixel, color in marker_pixels:
+            assert Image.open(BytesIO(bytes(stale.data))).getpixel(pixel) != color
+        for name in ('path_lookahead', 'guidance_lookahead', 'guidance_candidate_target'):
+            setattr(msg, name + '_valid', False)
+        preview._snapshot(msg)
+        assert preview.frame.path_lookahead is None
+        assert preview.frame.guidance_lookahead is None
+        assert preview.frame.guidance_candidate_target is None
         assert subscription is not None
     finally:
         executor.remove_node(preview)
@@ -300,12 +340,16 @@ def test_latched_live_map_and_path_survive_an_mpc_pause_and_keep_updating():
         inflation = tuple(round(a + 180 / 252 * (b - a)) for a, b in zip(
             preview.options.free_color, preview.options.inflated_color))
         path_color = preview.options.global_path_color
-        wait_for_image(lambda _, image: image.getpixel((260, 200)) == path_color
+        idle_image = wait_for_image(lambda _, image: image.getpixel((260, 200)) == path_color
                        and image.getpixel((280, 200)) == (0, 180, 65)
                        and image.getpixel((383, 238)) == inflation
                        and image.getpixel((310, 303)) == (20, 30, 45),
                        lambda: footprint_publisher.publish(footprint))
         assert preview.frame is None
+        assert preview.options.trigger_margin == pytest.approx(.05)
+        assert preview.options.trigger_front_extension == pytest.approx(0.0)
+        for pixel in ((316, 298), (316, 342), (303, 310), (337, 310)):
+            assert idle_image.getpixel(pixel) == preview.options.trigger_region_color
         for actual, expected in zip(preview.footprint, body_polygon):
             assert actual == pytest.approx(expected, abs=1e-6)
         # Active MPC still uses its own coherent snapshot.

@@ -99,6 +99,14 @@ class MpcDebugPublisher:
             [Pose2D(s.x, s.y, s.yaw) for t, s in enumerate(rollout.states)
              if t % self.pose_stride_ == 0 or t + 1 == len(rollout.states)])
 
+    def setGuidance(self, backend, path):
+        if not self.collecting_:
+            return
+        keep = min(512, len(path))
+        self.frame_.guidance_backend = backend
+        self.frame_.guidance_path = [deepcopy(path[0 if keep < 2 else i*(len(path)-1)//(keep-1)])
+                                    for i in range(keep)]
+
     def finish(self, solution):
         if not self.collecting_:
             return

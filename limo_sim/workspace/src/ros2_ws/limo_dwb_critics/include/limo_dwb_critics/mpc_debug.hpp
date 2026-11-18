@@ -25,6 +25,12 @@ public:
   void activate();
   void deactivate();
   MpcObserver begin(const MpcState & initial);
+  void setGuidance(
+    const std::string & backend, const std::vector<geometry_msgs::msg::Pose2D> & path,
+    const geometry_msgs::msg::Pose2D * target = nullptr);
+  void setLookaheads(
+    const geometry_msgs::msg::Pose2D * path, const geometry_msgs::msg::Pose2D * guidance,
+    const geometry_msgs::msg::Pose2D * candidate);
   void finish(const MpcSolution & solution);
 
 private:

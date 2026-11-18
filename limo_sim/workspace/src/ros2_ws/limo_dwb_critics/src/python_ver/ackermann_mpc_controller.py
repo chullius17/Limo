@@ -203,6 +203,10 @@ class AckermannMPCController:
                 for critic in self.critics_:
                     if isinstance(critic, MppiPathCritic):
                         s.guidance_grid_ms += critic.guidanceGridMs()
+                        s.guidance_plan_ms += critic.guidancePlanMs()
+                        s.guidance_plan_called = s.guidance_plan_called or critic.guidancePlanCalled()
+                        s.guidance_plan_failed = s.guidance_plan_failed or critic.guidancePlanFailed()
+                        s.guidance_smac = critic.usesSmac()
                         s.grid_updated = s.grid_updated or critic.gridUpdated()
                         s.detouring = s.detouring or (critic.gridUpdated() and critic.detouring())
                 self.timing_publisher_.finish(s)
@@ -312,6 +316,14 @@ class AckermannMPCController:
             initial.control = deepcopy(self.previous_command_)
         with MpcTimingScope(sample, 'debug_ms'):
             preview = self.debug_publisher_.begin(initial) if self.debug_publisher_ is not None else None
+            if preview is not None:
+                try:
+                    for critic in self.critics_:
+                        if isinstance(critic, MppiPathCritic):
+                            self.debug_publisher_.setGuidance('SMAC' if critic.usesSmac() else 'DIJKSTRA',
+                                critic.guidanceReference(pose))
+                except Exception as error:
+                    self.node_.get_logger().warning('MPC guidance preview failed: %s', error)
 
         def timed_observer(rollout, family, identifier, cost):
             with MpcTimingScope(sample, 'debug_ms'):

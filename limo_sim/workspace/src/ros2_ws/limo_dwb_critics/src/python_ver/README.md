@@ -1,6 +1,6 @@
 # Python translations of limo_dwb_critics
 
-These files translate all nine C++ sources in `src/` and all eight headers in
+These files translate all ten C++ sources in `src/` and all eight headers in
 `include/limo_dwb_critics/` into Python for reading and standalone experiments.
 Comments and docstrings are in English. The existing C++ sources and build
 configuration remain the implementation used by ROS.
@@ -32,6 +32,7 @@ original file stems and public method names, including camelCase.
 | `ackermann_mpc_controller.hpp` and `.cpp` | `include/python_ver/ackermann_mpc_controller.py` | `src/python_ver/ackermann_mpc_controller.py` |
 | `sampling_mpc.hpp` and `.cpp` | `include/python_ver/sampling_mpc.py` | `src/python_ver/sampling_mpc.py` |
 | `obstacle_guidance.hpp` and `.cpp` | `include/python_ver/obstacle_guidance.py` | `src/python_ver/obstacle_guidance.py` |
+| `smac_guidance.cpp` | Uses the path critic interface | `src/python_ver/smac_guidance.py` |
 | `mppi_cost_critics.hpp` and `.cpp` | `include/python_ver/mppi_cost_critics.py` | `src/python_ver/mppi_cost_critics.py` |
 | `mpc_debug.hpp` and `.cpp` | `include/python_ver/mpc_debug.py` | `src/python_ver/mpc_debug.py` |
 | `mpc_timing.hpp` and `.cpp` | `include/python_ver/mpc_timing.py` | `src/python_ver/mpc_timing.py` |
@@ -46,6 +47,13 @@ classes from `src.python_ver`, not their header protocols. `MpcConfig.validate`
 is located on its Python dataclass, keeping configuration and validation together.
 
 ## Running without ROS
+
+The default Dijkstra backend runs standalone. With `ObstacleGuidance.use_smac`
+enabled, inject a configured native Nav2 planner into
+`MppiPathCritic(smac_planner=adapter, ...)`; it must expose
+`createPlan(start, goal)`. Missing adapters raise an explicit error. The C++ ROS
+plugin loads actual SMAC automatically; the Python helpers translate route
+validation and scoring without substituting a different search for SMAC.
 
 Use Python 3.8 or newer. No third-party Python packages are required. From the
 workspace's `src` directory, which contains `ros2_ws`, run:

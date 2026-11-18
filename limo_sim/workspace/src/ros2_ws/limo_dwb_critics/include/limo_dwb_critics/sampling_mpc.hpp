@@ -107,10 +107,13 @@ public:
   MpcRollout rollout(
     const MpcState & initial, const std::vector<MpcControl> & targets,
     double previous_steering_rate = 0.0, int previous_direction = 0) const;
+  // prefer_motion prioritizes feasible first commands above the existing
+  // 0.001 m/s stopped threshold; the caller disables this near the final goal.
   MpcSolution solve(
     const MpcState & initial,
     const std::function<double(const MpcRollout &, double)> & environment_cost,
-    std::size_t shift_steps = 1, const MpcObserver & observer = {});
+    std::size_t shift_steps = 1, const MpcObserver & observer = {},
+    bool prefer_motion = false);
 
 private:
   MpcControl boundedTarget(const MpcControl & target) const;

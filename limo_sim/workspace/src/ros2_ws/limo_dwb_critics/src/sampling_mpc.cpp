@@ -234,7 +234,7 @@ MpcRollout SamplingMpc::rollout(
 MpcSolution SamplingMpc::solve(
   const MpcState & initial,
   const std::function<double(const MpcRollout &, double)> & environment_cost,
-  std::size_t shift_steps, const MpcObserver & observer)
+  std::size_t shift_steps, const MpcObserver & observer, bool prefer_motion)
 {
   const std::size_t count = static_cast<std::size_t>(config_.time_steps);
   std::vector<MpcControl> nominal(count, boundedTarget(initial.control));
@@ -250,6 +250,7 @@ MpcSolution SamplingMpc::solve(
     motionDirection(initial.control.velocity);
   reset();
   MpcSolution best;
+  MpcSolution best_moving;
   std::size_t candidate_id = 0;
   std::size_t duplicate_count = 0;
   std::vector<std::vector<MpcControl>> unique_controls;
@@ -289,7 +290,14 @@ MpcSolution SamplingMpc::solve(
         unique_targets.push_back(targets);
       }
       const auto id = candidate_id++;
-      const double remaining = best.cost - prediction.effort_cost;
+      // Classify the command that will actually be issued. Motion later in
+      // the horizon can otherwise postpone departure on every control cycle.
+      const bool moving = prefer_motion &&
+        motionDirection(prediction.states[1].control.velocity) > 0;
+      auto & incumbent = moving ? best_moving : best;
+      // A cheap stop must not prune a moving candidate or short-circuit its
+      // safety critics: only candidates in the same group share a cost bound.
+      const double remaining = incumbent.cost - prediction.effort_cost;
       const auto observe = [&](double total) {
           if (observer) {
             // Diagnostics must never invalidate an otherwise usable command.
@@ -303,11 +311,11 @@ MpcSolution SamplingMpc::solve(
       const double cost = environment_cost(prediction, remaining);
       observe(std::isfinite(cost) && cost >= 0.0 ? cost + prediction.effort_cost :
         std::numeric_limits<double>::infinity());
-      if (std::isfinite(cost) && cost >= 0.0 && cost + prediction.effort_cost < best.cost) {
-        best.cost = cost + prediction.effort_cost;
-        best.family = family;
-        best.candidate_id = id;
-        best.rollout = std::move(prediction);
+      if (std::isfinite(cost) && cost >= 0.0 && cost + prediction.effort_cost < incumbent.cost) {
+        incumbent.cost = cost + prediction.effort_cost;
+        incumbent.family = family;
+        incumbent.candidate_id = id;
+        incumbent.rollout = std::move(prediction);
       }
     };
 
@@ -425,6 +433,7 @@ MpcSolution SamplingMpc::solve(
     consider(targets, sample % 4 == 0 ? MpcFamily::BroadExploration : MpcFamily::PerturbedNominal);
   }
   }
+  if (std::isfinite(best_moving.cost)) {best = std::move(best_moving);}
   best.generated_count = candidate_id;
   best.duplicate_count = duplicate_count;
   if (std::isfinite(best.cost)) {

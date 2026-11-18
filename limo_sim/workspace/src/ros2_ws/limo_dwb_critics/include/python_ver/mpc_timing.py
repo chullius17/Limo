@@ -24,6 +24,10 @@ class MpcTimingSample:
     thread_cpu_ms: float = 0.0
     prepare_ms: float = 0.0
     guidance_grid_ms: float = 0.0
+    guidance_plan_ms: float = 0.0
+    guidance_plan_called: bool = False
+    guidance_plan_failed: bool = False
+    guidance_smac: bool = False
     solve_ms: float = 0.0
     scoring_ms: float = 0.0
     debug_ms: float = 0.0
@@ -47,6 +51,8 @@ class MpcTimingSample:
             setattr(self, name, 0.0)
         self.generated_count = self.evaluated_count = self.rejected_count = 0
         self.success = self.detouring = self.grid_updated = False
+        self.guidance_plan_ms = 0.0
+        self.guidance_plan_called = self.guidance_plan_failed = self.guidance_smac = False
         for critic in self.critic_prepare:
             critic.prepare_ms = critic.prepare_cpu_ms = 0.0
             critic.called = False
@@ -79,6 +85,9 @@ class Window:
     rejected: int = 0
     detour_cycles: int = 0
     grid_updates: int = 0
+    guidance_plan: Metric = field(default_factory=Metric)
+    guidance_plan_failures: int = 0
+    guidance_smac: bool = False
 
 
 @dataclass
