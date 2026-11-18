@@ -72,6 +72,7 @@ realisierbar elektrische Komponente, also Sensoren aus Gazebo-Package. Diese Ant
                         <remapping>~/out:=scan</remapping>
                     </ros>
                     <output_type>sensor_msgs/LaserScan</output_type>
+                    <frame_name>${frame_prefix}_link</frame_name>
                     <min_intensity>150.0</min_intensity>
                 </plugin>
             </sensor>

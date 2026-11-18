@@ -21,6 +21,7 @@ struct CostProfile
   double near_band_width{0.0};  // 0 disables the additional near-obstacle plateau.
   double near_band_ramp{0.025};
   std::uint8_t near_band_cost{100};
+  bool second_lane_enabled{true};
 };
 
 std::uint8_t computeNearCost(double distance, double span, std::uint8_t peak, double sigma);

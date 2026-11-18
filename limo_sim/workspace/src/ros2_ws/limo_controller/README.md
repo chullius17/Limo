@@ -64,8 +64,10 @@ in both profiles so its sign locks cannot prevent exiting the detour. See the
 for parameters and local-map/kinematic limitations. Rebuild both
 `limo_dwb_critics` and `limo_controller`, then restart the control application.
 
-Detours are triggered by the oriented footprint, so an already collision-free
-planned path beside an obstacle keeps normal tracking. Both profiles use a 4 s
+Both profiles trigger detours when the oriented footprint would collide or pass
+within about 5 cm of an obstacle (`trigger_margin: 0.05`). This anticipates the
+switch to detour scoring without enlarging the guidance grid's hard clearance.
+Both profiles use a 4 s
 prediction horizon, forward motion or stopping, and retain detour scoring until
 the robot has returned near the reference. Real control runs at 10 Hz, simulation
 at 20 Hz; both generate up to 59 proposals before deduplication. Both profiles
@@ -79,7 +81,7 @@ different detours between the real and simulation profiles.
 
 The real profile uses strong finite local obstacle repulsion:
 `FollowPath.MppiObstacle.scale` is 12.0, twice its previous value of 6.0
-(the simulation/reference weight is 3.0), while path and goal weights retain
+(simulation uses 6.0; the reference weight is 3.0), while path and goal weights retain
 their reference values. This increases the preference for
 lower-cost routes through the local costmap relative to following the planned
 path; it does not impose an absolute priority between the soft costs.
@@ -146,10 +148,22 @@ Laser obstacle cells remain lethal in both profiles, with full-footprint
 collision rejection even near the goal.
 The global planner already treats source costs 60 and above as lethal.
 
-Both control profiles configure `limo_inflation::LocalLaneLayer` under
-`local_costmap.local_costmap.ros__parameters.inflation_layer`, currently with
-`enabled: false`. The controller therefore reads only fused raw laser and
-semantic costs, with no local inflation. The source semantic grid is also raw.
+The standard ObstacleLayer marks measured laser hits. The controller costmap
+fuses those cells with the semantic grid before Gaussian inflation; it does not
+extend laser obstacles into the unseen space behind their measured hits.
+
+The Gazebo scan explicitly uses `laser_link`, preserving the sensor's 12.36 cm
+forward offset in TF. Its height is -1 cm in the odom/base plane, so the
+simulation obstacle source sets `min_obstacle_height: -0.05`; the default zero
+would discard those correctly transformed points. The standard obstacle layer
+uses Foxy's `obstacle_range` and `raytrace_range` parameter names. Rebuild with
+`colcon build --symlink-install`, then restart the controller to load the
+configuration. A Gazebo model created before the explicit `laser_link` fix must
+also be recreated once to load that sensor frame.
+
+The optional `limo_inflation::LocalLaneLayer` described below is not selected
+by the current control profiles, which use Gaussian inflation. The source
+semantic grid remains raw; inflation is applied in the controller costmap.
 The viewer defaults to the original cloud and laser points, colored by each
 point's own class cost (`view_mode: sources`, `source_cost_colors: true`).
 The tuning below is retained for experiments; set `enabled: true` to restore it.

@@ -39,6 +39,7 @@ class SamplingMpc:
         self.previous_steering_rate_ = 0.0
         self.previous_direction_ = 0
 
+    # Controls if MPC has a previous target sequence that can be used for the new computation
     def hasWarmStart(self):
         return bool(self.previous_targets_)
 
@@ -53,6 +54,7 @@ class SamplingMpc:
             curvature = min(curvature, c.max_yaw_rate / abs(velocity))
         angle = math.atan(c.wheelbase * curvature)
         # The LIMO driver requests centered steering when commanded to stop.
+        # MpcControl is a class with attribute velocity and steering
         return MpcControl(velocity, 0.0 if velocity == 0.0 else clamp(target.steering, -angle, angle))
 
     def advance(self, current, requested):
@@ -62,18 +64,22 @@ class SamplingMpc:
         target = self.boundedTarget(requested)
         # Brake to zero before reversing; do not jump across zero in one step.
         desired = 0.0 if current.velocity * target.velocity < 0 else target.velocity
+        # c.acceleration is the limit acceleration
         acceleration = c.acceleration if abs(desired) > abs(current.velocity) else c.deceleration
         next_v = approach(current.velocity, desired, acceleration * c.dt)
         next_s = approach(current.steering, target.steering, c.steering_rate * c.dt)
         dv, ds = next_v - current.velocity, next_s - current.steering
         tangent = math.tan(max(abs(current.steering), abs(next_s)))
+        # Bound on the derivative of the angular velocity
         derivative = (abs(dv) * tangent + max(abs(current.velocity), abs(next_v)) *
                       (1 + tangent * tangent) * abs(ds)) / c.wheelbase
+        # Acceleration constraints
         fraction = min(1.0, c.yaw_acceleration * c.dt / derivative) if derivative > 0 else 1.0
 
         def interpolate(f):
             return MpcControl(current.velocity + f * dv, current.steering + f * ds)
 
+        # To implement the yaw limit
         yaw_limit = max(c.max_yaw_rate, abs(self.yawRate(current)))
         if abs(self.yawRate(interpolate(fraction))) > yaw_limit:
             low, high = 0.0, fraction
@@ -106,6 +112,7 @@ class SamplingMpc:
                 direction = next_direction
             a = (control.velocity - state.control.velocity) / (c.dt * max(c.acceleration, c.deceleration))
             s = (control.steering - state.control.steering) / (c.dt * c.steering_rate)
+            # Penalty for greater accelerations
             result.effort_cost += c.acceleration_weight * a * a + c.steering_weight * s * s
             # Integrate the rear-axle arc, then translate back to base_link.
             yaw_delta = self.yawRate(control) * c.dt
@@ -113,6 +120,7 @@ class SamplingMpc:
             sinc = 1.0 if abs(half) < 1e-9 else math.sin(half) / half
             distance = control.velocity * c.dt * sinc
             next_yaw = state.yaw + yaw_delta
+            # c.rear_axle_to_base is used because we want the position of the base_link and not of the rear axle
             state.x += distance * math.cos(state.yaw + half) + c.rear_axle_to_base * (math.cos(next_yaw) - math.cos(state.yaw))
             state.y += distance * math.sin(state.yaw + half) + c.rear_axle_to_base * (math.sin(next_yaw) - math.sin(state.yaw))
             state.yaw, state.control = next_yaw, control
@@ -124,6 +132,11 @@ class SamplingMpc:
         rate_change = first_rate - previous_steering_rate / c.steering_rate
         result.effort_cost += (c.steering_command_weight * first_rate ** 2 +
                                c.steering_rate_change_weight * rate_change ** 2)
+        '''
+        To summarize, resulting effort penalizes:
+        - accelerations and steering velocities
+        - negative velocities and changes in the sign of velocity
+        '''
         return result
 
     def solve(self, initial, environment_cost, shift_steps=1, observer=None):
@@ -187,8 +200,19 @@ class SamplingMpc:
             monophase = []
             gain = lambda: rng.uniform(1.0 - c.action_noise, 1.0)
             for longitudinal in (-1, 0, 1):
+                '''
+                -1: Brake
+                0:  Same velocity
+                1:  Accelerate
+                '''
                 for lateral in (-1, 0, 1):
+                    '''
+                    -1: Reduce the angle
+                    0:  Keep the angle
+                    1:  Augment the angle
+                    '''
                     for variant in range(c.action_variants):
+                        # 3 action variants, i.e. three angles per combination -> 27 trajectories for now 
                         targets = [MpcControl() for _ in range(count)]
                         control = deepcopy(initial.control)
                         max_angle = math.atan(c.wheelbase / c.min_turning_radius)
@@ -196,11 +220,13 @@ class SamplingMpc:
                         first_angle = clamp(initial.control.steering + lateral * max_angle * strength, -max_angle, max_angle)
                         begin, elapsed, first_acceleration = 0, 0.0, 0.0
                         for segment in range(c.control_segments):
+                            # 3  control segments, i.e. composite actions are divided in 3 blocks
                             elapsed += c.block_fractions[segment]
+                            # Compute final block index for composite action construction
                             end = count if segment + 1 == c.control_segments else math.floor(elapsed * count + 0.5)
                             phase = 3 * segment // c.control_segments
                             angle = -first_angle if phase == 1 else first_angle
-                            a_mode = longitudinal if phase == 0 else 0
+                            a_mode = longitudinal if phase == 0 else 0  # acceleration or break are done only during the first block of the composites
                             a = a_mode * (c.deceleration if a_mode < 0 else c.acceleration) * gain()
                             if segment == 0:
                                 first_acceleration = a
@@ -209,6 +235,7 @@ class SamplingMpc:
                                 control = self.advance(control, targets[t])
                             begin = end
                         consider(targets, MpcFamily.Structured)
+                        # 27 monophase trajectories
                         mono, control = [], deepcopy(initial.control)
                         for _ in range(count):
                             target = self.boundedTarget(MpcControl(control.velocity + first_acceleration * c.dt, first_angle))
@@ -217,8 +244,10 @@ class SamplingMpc:
                         monophase.append(mono)
             for targets in monophase:
                 consider(targets, MpcFamily.Monophase)
+            # Startup manouvers are generated if robot's velocity is too low
             if c.startup_enabled and abs(initial.control.velocity) <= c.startup_max_initial_speed:
                 max_angle = math.atan(c.wheelbase / c.min_turning_radius)
+                # 3 startup manouvers: left, straight and right
                 for direction in (-1, 0, 1):
                     targets, control = [], deepcopy(initial.control)
                     for _ in range(count):

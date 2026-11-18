@@ -245,7 +245,7 @@ that reference profile.
 
 | Humble MPPI term | Foxy configuration | Behavior |
 | --- | --- | --- |
-| CostCritic, weight 3 | Real `MppiObstacle.scale: 12`; simulation: 3 | Mean center cost / 254; critical cost 300; real repulsion remains active up to the goal, simulation disables it below 0.15 m; critical and collision checks remain active |
+| CostCritic, weight 3 | Real `MppiObstacle.scale: 12`; simulation: 6 | Mean center cost / 254; critical cost 300; real repulsion remains active up to the goal, simulation disables it below 0.15 m; critical and collision checks remain active |
 | GoalCritic, weight 5 | `MppiPath.GoalCritic` | Mean distance in meters, enabled within 1 m of the goal |
 | GoalAngleCritic, weight 3 | `MppiPath.GoalAngleCritic` | Mean wrapped yaw error in radians, within 0.5 m |
 | PathAlignCritic, weight 10 | `MppiPath.PathAlignCritic` | Mean path-pose error, with orientations; off within 0.5 m or if local path occupancy exceeds 15% |
@@ -271,18 +271,18 @@ guarantee identical behavior; simulation and hardware tuning remain necessary.
 
 Both real and simulation profiles enable `MppiPath.ObstacleGuidance.enabled`.
 A detour starts when the oriented robot footprint collides along the local reference,
-including between path samples. The real profile also uses `trigger_margin: 0.05`
-to anticipate a detour when an occupied or unknown cell comes within 5 cm of
-the padded, oriented reference footprint. Cell area is conservatively covered
+including between path samples, or when the proximity margin is reached.
+Both profiles use `trigger_margin: 0.05` to anticipate a detour when an occupied
+or unknown cell comes within 5 cm of the padded, oriented reference footprint.
+Cell area is conservatively covered
 by a half-cell diagonal. This margin only selects detour scoring; it does not
 change collision rejection or the traversable guidance grid, so a valid
-trajectory can leave the proximity band. Simulation keeps the default
-`trigger_margin: 0.0` and preserves collision-free planned passages.
+trajectory can leave the proximity band.
 The real planner's border-follow `safety_margin: 0.04` places its first lane
 at 0.15 m from obstacles, using the declared 0.22 m footprint width.
-`second_lane_distance: 0.29` sets the second lane independently, giving
-0.14 m between lane centers. If omitted, the second lane defaults to 1.5
-times `robot_width`, preserving the simulation profile. Controller footprint
+Both planner profiles use `second_lane_enabled: false`, retaining only the
+first preferred band and increasing cost beyond its outer edge. The second
+lane settings apply only when explicitly re-enabled. Controller footprint
 padding is configured separately.
 The path critic builds an eight-connected Dijkstra
 cost-to-go field through the current controller costmap. Occupied and unknown
@@ -294,9 +294,10 @@ actual clearance. Inflated costs add a travel penalty controlled by
 `cost_weight` (2.0).
 
 If the normal lookahead point is blocked, the target advances to a free point
-on the reference path beyond it, then advances up to `rejoin_distance: 0.50` m
-to leave room to straighten. MPC minimizes distance through free space and
-terminal motion heading toward the field route (`heading_weight: 2.0`). The
+on the reference path beyond it, then advances up to `rejoin_distance` (0.70 m
+in simulation, 0.50 m on the real robot) to leave room to straighten.
+MPC minimizes distance through free space and terminal motion heading toward
+the field route (`heading_weight: 2.0`). The
 heading follows a short route section to smooth individual grid-cell angles;
 reverse motion uses its travel direction instead of the opposite chassis
 orientation. Direct path alignment and goal attraction are suspended

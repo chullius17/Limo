@@ -149,24 +149,25 @@ class AckermannMPCController:
             self.setTrackingPlan(path)
 
     def setTrackingPlan(self, path):
-        plan = pathToPath2D(path)
-        points = pathPosePoints(plan.poses)
+        # path contains (x, y, z) and orientations in quaternions
+        plan = pathToPath2D(path)                   # Converts path into 2D
+        points = pathPosePoints(plan.poses)         # For each point we have (x, y, cumulative_distance, theta)
         if points != self.tracking_points_ or plan.header.frame_id != self.tracking_plan_.header.frame_id:
-            self.progress_tracker_.reset()
+            self.progress_tracker_.reset()          # Reset in case of plan change
         self.tracking_plan_, self.tracking_points_ = plan, points
-        self.dwb_.setPlan(self, path)
+        self.dwb_.setPlan(self, path)               # Reset local critics and sets up the local planner
 
     def transformGlobalPlan(self, pose):
-        reference = self.dwb_.transformPose(self, pose, self.tracking_plan_.header.frame_id)
-        projection = self.progress_tracker_.update(self.tracking_points_, reference.pose)
+        reference = self.dwb_.transformPose(self, pose, self.tracking_plan_.header.frame_id)    # Transform pose from odom to map (probably)
+        projection = self.progress_tracker_.update(self.tracking_points_, reference.pose)       # Checks the tracker in order to understand the progress inside the path
         if projection is None:
             raise PlannerException('Reference has no valid path segments')
         self.global_plan_ = deepcopy(self.tracking_plan_)
-        self.global_plan_.poses = self.global_plan_.poses[projection.segment:]
+        self.global_plan_.poses = self.global_plan_.poses[projection.segment:]  # Cut of the global trajectory
         return self.dwb_.transformGlobalPlan(self, pose)
 
     def prepareGlobalPlan(self, pose):
-        return self.dwb_.prepareGlobalPlan(self, pose)
+        return self.dwb_.prepareGlobalPlan(self, pose)  # Function used to get the local path and the final goal
 
     def scoreTrajectory(self, trajectory, best_score=-1.0):
         return self.dwb_.scoreTrajectory(self, trajectory, best_score)
@@ -239,6 +240,7 @@ class AckermannMPCController:
         if self.debug_publisher_ is not None: self.debug_publisher_.activate()
         if self.timing_publisher_ is not None: self.timing_publisher_.activate()
 
+    # Converts MPC prediction into a format that can be evaluated by DWB critics
     def toTrajectory(self, rollout):
         first = rollout.states[1].control
         return Trajectory2D(Twist2D(first.velocity, 0.0, self.mpc_.yawRate(first)),
@@ -318,7 +320,9 @@ class AckermannMPCController:
         rejections, legal_count = Counter(), 0
         best_debug, worst_debug = math.inf, -1.0
 
+        # To assign the next command to \cmd_vel
         def evaluate(rollout, remaining):
+            # 'remaining' is a variable used to preemptively interrupt useless cost computations
             nonlocal best_debug, worst_debug, legal_count
             with MpcTimingScope(sample, 'scoring_ms'):
                 if enabled: sample.evaluated_count += 1

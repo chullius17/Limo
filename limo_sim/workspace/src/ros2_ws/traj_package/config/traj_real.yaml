@@ -123,11 +123,11 @@ global_costmap:
         obstacle_threshold: 10
         robot_width: 0.220
         safety_margin: 0.04  # First lane: 0.5 * 0.22 + 0.04 = 0.15 m.
+        second_lane_enabled: false  # Keep only the first preferred distance band.
         second_lane_distance: 0.29  # Explicit center distance; 0.14 m between lanes.
         distance_tolerance: 0.02
         near_max_cost: 120
-        # Strongly discourage crossing between the two preferred lanes while
-        # keeping the ridge traversable when no lower-cost route exists.
+        # Used only when the second lane is enabled.
         inter_lane_peak_cost: 100
         far_cost_slope: 50.0
         far_max_cost: 40

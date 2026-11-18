@@ -28,6 +28,7 @@ void BorderFollowLayer::onInitialize()
   declareParameter("robot_width", rclcpp::ParameterValue(0.20));
   declareParameter("safety_margin", rclcpp::ParameterValue(0.05));
   declareParameter("distance_tolerance", rclcpp::ParameterValue(0.02));
+  declareParameter("second_lane_enabled", rclcpp::ParameterValue(true));
   declareParameter("near_max_cost", rclcpp::ParameterValue(60));
   declareParameter("inter_lane_peak_cost", rclcpp::ParameterValue(15));
   declareParameter("far_cost_slope", rclcpp::ParameterValue(5.0));
@@ -41,6 +42,7 @@ void BorderFollowLayer::onInitialize()
   node->get_parameter(name_ + ".robot_width", robot_width);
   node->get_parameter(name_ + ".safety_margin", safety_margin);
   node->get_parameter(name_ + ".distance_tolerance", profile_.tolerance);
+  node->get_parameter(name_ + ".second_lane_enabled", profile_.second_lane_enabled);
   int near_max_cost;
   int inter_lane_peak_cost;
   int far_max_cost;
@@ -61,12 +63,13 @@ void BorderFollowLayer::onInitialize()
   if (obstacle_threshold_ < 0 || obstacle_threshold_ > 100) {
     throw std::invalid_argument("obstacle_threshold must be in [0, 100]");
   }
-  if (!std::isfinite(profile_.second_lane_distance) ||
-    robot_width <= 0.0 || safety_margin < 0.0 ||
+  if (robot_width <= 0.0 || safety_margin < 0.0 ||
     profile_.tolerance < 0.0 ||
     profile_.tolerance >= profile_.target_distance ||
+    (profile_.second_lane_enabled &&
+    (!std::isfinite(profile_.second_lane_distance) ||
     profile_.second_lane_distance - profile_.tolerance <=
-    profile_.target_distance + profile_.tolerance)
+    profile_.target_distance + profile_.tolerance)))
   {
     throw std::invalid_argument("Invalid border-follow distance parameters");
   }
@@ -86,10 +89,11 @@ void BorderFollowLayer::onInitialize()
 
   RCLCPP_INFO(
     node->get_logger(),
-    "Border-follow layer: source=%s threshold=%d lanes=%.3f/%.3f "
+    "Border-follow layer: source=%s threshold=%d first-lane=%.3f second-lane=%s/%.3f "
     "+/- %.3f m "
     "costs=near:%u inter-lane:%u far:%u slope:%.1f",
     source_topic_.c_str(), obstacle_threshold_, profile_.target_distance,
+    profile_.second_lane_enabled ? "enabled" : "disabled",
     profile_.second_lane_distance, profile_.tolerance,
     static_cast<unsigned int>(profile_.near_max_cost),
     static_cast<unsigned int>(profile_.inter_lane_peak_cost),

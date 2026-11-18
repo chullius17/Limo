@@ -45,6 +45,42 @@ TEST(CostProfileTest, SeparatesPreferredLanesWithBoundedRidge)
   EXPECT_LT(computeBorderCost(0.27, profile), 15);
 }
 
+TEST(CostProfileTest, SingleLaneKeepsFirstBandAndRemovesSecondMinimum)
+{
+  for (const bool simulation : {false, true}) {
+    CostProfile two_lanes;
+    two_lanes.target_distance = simulation ? 0.20 : 0.15;
+    two_lanes.second_lane_distance = simulation ? 0.55 : 0.29;
+    two_lanes.far_cost_slope = simulation ? 10.0 : 50.0;
+    two_lanes.far_max_cost = simulation ? 8 : 40;
+    CostProfile single_lane = two_lanes;
+    single_lane.second_lane_enabled = false;
+
+    // Removing the outer lane must preserve obstacle repulsion and the first band.
+    for (int i = 0; i <= 100; ++i) {
+      const double d = (single_lane.target_distance + single_lane.tolerance) * i / 100.0;
+      EXPECT_EQ(computeBorderCost(d, single_lane), computeBorderCost(d, two_lanes));
+    }
+    EXPECT_EQ(computeBorderCost(single_lane.target_distance, single_lane), 0);
+    EXPECT_GT(computeBorderCost(single_lane.second_lane_distance, single_lane), 0);
+    EXPECT_EQ(computeBorderCost(two_lanes.second_lane_distance, two_lanes), 0);
+    EXPECT_EQ(
+      computeBorderCost(single_lane.target_distance + single_lane.tolerance + 0.10, single_lane),
+      simulation ? 1 : 5);
+
+    // The old second lane and ridge must no longer introduce a drop in cost.
+    int previous = 0;
+    for (int i = 0; i <= 2000; ++i) {
+      const double d = single_lane.target_distance + single_lane.tolerance + i * 0.001;
+      const int cost = computeBorderCost(d, single_lane);
+      EXPECT_GE(cost, previous);
+      EXPECT_LE(cost, single_lane.far_max_cost);
+      previous = cost;
+    }
+    EXPECT_EQ(previous, single_lane.far_max_cost);
+  }
+}
+
 TEST(CostProfileTest, SmallerSigmaNarrowsHaloWithoutMovingWells)
 {
   CostProfile narrow;

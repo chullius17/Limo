@@ -61,7 +61,7 @@ std::uint8_t computeBorderCost(
   if (distance <= first_upper) {
     return 0;
   }
-  if (distance < second_lower) {
+  if (profile.second_lane_enabled && distance < second_lower) {
     // Flatten the center of the ridge to widen the intermediate-cost band.
     const double midpoint = 0.5 * (first_upper + second_lower);
     const double half_span = 0.5 * (second_lower - first_upper);
@@ -71,11 +71,12 @@ std::uint8_t computeBorderCost(
       static_cast<double>(profile.inter_lane_peak_cost) *
       std::clamp(normalized, 0.0, 1.0)));
   }
-  if (distance <= second_upper) {
+  if (profile.second_lane_enabled && distance <= second_upper) {
     return 0;
   }
 
-  const double far_cost = profile.far_cost_slope * (distance - second_upper);
+  const double far_start = profile.second_lane_enabled ? second_upper : first_upper;
+  const double far_cost = profile.far_cost_slope * (distance - far_start);
   return static_cast<std::uint8_t>(std::lround(std::clamp(
     far_cost, 0.0, static_cast<double>(profile.far_max_cost))));
 }

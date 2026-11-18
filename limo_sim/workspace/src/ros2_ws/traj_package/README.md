@@ -27,6 +27,15 @@ costs. This is applied by the planner's StaticLayer without rewriting the source
 map used by localization. The default path starts at the selected planning pose
 and obeys these global obstacles throughout.
 
+The planner's `border_follow_layer` uses one preferred distance band:
+0.20 m from obstacles in simulation and 0.15 m on the real profile, both with
+`distance_tolerance: 0.02`. Both profiles set `second_lane_enabled: false`,
+removing the second preferred band and the ridge between lanes. Beyond the
+first band's outer edge, cost rises with `far_cost_slope` up to `far_max_cost`.
+Set `second_lane_enabled: true` to restore the retained second-lane settings.
+Rebuild `limo_inflation` and `traj_package`, then restart the planner to load
+the updated library and configuration.
+
 ## Planning GUI
 
 ```bash

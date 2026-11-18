@@ -125,12 +125,12 @@ global_costmap:
         robot_width: 0.220
         # First preferred distance: 0.5 * robot_width + safety_margin = 0.20 m.
         safety_margin: 0.09
-        # Override the width-derived default for the second preferred distance.
+        second_lane_enabled: false  # Keep only the first preferred distance band.
+        # Retained for experiments with the second lane enabled.
         second_lane_distance: 0.55
         distance_tolerance: 0.02
         near_max_cost: 120
-        # Strongly discourage crossing between the two preferred lanes while
-        # keeping the ridge traversable when no lower-cost route exists.
+        # Used only when the second lane is enabled.
         inter_lane_peak_cost: 100
         far_cost_slope: 10.0
         far_max_cost: 8
