@@ -209,6 +209,7 @@ def test_receiving_a_path_waits_for_start_and_sends_only_once(executor):
     executor.follow_path_client.send_goal_async.assert_not_called()
     assert start(executor).success
     assert start(executor).success
+    assert control_status(executor).startswith('WAITING:')
     executor.follow_path_client.send_goal_async.assert_called_once()
     sent = executor.follow_path_client.send_goal_async.call_args[0][0].path
     assert len(sent.poses) == 1
@@ -216,6 +217,8 @@ def test_receiving_a_path_waits_for_start_and_sends_only_once(executor):
     assert sent.header.stamp.sec == 42
     assert path.header.stamp.sec == 42
     assert executor.control_path.header.stamp.sec == 42
+    accept_pending_goal(executor)
+    assert control_status(executor).startswith('ACTIVE:')
 
 
 @pytest.mark.parametrize('operation', ['abort', 'pause', 'invalidate'])
@@ -253,7 +256,7 @@ def test_replacing_an_active_path_cancels_and_requires_another_start(executor):
 
 @pytest.mark.parametrize('pending', [False, True])
 @pytest.mark.parametrize('outcome', ['canceled', 'succeeded', 'aborted', 'exception'])
-def test_abort_is_ready_immediately_and_ignores_late_action_results(executor, pending, outcome):
+def test_abort_clears_path_and_ignores_late_action_results(executor, pending, outcome):
     from action_msgs.msg import GoalStatus
     ready_path(executor)
     assert start(executor).success
@@ -261,9 +264,10 @@ def test_abort_is_ready_immediately_and_ignores_late_action_results(executor, pe
 
     response = executor._set_control_active(SetBool.Request(data=False), SetBool.Response())
     assert response.success
-    assert control_status(executor).startswith('READY:')
+    assert control_status(executor).startswith('IDLE:')
+    assert executor.control_path is None
     assert not executor.control_requested
-    assert not start(executor).success  # Previous action is still closing internally.
+    assert not start(executor).success  # ABORT discarded the planned path.
     executor.follow_path_client.send_goal_async.assert_called_once()
 
     if pending:
@@ -274,16 +278,18 @@ def test_abort_is_ready_immediately_and_ignores_late_action_results(executor, pe
         result.set_exception(RuntimeError('old controller disconnected'))
     else:
         result.set_result(SimpleNamespace(status=getattr(GoalStatus, 'STATUS_' + outcome.upper())))
-    assert control_status(executor).startswith('READY:')
+    assert control_status(executor).startswith('IDLE:')
     assert executor.active_control_goal_handle is None
     assert not executor.control_requested
     executor.follow_path_client.send_goal_async.return_value = Future()
+    assert not start(executor).success
+    ready_path(executor)
     assert start(executor).success
     assert executor.follow_path_client.send_goal_async.call_count == 2
 
 
 @pytest.mark.parametrize('outcome', ['rejected', 'exception'])
-def test_abort_preserves_ready_when_pending_goal_is_rejected_or_fails(executor, outcome):
+def test_abort_preserves_idle_when_pending_goal_is_rejected_or_fails(executor, outcome):
     ready_path(executor)
     assert start(executor).success
     pending = executor.follow_path_client.send_goal_async.return_value
@@ -292,7 +298,8 @@ def test_abort_preserves_ready_when_pending_goal_is_rejected_or_fails(executor, 
         pending.set_result(SimpleNamespace(accepted=False))
     else:
         pending.set_exception(RuntimeError('request disconnected'))
-    assert control_status(executor).startswith('READY:')
+    assert control_status(executor).startswith('IDLE:')
+    assert executor.control_path is None
     assert not executor.goal_pending
     assert not executor.control_requested
 
@@ -303,6 +310,7 @@ def test_unavailable_controller_queues_start_until_server_is_ready(executor):
     assert start(executor).success
     assert executor.control_requested
     assert executor.waiting_for_server
+    assert control_status(executor).startswith('WAITING:')
     executor.follow_path_client.send_goal_async.assert_not_called()
 
     executor.follow_path_client.wait_for_server.return_value = True
@@ -310,6 +318,7 @@ def test_unavailable_controller_queues_start_until_server_is_ready(executor):
 
     assert not executor.waiting_for_server
     assert executor.goal_pending
+    assert control_status(executor).startswith('WAITING:')
     executor.follow_path_client.send_goal_async.assert_called_once()
 
 
@@ -325,6 +334,8 @@ def test_abort_removes_a_queued_start(executor):
 
     assert not executor.waiting_for_server
     assert not executor.control_requested
+    assert executor.control_path is None
+    assert control_status(executor).startswith('IDLE:')
     executor.follow_path_client.send_goal_async.assert_not_called()
 
 
@@ -429,16 +440,26 @@ def tube_executor(executor):
     return executor
 
 
-def test_tube_start_waits_for_full_footprint_approval_before_sending_action(tube_executor):
+def test_tube_start_waits_for_full_footprint_approval_before_sending_action(
+        tube_executor, monkeypatch):
+    logger = Mock()
+    monkeypatch.setattr(tube_executor, 'get_logger', lambda: logger)
     ready_path(tube_executor)
     assert start(tube_executor).success
     assert start(tube_executor).success
+    assert control_status(tube_executor).startswith('WAITING:')
     tube_executor.follow_path_client.send_goal_async.assert_not_called()
     tube_executor.tube_check_client.call_async.assert_called_once()
+    logger.info.assert_called_once_with('CHECKING: entire footprint must be inside the tube')
     tube_executor.tube_check_client.call_async.return_value.set_result(
         SimpleNamespace(success=True, message='Entire footprint inside tube'))
     tube_executor.follow_path_client.send_goal_async.assert_called_once()
     assert tube_executor.goal_pending
+    assert control_status(tube_executor).startswith('WAITING:')
+    assert logger.info.call_count == 2
+    logger.info.assert_called_with('STARTING: sending path to controller')
+    accept_pending_goal(tube_executor)
+    assert control_status(tube_executor).startswith('ACTIVE:')
 
 
 def test_tube_start_rejects_outside_footprint_without_sending_action(tube_executor):
@@ -488,6 +509,7 @@ def test_resume_performs_a_fresh_tube_check(tube_executor):
     resumed = tube_executor._set_control_enabled(
         SetBool.Request(data=True), SetBool.Response())
     assert resumed.success
+    assert control_status(tube_executor).startswith('WAITING:')
     tube_executor.follow_path_client.send_goal_async.assert_not_called()
     assert tube_executor.tube_check_future is fresh
     fresh.set_result(SimpleNamespace(success=True, message='Footprint inside tube'))

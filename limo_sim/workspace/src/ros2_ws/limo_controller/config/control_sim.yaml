@@ -277,7 +277,7 @@ local_costmap:
         path_topic: /limo/planning/path
         max_cost: 70  # Additional cost, capped independently of obstacle inflation.
         distance_for_max_cost: 0.50  # Meters: linear ramp from zero on the path.
-        tube_radius: 0.60  # Shared by START guard, terminal constraint and preview.
+        tube_radius: 0.80  # Shared by START guard, terminal constraint and preview.
         # Nonlethal sums saturate at 252; existing 253/254/255 remain unchanged.
 
 # Simulation has no physical chassis feedback.

@@ -327,10 +327,16 @@ the configured 4 cm-wide bands are represented only where cell distances allow.
 Published output is `/local_costmap/costmap_raw`; MPC telemetry captures this
 same final grid when evaluating candidates.
 
-ABORT clears the control request and immediately publishes READY if a path is
-stored, or IDLE otherwise. Cancellation of a pending FollowPath action runs
-internally. A new START is accepted after that action finishes; late results
-from the stopped action preserve READY/IDLE. PAUSE retains the path for RESUME.
+After START or RESUME, WAITING covers service availability, footprint validation
+and controller acceptance. The executor switches directly to ACTIVE when the
+controller accepts the path. A failed validation, send or acceptance reports ERROR.
+The internal CHECKING and STARTING phases remain visible as INFO messages in the
+terminal; both publish WAITING to the GUI.
+
+ABORT clears the control request and the stored execution path, and immediately
+publishes IDLE. Cancellation of a pending FollowPath action runs internally;
+late results cannot restore the discarded execution. A new path must be received
+before START can run again. PAUSE retains the path for RESUME.
 
 ## Confirmed arrival: SUCCESS
 

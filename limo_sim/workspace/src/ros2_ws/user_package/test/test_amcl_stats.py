@@ -15,10 +15,10 @@ from PyQt5.QtWidgets import QApplication  # noqa: E402
 import rclpy  # noqa: E402
 from rclpy.parameter import Parameter  # noqa: E402
 
-from online_map_package.experiments.amcl_experiment import (  # noqa: E402
+from user_package.amcl_stats import (  # noqa: E402
     ExperimentNode, ExperimentWindow, default_results_directory,
 )
-from online_map_package.experiments.amcl_records import (  # noqa: E402
+from user_package.amcl_stats_model import (  # noqa: E402
     ExperimentSession, cv_records, laser_records, pose_record,
 )
 
@@ -155,7 +155,7 @@ def test_pause_keeps_acquiring_and_close_saves_every_sample(viewer):
     app.processEvents()
     directory = node.session.directory
     assert window.finalized
-    assert (directory / 'amcl_experiment.png').stat().st_size > 1000
+    assert (directory / 'amcl_stats.png').stat().st_size > 1000
     metadata = json.loads((directory / 'metadata.json').read_text())
     assert metadata['complete'] is True
     assert metadata['samples']['accepted'] == 1
@@ -169,19 +169,19 @@ def test_laser_plot_requires_positive_weight_and_exports_separate_csv(viewer):
     node, window, _ = viewer
     node.receive_laser(laser_diagnostics(weight=0))
     window.refresh()
-    assert not window.axes[6].get_visible()
+    assert not window.axes[5].get_visible()
     assert not window.laser_input_axis.get_visible()
     node.receive_laser(laser_diagnostics(2, weight=0.5, used=35))
     window.refresh()
-    assert window.axes[6].get_visible()
+    assert window.axes[5].get_visible()
     assert window.laser_input_axis.get_visible()
     assert list(window.lines['laser_used_points'].get_ydata())[-1] == 35
-    assert 'Laser usati 35 / candidati 40' in window.status.text()
+    assert 'Laser used 35 / candidates 40' in window.status.text()
     assert not window.displayed['cv']
     node.receive_laser(laser_diagnostics(3, weight=0))
     window.refresh()
-    assert not window.axes[6].get_visible()
-    assert 'Laser disabilitato' in window.status.text()
+    assert not window.axes[5].get_visible()
+    assert 'Laser disabled (weight 0)' in window.status.text()
     window.save()
     rows = list(csv.DictReader((node.session.directory / 'laser.csv').open()))
     assert [int(row['used_points']) for row in rows] == [0, 35, 0]
@@ -189,7 +189,7 @@ def test_laser_plot_requires_positive_weight_and_exports_separate_csv(viewer):
 
 def test_live_ros_subscriptions_and_invalid_pose(viewer):
     node, window, _ = viewer
-    publisher = rclpy.create_node('amcl_experiment_test_publisher')
+    publisher = rclpy.create_node('amcl_stats_test_publisher')
     cv_pub = publisher.create_publisher(DiagnosticArray, '/amcl/cv_diagnostics', 10)
     pose_pub = publisher.create_publisher(PoseWithCovarianceStamped, '/amcl_pose', 10)
     laser_pub = publisher.create_publisher(DiagnosticArray, '/amcl/laser_diagnostics', 10)
@@ -206,12 +206,12 @@ def test_live_ros_subscriptions_and_invalid_pose(viewer):
         assert all(node.snapshot()[0].values())
         node.receive_pose(pose(variance=float('nan')))
         window.refresh()
-        assert 'Campioni invalidi: 1' in window.status.text()
-        assert 'CV usati 50 / candidati 50' in window.status.text()
+        assert 'Invalid samples: 1' in window.status.text()
+        assert 'CV used 50 / candidates 50' in window.status.text()
     finally:
         publisher.destroy_node()
 
 
 def test_default_results_are_inside_source_package():
-    source = Path(__file__).resolve().parents[2]
+    source = Path(__file__).resolve().parents[1]
     assert Path(default_results_directory()) == source / 'results'

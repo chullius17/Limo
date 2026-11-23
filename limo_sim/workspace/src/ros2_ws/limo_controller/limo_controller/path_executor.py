@@ -227,6 +227,8 @@ class PathExecutor(Node):
 
     def _set_control_active(self, request, response):
         if not request.data:
+            self.path_generation += 1
+            self.control_path = None
             self._reset_arrival()
             self._invalidate_tube_check()
             self.safety_stop_reason = None
@@ -237,7 +239,7 @@ class PathExecutor(Node):
                 self.active_control_goal_handle.cancel_goal_async()
             self._publish_available_path()
             response.success = True
-            response.message = 'Control abort requested.'
+            response.message = 'Control abort requested; planned path cleared.'
             return response
 
         if self.control_path is None:
@@ -349,7 +351,9 @@ class PathExecutor(Node):
                 if not self.tube_check_client.wait_for_service(timeout_sec=0.0):
                     self._publish_control_state('WAITING: tube START validation is unavailable')
                     return True
-                self._publish_control_state('CHECKING: entire footprint must be inside the tube')
+                self.get_logger().info('CHECKING: entire footprint must be inside the tube')
+                self._publish_control_state(
+                    'WAITING: validating that the entire footprint is inside the tube')
                 self.tube_check_started = time.monotonic()
                 self.tube_check_future = self.tube_check_client.call_async(Trigger.Request())
                 generation = self.path_generation
@@ -370,7 +374,8 @@ class PathExecutor(Node):
             self.goal_pending = True
             self.arrival_monitor.reset()
             self.arrival_pending = False
-            self._publish_control_state('STARTING: sending path to controller')
+            self._publish_control_state('WAITING: waiting for controller to accept the path')
+            self.get_logger().info('STARTING: sending path to controller')
             future = self.follow_path_client.send_goal_async(
                 request,
                 feedback_callback=lambda msg: self._control_feedback_callback(
@@ -495,7 +500,7 @@ class PathExecutor(Node):
                 self._publish_available_path()
             return
         if not self.control_requested:
-            # ABORT already returned to READY/IDLE. Late results only release
+            # ABORT already returned to IDLE. Late results only release
             # the old handle; they must not turn a deliberate stop into ERROR.
             self._publish_available_path()
             return

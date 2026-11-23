@@ -1,4 +1,4 @@
-"""Open the AMCL experiment recorder alongside an already running localization."""
+"""Open AMCL statistics alongside an already running localization."""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -21,8 +21,8 @@ def generate_launch_description():
         *[DeclareLaunchArgument(key, default_value=value, description=description)
           for key, (value, _, description) in settings.items()],
         Node(
-            package='online_map_package', executable='amcl_experiment',
-            name='amcl_experiment', output='screen', parameters=[{
+            package='user_package', executable='amcl_stats',
+            name='amcl_stats', output='screen', parameters=[{
                 key: ParameterValue(LaunchConfiguration(key), value_type=kind)
                 for key, (_, kind, _) in settings.items()
             }]),

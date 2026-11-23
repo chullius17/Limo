@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="2180" viewBox="0 0 1500 2180">
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<rect x="15" y="20" width="190" height="48" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="110" y="44" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">GUI</text>
+<path d="M 110 68 V 2090" stroke="#999999" stroke-width="0.8"/>
+<rect x="15" y="2090" width="190" height="48" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="110" y="2114" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">GUI</text>
+<rect x="295" y="20" width="190" height="48" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="390" y="44" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">path_executor</text>
+<path d="M 390 68 V 2090" stroke="#999999" stroke-width="0.8"/>
+<rect x="295" y="2090" width="190" height="48" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="390" y="2114" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">path_executor</text>
+<rect x="635" y="20" width="190" height="48" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="730" y="44" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">Controller Server</text>
+<path d="M 730 68 V 2090" stroke="#999999" stroke-width="0.8"/>
+<rect x="635" y="2090" width="190" height="48" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="730" y="2114" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">Controller Server</text>
+<rect x="985" y="20" width="190" height="48" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="1080" y="44" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">AckermannMPCController</text>
+<path d="M 1080 68 V 2090" stroke="#999999" stroke-width="0.8"/>
+<rect x="985" y="2090" width="190" height="48" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="1080" y="2114" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">AckermannMPCController</text>
+<rect x="1295" y="20" width="190" height="48" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="1390" y="44" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">cmd_vel_mux</text>
+<path d="M 1390 68 V 2090" stroke="#999999" stroke-width="0.8"/>
+<rect x="1295" y="2090" width="190" height="48" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="1390" y="2114" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">cmd_vel_mux</text>
+<rect x="85" y="90" width="1330" height="29" rx="0" fill="#fff7ef" stroke="#edaa7d" stroke-width="0.8"/>
+<text x="750" y="105" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">START</text>
+<path d="M 110 150 L 390 150" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="384.88485286764296,153.13612337358396 390,150 384.88485286764296,146.86387662641604" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="250.0" y="138" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">/limo/control/set_active (true)</text>
+<path d="M 390 195 L 110 195" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="115.11514713235704,191.86387662641604 110,195 115.11514713235704,198.13612337358396" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="250.0" y="183" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">WAITING · /limo/control/status</text>
+<path d="M 390 245 L 425.0 245.0 Q 432 245 432.0 252.0 L 432.0 258.0 Q 432 265 425.0 265.0 L 390 265" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="395.11514713235704,261.8638766264161 390,265 395.11514713235704,268.1361233735839" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="465" y="232" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Disponibilità servizi e controlli di partenza</text>
+<text x="600" y="290" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#777777" text-anchor="middle" dominant-baseline="central">Verifica footprint nel tubo, se richiesta; errore / timeout → ERROR</text>
+<path d="M 390 335 L 730 335" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="724.884852867643,338.1361233735839 730,335 724.884852867643,331.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="560.0" y="323" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">send_goal_async(percorso, controller_id)</text>
+<path d="M 730 375 L 390 375" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="395.11514713235704,371.8638766264161 390,375 395.11514713235704,378.1361233735839" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="560.0" y="363" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Goal accettato</text>
+<path d="M 390 415 L 110 415" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="115.11514713235704,411.8638766264161 110,415 115.11514713235704,418.1361233735839" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="250.0" y="403" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">ACTIVE · /limo/control/status</text>
+<path d="M 730 455 L 1080 455" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="1074.884852867643,458.1361233735839 1080,455 1074.884852867643,451.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="905.0" y="443" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">setPlan(percorso)</text>
+<rect x="710" y="480" width="750" height="195" rx="0" fill="#f5f5f5" stroke="#dddddd" stroke-width="0.8"/>
+<text x="745" y="494" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#777777" text-anchor="middle" dominant-baseline="central">loop</text>
+<text x="1080" y="494" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#777777" text-anchor="middle" dominant-baseline="central">[Ciclo di controllo]</text>
+<path d="M 730 535 L 1080 535" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="1074.884852867643,538.1361233735839 1080,535 1074.884852867643,531.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="905.0" y="523" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">computeVelocityCommands(pose, velocità)</text>
+<path d="M 1080 575 L 730 575" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="735.115147132357,571.8638766264161 730,575 735.115147132357,578.1361233735839" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="905.0" y="563" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Primo comando della soluzione MPC</text>
+<path d="M 730 615 L 1390 615" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="1384.884852867643,618.1361233735839 1390,615 1384.884852867643,611.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="1060.0" y="603" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">/cmd_vel_autonomy</text>
+<path d="M 1390 646 L 1425.0 646.0 Q 1432 646 1432.0 653.0 L 1432.0 659.0 Q 1432 666 1425.0 666.0 L 1390 666" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="1395.115147132357,662.8638766264161 1390,666 1395.115147132357,669.1361233735839" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="1465" y="633" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central"></text>
+<text x="1245" y="656" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#777777" text-anchor="middle" dominant-baseline="central">Selezione sorgente → /cmd_vel</text>
+<path d="M 730 700 L 390 700" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="395.11514713235704,696.8638766264161 390,700 395.11514713235704,703.1361233735839" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="560.0" y="688" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Feedback: distanza e velocità</text>
+<rect x="85" y="740" width="1330" height="29" rx="0" fill="#fff7ef" stroke="#edaa7d" stroke-width="0.8"/>
+<text x="750" y="755" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">PAUSE</text>
+<path d="M 110 795 L 390 795" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="384.88485286764296,798.1361233735839 390,795 384.88485286764296,791.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="250.0" y="783" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">/limo/control/set_enabled (false)</text>
+<path d="M 390 840 L 730 840" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="724.884852867643,843.1361233735839 730,840 724.884852867643,836.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="560.0" y="828" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">cancel_goal_async()</text>
+<path d="M 390 885 L 110 885" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="115.11514713235704,881.8638766264161 110,885 115.11514713235704,888.1361233735839" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="250.0" y="873" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">PAUSED · /limo/control/status</text>
+<path d="M 730 930 L 1390 930" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="1384.884852867643,933.1361233735839 1390,930 1384.884852867643,926.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="1060.0" y="918" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Comando nullo su /cmd_vel_autonomy</text>
+<path d="M 730 975 L 390 975" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="395.11514713235704,971.8638766264161 390,975 395.11514713235704,978.1361233735839" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="560.0" y="963" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Risultato: goal cancellato</text>
+<text x="600" y="1005" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#777777" text-anchor="middle" dominant-baseline="central">PAUSED — percorso conservato per RESUME</text>
+<rect x="85" y="1035" width="1330" height="29" rx="0" fill="#fff7ef" stroke="#edaa7d" stroke-width="0.8"/>
+<text x="750" y="1050" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">RESUME</text>
+<path d="M 110 1090 L 390 1090" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="384.88485286764296,1093.136123373584 390,1090 384.88485286764296,1086.863876626416" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="250.0" y="1078" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">/limo/control/set_enabled (true)</text>
+<path d="M 390 1135 L 110 1135" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="115.11514713235704,1131.863876626416 110,1135 115.11514713235704,1138.136123373584" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="250.0" y="1123" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">WAITING · /limo/control/status</text>
+<path d="M 390 1175 L 425.0 1175.0 Q 432 1175 432.0 1182.0 L 432.0 1188.0 Q 432 1195 425.0 1195.0 L 390 1195" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="395.11514713235704,1191.863876626416 390,1195 395.11514713235704,1198.136123373584" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="465" y="1162" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Ripete i controlli necessari</text>
+<path d="M 390 1230 L 730 1230" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="724.884852867643,1233.136123373584 730,1230 724.884852867643,1226.863876626416" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="560.0" y="1218" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">send_goal_async(percorso, controller_id)</text>
+<path d="M 730 1270 L 390 1270" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="395.11514713235704,1266.863876626416 390,1270 395.11514713235704,1273.136123373584" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="560.0" y="1258" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Goal accettato</text>
+<path d="M 390 1310 L 110 1310" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="115.11514713235704,1306.863876626416 110,1310 115.11514713235704,1313.136123373584" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="250.0" y="1298" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">ACTIVE · /limo/control/status</text>
+<rect x="85" y="1350" width="1330" height="29" rx="0" fill="#fff7ef" stroke="#edaa7d" stroke-width="0.8"/>
+<text x="750" y="1365" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">ABORT</text>
+<path d="M 110 1405 L 390 1405" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="384.88485286764296,1408.136123373584 390,1405 384.88485286764296,1401.863876626416" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="250.0" y="1393" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">/limo/control/set_active (false)</text>
+<path d="M 390 1445 L 425.0 1445.0 Q 432 1445 432.0 1452.0 L 432.0 1458.0 Q 432 1465 425.0 1465.0 L 390 1465" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="395.11514713235704,1461.863876626416 390,1465 395.11514713235704,1468.136123373584" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="465" y="1432" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Cancella percorso e richiesta di controllo</text>
+<path d="M 390 1500 L 730 1500" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="724.884852867643,1503.136123373584 730,1500 724.884852867643,1496.863876626416" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="560.0" y="1488" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">cancel_goal_async(), se azione attiva</text>
+<path d="M 390 1540 L 110 1540" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="115.11514713235704,1536.863876626416 110,1540 115.11514713235704,1543.136123373584" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="250.0" y="1528" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">IDLE · /limo/control/status</text>
+<text x="600" y="1570" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#777777" text-anchor="middle" dominant-baseline="central">IDLE pubblicato subito, senza attendere la conferma di cancellazione</text>
+<path d="M 730 1610 L 1390 1610" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="1384.884852867643,1613.136123373584 1390,1610 1384.884852867643,1606.863876626416" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="1060.0" y="1598" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Comando nullo su /cmd_vel_autonomy</text>
+<path d="M 730 1650 L 390 1650" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="395.11514713235704,1646.863876626416 390,1650 395.11514713235704,1653.136123373584" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="560.0" y="1638" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Risultato tardivo: nessun ripristino del percorso</text>
+<text x="650" y="1685" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#777777" text-anchor="middle" dominant-baseline="central">Per ripartire: ricevere un nuovo percorso → READY, poi START</text>
+<rect x="85" y="1725" width="1330" height="29" rx="0" fill="#fff7ef" stroke="#edaa7d" stroke-width="0.8"/>
+<text x="750" y="1740" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">SUCCESS — scenario alternativo durante ACTIVE</text>
+<path d="M 390 1785 L 425.0 1785.0 Q 432 1785 432.0 1792.0 L 432.0 1798.0 Q 432 1805 425.0 1805.0 L 390 1805" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="395.11514713235704,1801.863876626416 390,1805 395.11514713235704,1808.136123373584" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="465" y="1772" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Verifica arrivo tramite odometria e TF</text>
+<text x="660" y="1830" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#777777" text-anchor="middle" dominant-baseline="central">Centro nel cerchio del goal e robot fermo per il tempo configurato</text>
+<path d="M 390 1875 L 730 1875" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="724.884852867643,1878.136123373584 730,1875 724.884852867643,1871.863876626416" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="560.0" y="1863" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">cancel_goal_async(), se azione ancora attiva</text>
+<path d="M 390 1915 L 110 1915" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="115.11514713235704,1911.863876626416 110,1915 115.11514713235704,1918.136123373584" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="250.0" y="1903" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">SUCCESS · /limo/control/status</text>
+<path d="M 730 1955 L 1390 1955" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="1384.884852867643,1958.136123373584 1390,1955 1384.884852867643,1951.863876626416" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="1060.0" y="1943" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Comando nullo, se azione cancellata</text>
+<path d="M 730 1995 L 390 1995" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="395.11514713235704,1991.863876626416 390,1995 395.11514713235704,1998.136123373584" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="560.0" y="1983" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Risultato tardivo: SUCCESS conservato</text>
+<text x="650" y="2040" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#777777" text-anchor="middle" dominant-baseline="central">Se FollowPath termina prima, resta ACTIVE finché arrivo e arresto sono confermati</text>
+<text x="750" y="2160" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#777777" text-anchor="middle" dominant-baseline="central">Il mux applica priorità e timeout: teleop ha precedenza sui comandi autonomi.</text>
+</svg>

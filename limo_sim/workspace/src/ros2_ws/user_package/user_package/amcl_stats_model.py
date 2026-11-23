@@ -18,7 +18,9 @@ COUNT_FIELDS = [
 CV_FIELDS = ['stamp_s', 'frame_id', 'reason', 'accepted', 'reused'] + COUNT_FIELDS + [
     'cloud_stamp', 'sync_error',
 ]
-LASER_COUNT_FIELDS = ['input_points', 'candidate_points', 'used_points', 'particles', 'evaluations']
+LASER_COUNT_FIELDS = [
+    'input_points', 'candidate_points', 'used_points', 'particles', 'evaluations',
+]
 LASER_FIELDS = ['stamp_s', 'frame_id', 'reason', 'laser_weight_factor'] + LASER_COUNT_FIELDS
 STREAM_FIELDS = {'pose': POSE_FIELDS, 'cv': CV_FIELDS, 'laser': LASER_FIELDS}
 

@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1420" viewBox="0 0 1400 1420">
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<rect x="10" y="20" width="180" height="44" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="100" y="42" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">GUI</text>
+<path d="M 100 64 V 1340" stroke="#999999" stroke-width="0.8"/>
+<rect x="10" y="1340" width="180" height="44" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="100" y="1362" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">GUI</text>
+<rect x="290" y="20" width="180" height="44" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="380" y="42" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">path_executor</text>
+<path d="M 380 64 V 1340" stroke="#999999" stroke-width="0.8"/>
+<rect x="290" y="1340" width="180" height="44" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="380" y="1362" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">path_executor</text>
+<rect x="610" y="20" width="180" height="44" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="700" y="42" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">Controller Server</text>
+<path d="M 700 64 V 1340" stroke="#999999" stroke-width="0.8"/>
+<rect x="610" y="1340" width="180" height="44" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="700" y="1362" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">Controller Server</text>
+<rect x="930" y="20" width="180" height="44" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="1020" y="42" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">AckermannMPCController</text>
+<path d="M 1020 64 V 1340" stroke="#999999" stroke-width="0.8"/>
+<rect x="930" y="1340" width="180" height="44" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="1020" y="1362" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">AckermannMPCController</text>
+<rect x="1210" y="20" width="180" height="44" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="1300" y="42" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">cmd_vel_mux</text>
+<path d="M 1300 64 V 1340" stroke="#999999" stroke-width="0.8"/>
+<rect x="1210" y="1340" width="180" height="44" rx="0" fill="#e5f2ff" stroke="#79b8ff" stroke-width="0.8"/>
+<text x="1300" y="1362" font-family="Arial,sans-serif" font-size="12" font-weight="400" fill="#555555" text-anchor="middle" dominant-baseline="central">cmd_vel_mux</text>
+<rect x="75" y="85" width="1250" height="27" rx="0" fill="#fff7ef" stroke="#edaa7d" stroke-width="0.8"/>
+<text x="700" y="99" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">START</text>
+<path d="M 100 143 L 380 143" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="374.88485286764296,146.13612337358396 380,143 374.88485286764296,139.86387662641604" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="240.0" y="131" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">START</text>
+<text x="380" y="181" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">WAITING — controlli di partenza</text>
+<path d="M 380 227 L 700 227" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="694.884852867643,230.13612337358396 700,227 694.884852867643,223.86387662641604" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="540.0" y="215" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Invia percorso</text>
+<path d="M 700 270 L 380 270" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="385.11514713235704,266.8638766264161 380,270 385.11514713235704,273.1361233735839" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="540.0" y="258" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Goal accettato → ACTIVE</text>
+<path d="M 700 313 L 1020 313" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="1014.884852867643,316.1361233735839 1020,313 1014.884852867643,309.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="860.0" y="301" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Imposta percorso</text>
+<rect x="680" y="338" width="690" height="174" rx="0" fill="#f5f5f5" stroke="#dddddd" stroke-width="0.8"/>
+<text x="1025" y="355" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">loop — ciclo di controllo</text>
+<path d="M 700 398 L 1020 398" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="1014.884852867643,401.1361233735839 1020,398 1014.884852867643,394.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="860.0" y="386" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Calcola comando MPC</text>
+<path d="M 1020 439 L 700 439" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="705.115147132357,435.8638766264161 700,439 705.115147132357,442.1361233735839" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="860.0" y="427" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Comando di velocità</text>
+<path d="M 700 483 L 1300 483" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="1294.884852867643,486.1361233735839 1300,483 1294.884852867643,479.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="1000.0" y="471" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">/cmd_vel_autonomy → selezione sorgente → /cmd_vel</text>
+<rect x="75" y="545" width="1250" height="27" rx="0" fill="#fff7ef" stroke="#edaa7d" stroke-width="0.8"/>
+<text x="700" y="559" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">PAUSE / RESUME</text>
+<path d="M 100 603 L 380 603" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="374.88485286764296,606.1361233735839 380,603 374.88485286764296,599.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="240.0" y="591" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">PAUSE</text>
+<path d="M 380 647 L 700 647" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="694.884852867643,650.1361233735839 700,647 694.884852867643,643.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="540.0" y="635" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Richiede cancellazione → arresto autonomo</text>
+<text x="380" y="687" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">PAUSED — percorso conservato</text>
+<path d="M 100 736 L 380 736" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="374.88485286764296,739.1361233735839 380,736 374.88485286764296,732.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="240.0" y="724" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">RESUME</text>
+<text x="380" y="775" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">WAITING — ripete i controlli</text>
+<path d="M 380 819 L 700 819" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="694.884852867643,822.1361233735839 700,819 694.884852867643,815.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="540.0" y="807" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Reinvia percorso</text>
+<path d="M 700 862 L 380 862" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="385.11514713235704,858.8638766264161 380,862 385.11514713235704,865.1361233735839" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="540.0" y="850" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Goal accettato → ACTIVE</text>
+<rect x="75" y="900" width="1250" height="27" rx="0" fill="#fff7ef" stroke="#edaa7d" stroke-width="0.8"/>
+<text x="700" y="914" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">ABORT — alternativa durante l’esecuzione</text>
+<path d="M 100 958 L 380 958" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="374.88485286764296,961.1361233735839 380,958 374.88485286764296,954.8638766264161" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="240.0" y="946" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">ABORT</text>
+<text x="380" y="998" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">IDLE — percorso cancellato</text>
+<path d="M 380 1043 L 700 1043" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="694.884852867643,1046.136123373584 700,1043 694.884852867643,1039.863876626416" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="540.0" y="1031" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Richiede cancellazione → arresto autonomo</text>
+<text x="700" y="1084" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Per ripartire: nuovo percorso → READY → START</text>
+<rect x="75" y="1120" width="1250" height="27" rx="0" fill="#fff7ef" stroke="#edaa7d" stroke-width="0.8"/>
+<text x="700" y="1134" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">SUCCESS — alternativa durante l’esecuzione</text>
+<text x="530" y="1180" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Centro nel goal e robot fermo per il tempo configurato</text>
+<path d="M 380 1225 L 100 1225" fill="none" stroke="#999999" stroke-width="0.8" stroke-dasharray="2 2"/>
+<polyline points="105.11514713235704,1221.863876626416 100,1225 105.11514713235704,1228.136123373584" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="240.0" y="1213" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">SUCCESS</text>
+<path d="M 380 1270 L 700 1270" fill="none" stroke="#999999" stroke-width="0.8"/>
+<polyline points="694.884852867643,1273.136123373584 700,1270 694.884852867643,1266.863876626416" fill="none" stroke="#999999" stroke-width="0.8"/>
+<text x="540.0" y="1258" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Cancella l’azione, se ancora attiva</text>
+<text x="700" y="1311" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">La sola conclusione del controller non basta a confermare SUCCESS</text>
+<text x="700" y="1406" font-family="Arial,sans-serif" font-size="13" font-weight="400" fill="#666666" text-anchor="middle" dominant-baseline="central">Controlli o esecuzione falliti → ERROR   ·   Il mux dà precedenza alla teleoperazione</text>
+</svg>

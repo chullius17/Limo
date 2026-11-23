@@ -295,10 +295,12 @@ def test_ideal_launch_uses_separate_wall_and_cv_maps(monkeypatch):
              if isinstance(action, dict)}
     assert set(nodes) == {
         'ideal_map_server', 'ideal_laser_map_server',
-        'lifecycle_manager_ideal_map', 'rviz2', 'amcl_experiment',
+        'lifecycle_manager_ideal_map', 'rviz2', 'amcl_stats',
         'online_rviz_lane_overlay_decoder',
     }
     server = nodes['ideal_map_server']
+    assert nodes['amcl_stats']['package'] == 'user_package'
+    assert nodes['amcl_stats']['executable'] == 'amcl_stats'
     params = server['parameters'][0]
     assert params['use_sim_time'] is True
     assert params['frame_id'] == 'map'

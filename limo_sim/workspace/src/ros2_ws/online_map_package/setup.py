@@ -41,7 +41,6 @@ setup(
     entry_points={
         'console_scripts': [
             'local_ctrl_map = online_map_package.local_ctrl_map:main',
-            'amcl_experiment = online_map_package.experiments.amcl_experiment:main',
         ],
     },
 )

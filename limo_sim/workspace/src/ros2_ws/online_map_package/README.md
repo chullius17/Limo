@@ -87,13 +87,14 @@ ros2 launch online_map_package online_map_ideal_sim.launch.py
 
 This launch starts a circuit map server on `/map`, a wall map server on
 `/limo/map_package/online/maps/laser_map`, the simulation CV pipeline,
-the modified AMCL, RViz and the AMCL experiment window. It locates
+the modified AMCL, RViz and the `amcl_stats` viewer from `user_package`. It locates
 `offline_map_package/experiments/sim/ideal_map/ideal_map.yaml` in the source
 workspace, alongside `ideal_laser_map.yaml`. Override the paths with `map_yaml`
 and `laser_map_yaml` respectively. When changing worlds, supply matching maps.
 Use `start_rviz:=false` for a headless run, or `start_cv:=false` when a bag
 already supplies the semantic cloud. The simulation clock is enabled by default.
-Set `start_monitor:=false` to disable the experiment window and its recording.
+Build `user_package` to use the viewer. Set `start_monitor:=false` to disable
+the viewer and its recording.
 
 AMCL reuses `config/mapping_sim.yaml`, including laser factor 2.0 and CV factor 1.0.
 The laser compares `/scan` with physical wall occupancy; CV uses `/map`:
@@ -107,41 +108,19 @@ other `map -> odom` publisher stopped, and initialize the robot pose using
 RViz **2D Pose Estimate**. Gazebo and the robot bringup are launched separately.
 This launch does not start the local controller map or navigation nodes.
 
-## AMCL experiments
+## AMCL diagnostics
 
-Experimental launches are under `launch/experiments/`; the recorder and its data
-model are under `online_map_package/experiments/`. Normal online launch files
-and the production control-map node keep their existing locations.
+The recorder and GUI are in `user_package`, under the name `amcl_stats`.
+See the [AMCL statistics viewer documentation](../user_package/README.md#amcl-statistics)
+for launch commands, plot controls and exports.
 
-To open just the recorder while AMCL is already running:
-
-~~~bash
-ros2 launch online_map_package amcl_experiment.launch.py
-~~~
-
-Use `use_sim_time:=false` for the real robot. Alternatively:
-
-~~~bash
-ros2 run online_map_package amcl_experiment
-~~~
-
-The Qt/Matplotlib interface follows the EKF experiment viewer. It shows six
-plots: incoming/candidate/used CV points, road and obstacle points actually used,
-position variances, XY covariance, yaw variance and XY trajectory. The status
-line shows the last rejection reason and standard deviations. Pausing the plots
-does not stop acquisition. The interface is a desktop application and needs
-the same display access as RViz.
-
-A separate **Punti laser per aggiornamento AMCL** plot appears when the latest
-laser diagnostic reports `laser_weight_factor > 0`. It shows incoming scan rays,
-model candidates after subsampling/range filtering and points actually used,
-including beam skipping when enabled. With zero laser weight the plot is hidden
-and the status says the laser is disabled. Counts are reported by the AMCL laser
-models on `/amcl/laser_diagnostics` (`DiagnosticArray`), independently of CV and
-console logging. These are scan points, not particle-filter pose hypotheses;
-the diagnostic also records the number of hypotheses and beam/particle evaluations.
-No filter update produces no diagnostic sample. Override the debugger's input
-with `laser_diagnostics_topic:=/your/amcl/laser_diagnostics` if AMCL is namespaced.
+The AMCL laser models report counts on `/amcl/laser_diagnostics`
+(`DiagnosticArray`), independently of CV and console logging. The diagnostic
+includes incoming scan rays, model candidates after subsampling/range filtering
+and points actually used, including beam skipping when enabled. These are scan
+points, not particle-filter pose hypotheses; the diagnostic also records the
+number of hypotheses, beam/particle evaluations and `laser_weight_factor`.
+No filter update produces no diagnostic sample.
 
 The modified AMCL publishes `/amcl/cv_diagnostics` (`DiagnosticArray`) for every
 attempted CV update, without the throttling used by console logs. A point means
@@ -153,35 +132,9 @@ score was computed. Reused clouds are marked. No scan/update means no diagnostic
 sample, rather than an artificial zero. This topic is independent of
 `workload_logging_enabled` and does not change fusion weights or rejection rules.
 
-Each recorder invocation creates a unique UTC-named directory in the source
-package, `online_map_package/results/amcl_<timestamp>/`. It writes every sample
-to `cv.csv`, `laser.csv` and `pose.csv` during acquisition. The latter keeps all 36 covariance
-entries, plus pose and frame. Closing the window, Ctrl+C or SIGTERM saves
-`amcl_experiment.png` for the entire session and `metadata.json` with settings,
-counts, rejection reasons and units. **Salva grafici adesso** refreshes those
-exports while recording continues. Result runs are ignored by Git.
-
-The live view keeps at most 120 seconds / 20,000 samples per stream by default;
-CSVs retain the entire run, and PNG rendering uses a reduced preview over its
-full duration. The plot time is monotonic acquisition time, so resetting the
-simulation clock does not erase the experiment. Original ROS timestamps and
-per-stream reset segments remain in the CSVs. Covariance is AMCL's estimated
-uncertainty, not localization error against ground truth. Pose and CV samples
-are recorded independently at their original publication rates; their ROS
-timestamps can be matched during analysis without interpolating the counts.
-
-Recorder parameters include `pose_topic`, `diagnostics_topic`, `history_seconds`,
-`max_samples`, `refresh_hz` and `results_directory`. Override the output location
-when running without a writable source checkout:
-
-~~~bash
-ros2 run online_map_package amcl_experiment --ros-args \
-  -p results_directory:=/absolute/path/results
-~~~
-
-Build both `nav2_amcl` and `online_map_package` after this change. The recorder
-needs the new diagnostic publisher; restarting only the Python viewer cannot
-add it to an older running AMCL process.
+Build `nav2_amcl` and `online_map_package` for these diagnostic publishers.
+Restart AMCL after rebuilding; restarting only the Python viewer cannot add
+diagnostics to an older running AMCL process.
 
 ## Standard online launches
 

@@ -1,5 +1,89 @@
 # LIMO application launch
 
+## GUI sperimentale: circuito dall’alto e ostacoli Gazebo
+
+`circuit_experiment` mostra la texture originale del circuito, i muri e le
+sagome degli ostacoli del file `.world`, in coordinate metriche Gazebo.
+La vista è 2D, senza prospettiva, illuminazione o ombre. Il robot è indicato
+da una footprint blu semitrasparente e dal frame `base_link`, con origine blu,
+asse +X rosso e asse +Y verde. La footprint fisica è un rettangolo di
+0,322 × 0,220 m centrato su `base_link`, come in `traj_sim.yaml`, senza il
+padding della costmap. Segue posizione e orientamento del link. Rotella per
+lo zoom, trascinamento per spostare la vista, **Fit view** per ricentrarla.
+
+Le pose arrivano in sola lettura da `/gazebo/model_states` a 20 Hz:
+spostamenti e rotazioni dei modelli in Gazebo aggiornano le sagome nella GUI.
+Se un modello viene eliminato, scompare anche dalla vista. Le geometrie e i
+nomi provengono dal world selezionato, non dai sensori o dalle costmap.
+Prima del primo messaggio viene mostrata la disposizione salvata nel world;
+la barra di stato distingue attesa, collegamento attivo e dati fermi.
+
+La posa di `base_link` è letta da `/gazebo/link_states`, selezionando il nome
+scoped esatto `limo::base_link`. Si tratta della posa vera di Gazebo nel frame
+world, non di una stima AMCL/EKF e non della posa del modello. Footprint e frame
+compaiono soltanto dopo il primo campione valido e si aggiornano anche quando gli
+ostacoli sono fermi. In assenza di nuovi dati per 1,5 secondi rimangono visibili
+attenuati; se il link viene rimosso dal messaggio, scompaiono. Il refresh degli
+ostacoli li conserva. **Fit view** inquadra circuito e ostacoli senza
+spostare la vista in funzione del robot.
+
+Per un’entità o namespace diversi:
+
+```bash
+ros2 launch user_package circuit_experiment.launch.py \
+  robot_link:=mbot::base_link link_states_topic:=/gazebo/link_states
+```
+
+Dal workspace ROS:
+
+```bash
+colcon build --packages-select custom_start user_package --symlink-install
+source install/setup.bash
+ros2 launch user_package circuit_experiment.launch.py
+```
+
+Il mondo predefinito è `limo_obstacle_world.world`. Il viewer si collega a un
+Gazebo già avviato. Nei due world di `custom_start` è presente
+`libgazebo_ros_state.so`, con namespace `/gazebo`: dopo questo aggiornamento
+occorre riavviare il Gazebo già aperto per caricare il plugin. Per avviare
+insieme il viewer e la simulazione del mondo selezionato, quando Gazebo non è
+ancora attivo:
+
+```bash
+ros2 launch user_package circuit_experiment.launch.py start_gazebo:=true
+```
+
+Il bringup opzionale avvia anche robot ed EKF come quello esistente; il robot
+è mostrato tramite footprint e frame `base_link`, senza mesh 3D. Per una simulazione con un altro
+world bisogna passare **lo stesso file caricato da Gazebo**:
+
+```bash
+ros2 launch user_package circuit_experiment.launch.py world:=/percorso/mondo.world
+```
+
+`model_states_topic:=/gazebo/model_states` e `refresh_hz:=20.0` permettono di
+cambiare sorgente e frequenza della GUI. La vista supporta visual box,
+cilindro e sfera con pose planari; mesh e frame SDF nominati non sono
+supportati. Per caricare ostacoli inseriti durante l’esecuzione, premere **Refresh obstacles**:
+la GUI interroga il mondo attivo tramite il comando Gazebo Classic
+`gz topic --world-name <nome> --request world_sdf`, acquisendo dimensioni e pose
+senza dover salvare il world o riavviare la GUI. Il nome del mondo viene letto
+dal file iniziale. La richiesta è asincrona, scade dopo 15 secondi e in caso di
+errore conserva la vista precedente. Il pulsante è disabilitato durante la
+richiesta; eventuali geometrie non supportate vengono segnalate. Servono il
+comando `gz` nell’ambiente della GUI e lo stesso `GAZEBO_MASTER_URI` del server,
+anche quando i topic ROS sono già raggiungibili. In modalità `--offline` il
+pulsante rilegge invece il file world. Tutti i controlli e i messaggi della GUI
+sono in inglese. Le pose si aggiornano mentre la simulazione avanza; quando
+Gazebo è in pausa la vista conserva l’ultimo stato ricevuto.
+
+Per una vista statica o un’anteprima senza un Gazebo attivo:
+
+```bash
+ros2 run user_package circuit_experiment --offline
+ros2 run user_package circuit_experiment --offline --screenshot /tmp/circuito.png
+```
+
 ## Simulazione: traiettoria sulla mappa ideale e controllo dai sensori
 
 `launch/experiments/limo_app_ideal_sim.launch.py` avvia la mappa ideale del
@@ -63,6 +147,76 @@ disabilitano i rispettivi viewer. `planner_params_file`, `controller_params_file
 e `mpc_preview_params_file` consentono di usare YAML personalizzati; quelli
 predefiniti sono i profili `sim` esistenti.
 
+## AMCL statistics
+
+`amcl_stats` records AMCL's laser/CV usage and published pose covariance. The
+viewer and data model are `user_package/amcl_stats.py` and
+`user_package/amcl_stats_model.py`; the launch is under `launch/experiments/`.
+It reads existing topics without changing localization or starting Gazebo.
+
+Build and source the viewer in the ROS workspace:
+
+```bash
+colcon build --packages-select user_package --symlink-install
+source install/setup.bash
+```
+
+With AMCL already running, open the viewer on a desktop with ROS and display
+access. Select the simulation clock for Gazebo:
+
+```bash
+ros2 launch user_package amcl_stats.launch.py use_sim_time:=true
+```
+
+For the real robot, use the wall clock:
+
+```bash
+ros2 launch user_package amcl_stats.launch.py use_sim_time:=false
+```
+
+The English Qt/Matplotlib interface shows five plots: incoming/candidate/used CV
+points, road and obstacle points actually used, position variances, XY covariance
+and yaw variance. No XY trajectory is displayed. A sixth **Laser points per AMCL
+update** plot appears when the latest laser diagnostic reports
+`laser_weight_factor > 0`; it is hidden when the laser weight is zero. The status
+line shows the latest rejection reason, standard deviations and sensor counts.
+**Pause plots** freezes the view while acquisition continues; **Resume plots**
+resumes updates.
+
+Each invocation creates a unique UTC-named directory in the source package,
+`user_package/results/amcl_<timestamp>/`. It writes every sample to `cv.csv`,
+`laser.csv` and `pose.csv` during acquisition. The latter keeps all 36 covariance
+entries, plus pose and frame. Closing the window, Ctrl+C or SIGTERM saves
+`amcl_stats.png` for the entire session and `metadata.json` with settings, counts,
+rejection reasons and units. **Save plots now** refreshes those exports while
+recording continues. Result runs are ignored by Git.
+
+The live view keeps at most 120 seconds / 20,000 samples per stream by default;
+CSVs retain the entire run, and PNG rendering uses a reduced preview over its
+full duration. Plot time is monotonic acquisition time, so resetting the
+simulation clock does not erase the experiment. Original ROS timestamps and
+per-stream reset segments remain in the CSVs. Covariance is AMCL's estimated
+uncertainty, not localization error against ground truth. Pose and diagnostic
+samples are recorded independently at their original publication rates; their
+ROS timestamps can be matched during analysis without interpolating the counts.
+
+Recorder parameters include `pose_topic`, `diagnostics_topic`,
+`laser_diagnostics_topic`, `history_seconds`, `max_samples`, `refresh_hz` and
+`results_directory`. Topic defaults are `/amcl_pose`, `/amcl/cv_diagnostics` and
+`/amcl/laser_diagnostics`. Override them for namespaced AMCL instances. To select
+a writable output directory when running without a source checkout:
+
+```bash
+ros2 run user_package amcl_stats --ros-args -p use_sim_time:=false \
+  -p results_directory:=/absolute/path/results
+```
+
+The modified AMCL must publish its CV/laser diagnostics. See the
+[producer documentation](../online_map_package/README.md#amcl-diagnostics).
+Build `nav2_amcl` and `online_map_package` and restart AMCL when adding these
+publishers; restarting only the viewer cannot add diagnostics to an older
+running AMCL process.
+
 ## Esperimenti EKF: confronto delle odometrie
 
 Il launch unico `launch/experiments/ekf_experiment.launch.py` apre una finestra
@@ -93,18 +247,8 @@ ros2 launch user_package ekf_experiment.launch.py profile:=sim
 Il file rimane nella sottocartella `experiments` anche dopo l'installazione;
 `ros2 launch` lo trova per nome. Il PC deve vedere gli stessi topic DDS del robot.
 Il launch apre solo il confronto, quindi si può affiancare all'applicazione o
-alla teleoperazione esistente. Per avviare anche il bringup e il suo EKF, quando
-non sono già attivi, usare sul computer che ospita il robot o Gazebo:
-
-```bash
-ros2 launch user_package ekf_experiment.launch.py profile:=sim start_bringup:=true
-ros2 launch user_package ekf_experiment.launch.py profile:=real start_bringup:=true
-```
-
-Sono due alternative. Il profilo reale avvia il bringup senza camera e RViz;
-quello simulato usa il circuito Gazebo. Non vengono avviati planner, controller
-o teleop. `bringup_config:=/percorso/profilo.yaml` seleziona un diverso YAML di
-`custom_start`. Non avviare nuovamente il bringup se il robot è già attivo.
+alla teleoperazione esistente. Robot o Gazebo ed EKF si avviano separatamente;
+questo launch non ne gestisce l'avvio.
 
 Opzioni del confronto:
 
@@ -122,8 +266,9 @@ vuoti: non viene stimata o applicata alcuna trasformazione fra frame diversi.
 La finestra mostra conteggi, età degli ultimi messaggi e RMS delle differenze
 sui campioni confrontabili conservati. L'RMS non è un errore rispetto al vero.
 
-**Pausa grafici** congela la vista, continuando ad acquisire. **Nuova prova**
-svuota i dati locali senza cambiare la posa del robot. **Esporta CSV + PNG**
+La GUI è in inglese. **Pause plots** congela la vista, continuando ad acquisire;
+**Resume plots** riprende l'aggiornamento. **New trial / reset plots** svuota
+i dati locali senza cambiare la posa del robot. **Export CSV + PNG**
 salva la vista corrente in una nuova cartella, con `raw.csv`, `filtered.csv`,
 `differences.csv` e `odometry.png`. I CSV usano secondi ROS assoluti, metri,
 radianti, m/s e rad/s; i grafici mostrano gli angoli in gradi. La memoria è
@@ -134,7 +279,7 @@ Un salto indietro maggiore di un secondo in uno stream azzera le due storie;
 piccoli messaggi fuori ordine vengono scartati.
 
 Il confronto funziona anche riproducendo un bag con `/clock`, impostando
-`use_sim_time:=true` e lasciando `start_bringup:=false`.
+`use_sim_time:=true`.
 
 Per dimostrare un miglioramento di accuratezza occorre un riferimento
 indipendente. Sul LIMO reale `/odom` usa già lo yaw dell'IMU; il confronto non

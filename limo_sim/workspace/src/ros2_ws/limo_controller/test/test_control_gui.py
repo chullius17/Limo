@@ -119,6 +119,19 @@ def test_gui_receives_ros_state_and_sends_start_pause_resume_abort(gui):
         assert 'READY: path available' in window.state_label.text()
         window.start_button.click()
         spin_until(app, executor, lambda: window.start_button.text() == 'ABORT CONTROL')
+        status.publish(String(data='WAITING: validating the path'))
+        spin_until(app, executor, lambda: 'WAITING:' in window.state_label.text())
+        assert window.control_requested
+        assert window.start_button.text() == 'ABORT CONTROL'
+        assert window.start_button.isEnabled()
+        assert window.pause_button.isEnabled()
+        assert '#ef6c00' in window.state_label.styleSheet()
+        status.publish(String(data='ACTIVE: following path'))
+        spin_until(app, executor, lambda: 'ACTIVE:' in window.state_label.text())
+        assert window.control_requested
+        assert window.start_button.text() == 'ABORT CONTROL'
+        assert window.pause_button.isEnabled()
+        assert '#2e7d32' in window.state_label.styleSheet()
         window.pause_button.click()
         spin_until(app, executor, lambda: window.pause_button.text() == 'RESUME CONTROL')
         window.pause_button.click()

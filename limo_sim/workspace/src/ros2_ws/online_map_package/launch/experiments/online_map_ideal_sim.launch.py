@@ -106,8 +106,8 @@ def _launch_ideal(context):
     ))
     if _flag(context, 'start_monitor'):
         actions.append(Node(
-            package='online_map_package', executable='amcl_experiment',
-            name='amcl_experiment', output='screen', parameters=[clock]))
+            package='user_package', executable='amcl_stats',
+            name='amcl_stats', output='screen', parameters=[clock]))
     if _flag(context, 'start_rviz'):
         rviz_config = os.path.join(
             get_package_share_directory('limo_rviz'), 'config',
@@ -144,6 +144,6 @@ def generate_launch_description():
             description='Open the online localization RViz configuration.'),
         DeclareLaunchArgument(
             'start_monitor', default_value='true',
-            description='Open the AMCL experiment graphs and record the session.'),
+            description='Open AMCL statistics from user_package and record the session.'),
         OpaqueFunction(function=_launch_ideal),
     ])

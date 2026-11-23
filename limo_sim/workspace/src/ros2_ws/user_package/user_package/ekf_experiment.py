@@ -111,29 +111,29 @@ class ExperimentWindow(QMainWindow):
         self.node = node
         self.paused = False
         self.displayed = None
-        self.setWindowTitle('Esperimento EKF — confronto odometrie')
+        self.setWindowTitle('EKF experiment — odometry comparison')
         self.resize(1400, 900)
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
         settings = node.settings
-        title = QLabel('Odometria: {}    |    EKF: {}'.format(
+        title = QLabel('Odometry: {}    |    EKF: {}'.format(
             settings['raw_topic'], settings['filtered_topic']))
         title.setWordWrap(True)
         title.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout.addWidget(title)
-        self.status = QLabel('In attesa delle due odometrie…')
+        self.status = QLabel('Waiting for both odometry streams…')
         self.status.setWordWrap(True)
         self.status.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout.addWidget(self.status)
         controls = QHBoxLayout()
-        self.pause_button = QPushButton('Pausa grafici')
+        self.pause_button = QPushButton('Pause plots')
         self.pause_button.clicked.connect(self.toggle_pause)
         controls.addWidget(self.pause_button)
-        reset_button = QPushButton('Nuova prova / reset grafici')
+        reset_button = QPushButton('New trial / reset plots')
         reset_button.clicked.connect(self.reset)
         controls.addWidget(reset_button)
-        self.export_button = QPushButton('Esporta CSV + PNG')
+        self.export_button = QPushButton('Export CSV + PNG')
         self.export_button.clicked.connect(self.export)
         self.export_button.setEnabled(False)
         controls.addWidget(self.export_button)
@@ -145,12 +145,12 @@ class ExperimentWindow(QMainWindow):
         layout.addWidget(self.canvas, 1)
         self.axes = self.figure.subplots(3, 2).flatten()
         labels = [
-            ('Traiettoria XY', 'x [m]', 'y [m]'),
-            ('Orientamento', 'tempo ROS dalla partenza [s]', 'yaw [°]'),
-            ('Velocità longitudinale', 'tempo [s]', 'vx [m/s]'),
-            ('Velocità angolare', 'tempo [s]', 'wz [°/s]'),
-            ('Distanza tra le stime sincronizzate', 'tempo [s]', 'distanza [m]'),
-            ('Differenza yaw: EKF − odometria', 'tempo [s]', 'Δyaw [°]'),
+            ('XY trajectory', 'x [m]', 'y [m]'),
+            ('Heading', 'ROS time since trial start [s]', 'yaw [°]'),
+            ('Longitudinal velocity', 'time [s]', 'vx [m/s]'),
+            ('Angular velocity', 'time [s]', 'wz [°/s]'),
+            ('Distance between synchronized estimates', 'time [s]', 'distance [m]'),
+            ('Yaw difference: EKF − odometry', 'time [s]', 'Δyaw [°]'),
         ]
         self.lines = {}
         for i, (ax, (title, xlabel, ylabel)) in enumerate(zip(self.axes, labels)):
@@ -158,7 +158,7 @@ class ExperimentWindow(QMainWindow):
             ax.grid(True, alpha=0.3)
             if i < 4:
                 for name, label, color in (
-                        ('raw', 'Odometria', '#d97706'),
+                        ('raw', 'Odometry', '#d97706'),
                         ('filtered', 'EKF', '#2563eb')):
                     self.lines[i, name], = ax.plot([], [], label=label, color=color)
                 ax.legend(loc='upper right')
@@ -166,8 +166,8 @@ class ExperimentWindow(QMainWindow):
                 self.lines[i, 'difference'], = ax.plot([], [], color='#7c3aed')
         self.axes[0].set_aspect('equal', adjustable='box')
         footer = QLabel(
-            'Le differenze misurano il disaccordo tra stime, non l’errore reale. '
-            'CSV/PNG contengono solo la finestra conservata (massimo {:.0f} s / {} campioni).'
+            'Differences show disagreement between estimates, not ground truth error. '
+            'CSV/PNG include only the retained window (up to {:.0f} s / {} samples).'
             .format(settings['history_seconds'], settings['max_samples']))
         footer.setWordWrap(True)
         footer.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
@@ -179,7 +179,7 @@ class ExperimentWindow(QMainWindow):
     def toggle_pause(self):
         """Freeze rendering while subscriptions continue collecting data."""
         self.paused = not self.paused
-        self.pause_button.setText('Riprendi grafici' if self.paused else 'Pausa grafici')
+        self.pause_button.setText('Resume plots' if self.paused else 'Pause plots')
         if not self.paused:
             self.refresh()
 
@@ -187,7 +187,7 @@ class ExperimentWindow(QMainWindow):
         """Discard the local experiment and resume rendering."""
         self.node.reset()
         self.paused = False
-        self.pause_button.setText('Pausa grafici')
+        self.pause_button.setText('Pause plots')
         self.refresh()
 
     def refresh(self):
@@ -223,24 +223,24 @@ class ExperimentWindow(QMainWindow):
             ax.relim()
             ax.autoscale_view()
         status = []
-        for name, title in (('raw', 'Odometria'), ('filtered', 'EKF')):
+        for name, title in (('raw', 'Odometry'), ('filtered', 'EKF')):
             age = time.monotonic() - arrivals[name] if name in arrivals else None
-            state = 'in attesa' if age is None else '{:.1f} s dall’ultimo messaggio'.format(age)
-            status.append('{}: {} campioni, {}'.format(title, len(streams[name]), state))
+            state = 'waiting' if age is None else '{:.1f} s since last message'.format(age)
+            status.append('{}: {} samples, {}'.format(title, len(streams[name]), state))
         if differences:
             rms = math.sqrt(sum(d.distance**2 for d in differences) / len(differences))
             yaw_rms = math.degrees(math.sqrt(
                 sum(d.dyaw**2 for d in differences) / len(differences)))
-            status.append('{} coppie | RMS distanza {:.3f} m | RMS Δyaw {:.2f}°'.format(
+            status.append('{} pairs | RMS distance {:.3f} m | RMS Δyaw {:.2f}°'.format(
                 len(differences), rms, yaw_rms))
         elif all(streams.values()):
-            status.append('Nessuna coppia: verificare timestamp, frame e max_sync_gap')
+            status.append('No matched pairs: check timestamps, frames and max_sync_gap')
         if all(streams.values()):
             raw, filtered = (streams[name][-1] for name in ('raw', 'filtered'))
             if (raw.frame, raw.child) != (filtered.frame, filtered.child):
-                status.append('Frame diversi: traiettorie non confrontabili senza trasformazione')
+                status.append('Mismatched frames: a transform is required to compare trajectories')
         if rejected or resets:
-            status.append('Campioni invalidi: {} | reset temporali: {}'.format(rejected, resets))
+            status.append('Invalid samples: {} | time resets: {}'.format(rejected, resets))
         self.status.setText('    |    '.join(status))
         self.canvas.draw_idle()
 
@@ -248,16 +248,16 @@ class ExperimentWindow(QMainWindow):
         """Let the operator choose the parent directory for a unique export."""
         if self.displayed is None:
             return
-        parent = QFileDialog.getExistingDirectory(self, 'Cartella per esportare la prova')
+        parent = QFileDialog.getExistingDirectory(self, 'Choose trial export folder')
         if not parent:
             return
         directory = Path(parent) / datetime.now().strftime('ekf_%Y%m%d_%H%M%S_%f')
         try:
             export_snapshot(directory, self.figure, *self.displayed)
         except (OSError, ValueError) as error:
-            QMessageBox.critical(self, 'Esportazione fallita', str(error))
+            QMessageBox.critical(self, 'Export failed', str(error))
             return
-        QMessageBox.information(self, 'Prova esportata', str(directory))
+        QMessageBox.information(self, 'Trial exported', str(directory))
 
 
 def main(args=None):

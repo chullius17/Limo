@@ -321,7 +321,7 @@ class ControlWindow(QWidget):
             self.control_paused = False
         elif status.startswith('ERROR:'):
             self.control_requested = False
-        elif status.startswith(('WAITING:', 'CHECKING:', 'STARTING:', 'ACTIVE:', 'PAUSED:')):
+        elif status.startswith(('WAITING:', 'ACTIVE:', 'PAUSED:')):
             self.control_requested = True
         color = '#2e7d32'
         if status.startswith(('WAITING:', 'PAUSED:')):

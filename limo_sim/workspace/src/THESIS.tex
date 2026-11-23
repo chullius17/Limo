@@ -1,3 +1,6 @@
+All
+Start with a template
+
 \documentclass[a4paper,11pt,oneside]{book}
 
 % ==========================================
@@ -1838,9 +1841,453 @@ from succeeding.
 (source for smac:\url{https://arxiv.org/html/2401.13078v2})
 
 \section{Online Local Mapping}
+\label{sec:online_mapping}
 
+The controller requires information about both the robot's position
+relative to the reference trajectory and the physical and visual
+obstacles detected during navigation.
+
+However, simply combining the latest semantic point cloud with
+the current LiDAR observations is insufficient. As illustrated
+in Figure~\ref{fig:visual_blind_region}, the camera detects
+obstacles ahead of the robot but leaves a blind region immediately
+around its footprint. Visual obstacles therefore disappear from
+the incoming observations as the robot approaches them, even
+though they remain relevant to navigation. A short-term spatial
+memory is consequently introduced to retain selected observations
+after they leave the camera's field of view.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Visual observations produced by the perception
+    pipeline, showing the blind region immediately around
+    the robot's footprint.}
+    \label{fig:visual_blind_region}
+\end{figure}
+
+The area ahead of and around the robot is divided into three
+regions, all defined in the \texttt{base\_link} frame:
+
+\begin{enumerate}
+    \item \textbf{Local map rectangle (green):}
+    defines the full spatial extent of the local visual map.
+
+    \item \textbf{Visual trapezoid (yellow):}
+    approximates the ground region currently visible
+    to the camera.
+
+    \item \textbf{Inner trapezoid (red):}
+    is obtained by offsetting selected boundaries of the
+    visual trapezoid inwards and encloses the interior
+    of the observed region.
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Regions used for local visual mapping:
+    local map rectangle (green), visual trapezoid (yellow),
+    and inner trapezoid (red).}
+    \label{fig:local_mapping_regions}
+\end{figure}
+
+\subsection{The Algorithm: \texttt{local\_ctrl\_map.py}}
+\label{subsec:local_ctrl_map}
+
+The algorithm processes the following semantic classes:
+
+\begin{enumerate}
+    \item \texttt{LABEL\_YELLOW}
+    \item \texttt{LABEL\_BOARDWALK}
+    \item \texttt{LABEL\_INTERIOR\_BOARDWALK}
+\end{enumerate}
+
+These classes represent the most relevant visual features for
+local navigation. Boardwalk regions constitute the main visual
+obstacles, while yellow markings provide distinctive guidance
+for lane following.
+
+Let:
+\begin{itemize}
+    \item $A_c(t)$ denote the set of visual points belonging
+    to class $c$ observed at time $t$;
+
+    \item $M(t)$ denote the set of stored points at time $t$;
+
+    \item $G$, $Y$, and $R$ denote the green rectangle,
+    yellow trapezoid, and red trapezoid, respectively;
+
+    \item $L(t)$ denote the output local map.
+\end{itemize}
+
+For simplicity, the following description uses discrete update
+indices $t$. The implementation does not operate at fixed time
+intervals: the elapsed time $\Delta t$ between consecutive updates
+is computed from their timestamps.
+
+The procedure uses the \texttt{base\_link} and \texttt{odom}
+reference frames. Incoming visual observations are expressed
+in \texttt{base\_link}:
+\begin{equation}
+    A(t)
+    =
+    \left\{
+        \left(x_i(t),y_i(t)\right)^{\mathrm{base\_link}}
+        \;\middle|\;
+        i\in\mathcal{I}(t)
+    \right\},
+    \label{eq:local_mapping_observations}
+\end{equation}
+where $\mathcal{I}(t)$ indexes the points produced by the visual
+pipeline at update $t$.
+
+At each update, the following operations are performed.
+
+\subsubsection{Observation Selection}
+
+A subset $B(t)$ is selected from the incoming observations.
+Only points belonging to classes 1 and 3 and located between
+the visual and inner trapezoids are retained:
+\begin{equation}
+    B(t)
+    =
+    \left(
+        \bigcup_{c\in\{1,3\}}A_c(t)
+    \right)
+    \cap
+    \left(Y\setminus R\right).
+    \label{eq:local_mapping_selection}
+\end{equation}
+
+Here, indices 1 and 3 refer to \texttt{LABEL\_YELLOW} and
+\texttt{LABEL\_INTERIOR\_BOARDWALK}, respectively.
+
+\subsubsection{Memory Update}
+
+The selected points are transformed into \texttt{odom}
+to facilitate subsequent reprojection. They are then added
+to memory:
+\begin{equation}
+    M(t)
+    =
+    M(t^{-})
+    \cup
+    B^{\mathrm{odom}}(t),
+    \label{eq:local_mapping_memory_update}
+\end{equation}
+where $M(t^{-})$ denotes the memory immediately before the
+current update. The observations in $B^{\mathrm{odom}}(t)$
+are augmented with confidence values when inserted into memory.
+
+Each stored point is associated with a confidence value:
+\begin{equation}
+    M(t)
+    =
+    \left\{
+        \left(x_i,y_i,c_i(t)\right)^{\mathrm{odom}}
+        \;\middle|\;
+        i\in\mathcal{I}_M(t),
+        \quad c_i(t)\in[0,1]
+    \right\},
+    \label{eq:local_mapping_memory_representation}
+\end{equation}
+where $\mathcal{I}_M(t)$ indexes the stored points.
+The semantic class of each point is also retained.
+
+\subsubsection{Spatial Downsampling}
+
+The stored points are spatially downsampled using a grid
+covering their spatial extent. At most one point per semantic
+class is retained in each cell, prioritising the most recent
+observations.
+
+This reduces redundant information while preserving the
+semantic structure of the local environment.
+
+\subsubsection{Memory Size Limitation}
+
+An upper limit is imposed on the number of stored points
+to bound processing time and memory consumption. If this
+limit is exceeded, the points with the lowest confidence
+are removed.
+
+\subsubsection{Transformation into the Robot Frame}
+
+The stored points are transformed from \texttt{odom} back
+into the current \texttt{base\_link} frame. Their positions
+can then be evaluated relative to the robot and the local
+mapping regions.
+
+\subsubsection{Confidence Decay}
+
+The confidence of each stored point decreases exponentially
+according to
+\begin{equation}
+    c_i(t+1)
+    =
+    c_i(t)
+    \exp\left(
+        -\lambda\,m(t)\,g_i(t)\,\Delta t
+    \right),
+    \label{eq:local_mapping_confidence_decay}
+\end{equation}
+where:
+\begin{itemize}
+    \item $\lambda=0.10\,\mathrm{s}^{-1}$ is the base decay rate;
+
+    \item $m(t)\in[0,1]$ is a velocity-dependent factor;
+
+    \item $g_i(t)$ is a spatial factor;
+
+    \item $\Delta t$ is the elapsed time between consecutive
+    updates, computed from their timestamps.
+\end{itemize}
+
+The velocity-dependent factor reduces the decay when the robot
+moves slowly, allowing stored observations to cover the nearby
+blind region before their confidence becomes too low.
+
+The spatial factor is defined as
+\begin{equation}
+    g_i(t)
+    =
+    \begin{cases}
+        3, & \text{if the point lies inside }Y, \\
+        1, & \text{otherwise}.
+    \end{cases}
+    \label{eq:local_mapping_spatial_decay}
+\end{equation}
+
+Observations therefore decay faster within the currently visible
+region, where fresh measurements are available.
+
+\subsubsection{Spatial and Confidence Filtering}
+
+A further filtering step removes points outside the local map,
+inside the inner trapezoid, or below the confidence threshold.
+The retained set is
+\begin{equation}
+    \begin{aligned}
+        \widetilde{M}(t)
+        =
+        \bigl\{
+            (x,y,c)
+            \;\big|\;&
+            (x,y,c)\in M^{\mathrm{base\_link}}(t), \\
+            &(x,y)\in G\setminus R,
+            \quad c>0.3
+        \bigr\}.
+    \end{aligned}
+    \label{eq:local_mapping_filtered_memory}
+\end{equation}
+
+This preserves sufficiently reliable observations in regions
+where they can supplement the current camera data.
+
+\subsubsection{Local Map Publication}
+
+The output local map combines the current observations
+with the filtered memory points:
+\begin{equation}
+    L(t)
+    =
+    A(t)\cup\widetilde{M}(t).
+    \label{eq:local_mapping_output}
+\end{equation}
+
+In this expression, the union combines the spatial observations
+and their semantic labels; confidence values are used internally
+to filter the stored points.
+
+The resulting local map is then rasterised and published as
+a \texttt{nav\_msgs/msg/OccupancyGrid} message for use by
+the controller.
+
+Spatial and temporal filtering are applied at several stages
+to keep the computational requirements bounded. These operations
+must nevertheless retain enough points to represent nearby
+obstacles and road markings adequately, particularly within
+the camera's blind region.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Local costmap generated by
+    \texttt{local\_ctrl\_map.py}, combining current visual
+    observations with retained memory points.}
+    \label{fig:local_mapping_result}
+\end{figure}
+
+% TODO: Report the average number of retained points,
+% processing times, and publishing frequency.
 
 \section{Local Planning and Control}
+\label{sec:local_planning_control}
+
+The local controller follows the geometric path produced by the global
+planner while adapting to obstacles detected during operation. At each
+control cycle, it uses the current robot state, a sequence of reference
+poses and the latest local costmap to select a command that respects
+the vehicle's kinematic and dynamic limits.
+
+\subsection{Local Map for Control}
+\label{subsec:local_map_for_control}
+
+The controller uses the local costmap described in
+Section~\ref{sec:online_mapping}. The map combines current visual
+observations with retained observations, which preserve information
+about nearby road markings and obstacles when they move into the
+camera's blind region. During trajectory evaluation, the costmap
+provides the spatial information used to check candidate motions and
+account for nearby obstacles.
+
+\subsection{Controller Design}
+\label{subsec:controller_design}
+
+The control problem is formulated as a sampling-based nonlinear model
+predictive control (MPC) problem. At each cycle, the controller
+predicts how different sequences of speed and steering commands will
+move the vehicle over a finite horizon. It then applies the first
+command of the selected sequence and repeats the procedure using
+updated state and map information.
+
+Nav2 for ROS~2 Humble provides a Model Predictive Path Integral (MPPI)
+controller through the \texttt{nav2\_mppi\_controller} package.
+At each control cycle, MPPI samples perturbations of a nominal command
+sequence, rolls out the resulting trajectories using a vehicle model,
+and evaluates them with cost functions. It then updates the nominal
+sequence by combining the sampled perturbations with cost-dependent
+weights and applies the first command of the updated sequence.\footnote{%
+    \href{https://api.nav2.org/nav2-humble/html/md_nav2_mppi_controller_README.html}
+    {Nav2 Humble documentation for the MPPI controller}.}
+
+MPPI was tested on a ROS~2 Humble branch of the project and showed
+satisfactory behaviour in the initial tests. The onboard software
+uses ROS~2 Foxy, whose Nav2 distribution does not provide this
+controller. The implementation therefore builds on Nav2's DWB
+controller from the \texttt{nav2\_dwb\_controller} package. DWB
+provides integration with Nav2 and the local costmap, along with
+plugin interfaces for trajectory generation and scoring. Its standard
+trajectory generators support differential-drive and omnidirectional
+robots, and the controller returns a single velocity command at each
+cycle.\footnote{%
+    \href{https://api.nav2.org/nav2-humble/html/md_nav2_dwb_controller_README.html}
+    {Nav2 Humble documentation for the DWB controller}.}
+
+Custom C++ plugins adapt this framework to the LIMO's Ackermann
+steering. At each control cycle, the resulting controller
+\begin{enumerate}
+    \item generates candidate command sequences and simulates the
+          corresponding trajectories from the current robot state,
+          subject to the vehicle's kinematic and dynamic limits,
+    \item rejects trajectories that violate environmental constraints
+          represented in the local costmap,
+    \item scores the remaining trajectories using the configured cost
+          functions, and
+    \item applies the first command of the lowest-cost candidate.
+\end{enumerate}
+
+Selecting a single candidate keeps the search tractable on the onboard
+computer and makes it possible to inspect the sequence selected at
+each cycle during debugging.
+
+\subsection{Trajectory Generation}
+\label{subsec:control_trajectory_generation}
+
+The global path specifies reference positions and headings without
+assigning a speed to each pose. Even along a straight segment, the
+appropriate speed depends on the robot's current state and the
+obstacles ahead. The controller may need to decelerate, come to a stop,
+or temporarily deviate from the path to pass an unexpected obstacle.
+In the bicycle model, the yaw rate depends on both the forward speed
+and the steering angle. The timing and order of the commands over the
+prediction horizon therefore affect the resulting vehicle pose. The
+candidate set must cover a range of manoeuvres while keeping the
+number of rollouts manageable within each control cycle.
+
+\subsubsection{Basic Candidates}
+
+The generator considers three longitudinal actions: decelerate,
+maintain speed, and accelerate. Each is paired with seven steering
+options: reduce the current front-wheel steering angle by one of
+three sampled increments, hold it, or increase it by one of the same
+three increments. Let \(\delta_0\) be the current steering angle.
+The sampled increments are computed as
+\begin{equation}
+    \Delta_i = \delta_{\max}\frac{i}{3}\operatorname{rand}(),
+    \qquad i\in\{1,2,3\},
+    \label{eq:control_steering_increments}
+\end{equation}
+where \(\delta_{\max}\) sets the scale of the sampled steering
+increments and \(\operatorname{rand}()\) supplies a random scaling
+factor.
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{@{}lccc@{}}
+        \toprule
+        Longitudinal action & Reduce steering & Hold steering & Increase steering \\
+        \midrule
+        Decelerate     & \(\delta_0-\Delta_i\) & \(\delta_0\) & \(\delta_0+\Delta_i\) \\
+        Maintain speed & \(\delta_0-\Delta_i\) & \(\delta_0\) & \(\delta_0+\Delta_i\) \\
+        Accelerate     & \(\delta_0-\Delta_i\) & \(\delta_0\) & \(\delta_0+\Delta_i\) \\
+        \bottomrule
+    \end{tabular}
+    \caption{Basic combinations of longitudinal and steering actions.
+    In the first and last steering columns, \(i\in\{1,2,3\}\). Each
+    longitudinal action is therefore paired with seven steering options.}
+    \label{tab:control_basic_actions}
+\end{table}
+
+The three longitudinal actions and seven steering options yield
+\(3\times 7=21\) basic candidates.
+
+\subsubsection{Steering Sequences for Obstacle Avoidance}
+
+The generator adds 27 candidates that pair the three longitudinal
+actions with nine steer--countersteer--steer sequences. Changing the
+steering direction within the prediction horizon lets the vehicle
+move laterally and then recover a heading compatible with the path.
+These candidates are particularly useful when the robot must change
+lanes to pass an obstacle, as illustrated in
+Figure~\ref{fig:control_countersteering}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.65\textwidth]{blank.png}
+    \caption{Examples of steer--countersteer--steer trajectories that
+    produce lateral displacement while recovering the vehicle heading.}
+    \label{fig:control_countersteering}
+\end{figure}
+
+\subsubsection{Additional Candidates and Trajectory Rollout}
+
+The generator also considers the command sequence selected at the
+previous control cycle, shifted forward by one time step, and a
+zero-speed sequence. If the robot is moving slowly enough, it adds
+three low-speed start sequences to help the vehicle align with the
+global path. These sequences are especially useful when the start
+pose used by the global planner was adjusted during the
+start--goal adjustment procedure described in
+Section~\ref{sec:path_planning}.
+
+With the two additional sequences, the candidate set contains
+\(21+27+2=50\) sequences. Including the three low-speed starts brings
+the total to 53. Each sequence is rolled out from the current robot
+state using the bicycle model while enforcing the vehicle's kinematic
+and dynamic limits. Figure~\ref{fig:control_trajectory_candidates}
+illustrates the resulting candidate trajectories.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{blank.png}
+    \caption{Example candidate trajectories generated in one control
+    cycle. The legend identifies the basic candidates, the
+    steer--countersteer--steer candidates and the additional candidates.}
+    \label{fig:control_trajectory_candidates}
+\end{figure}
 
 \section{Simulation Results}
 
@@ -1877,3 +2324,5 @@ from succeeding.
 \section{Limitations and Future Developments}
 
 \end{document}
+
+

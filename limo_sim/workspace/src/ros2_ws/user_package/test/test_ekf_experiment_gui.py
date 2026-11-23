@@ -95,5 +95,5 @@ def test_frame_mismatch_and_invalid_quaternion_are_visible(viewer):
     node.receive('filtered', odom(1, frame='map'))
     window.refresh()
     assert window.displayed[1] == []
-    assert 'Frame diversi' in window.status.text()
-    assert 'Campioni invalidi: 1' in window.status.text()
+    assert 'Mismatched frames' in window.status.text()
+    assert 'Invalid samples: 1' in window.status.text()
