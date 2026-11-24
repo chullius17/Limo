@@ -66,7 +66,7 @@ planner_server:
       non_straight_penalty: 1.15
       # Penalize traversable semantic costs below 60. Yellow lines (60),
       # boardwalk (90) and occupied cells (100) are lethal in StaticLayer.
-      cost_penalty: 4.0
+      cost_penalty: 8.0  # Prefer lower-cost clearance over shorter corner cuts.
 
       # Preserve the curvature of the kinematically feasible Hybrid-A* path.
       # Geometric smoothing is disabled so it cannot tighten bends afterward.
@@ -104,9 +104,9 @@ global_costmap:
       unknown_cost_value: 255
       use_maximum: false
 
-      # Reduced 0.240 x 0.160 m footprint for planning and goal validation.
+      # Transverse 0.10 m segment (zero length) for planning and start/goal validation.
       # Execution retains the controller's 0.322 x 0.220 m collision footprint.
-      footprint: "[[-0.120, -0.080], [-0.120, 0.080], [0.120, 0.080], [0.120, -0.080]]"
+      footprint: "[[0.0, -0.05], [0.0, 0.05], [0.0, 0.05], [0.0, -0.05]]"
       footprint_padding: 0.0
 
       plugins: ["static_layer", "border_follow_layer"]
@@ -122,11 +122,11 @@ global_costmap:
         source_topic: "/limo/map_package/online/map/combined_grid"
         obstacle_threshold: 10
         robot_width: 0.220
-        safety_margin: 0.04  # First lane: 0.5 * 0.22 + 0.04 = 0.15 m.
+        safety_margin: 0.09  # Preferred center distance: 0.5 * 0.22 + 0.09 = 0.20 m.
         second_lane_enabled: false  # Keep only the first preferred distance band.
         second_lane_distance: 0.29  # Explicit center distance; 0.14 m between lanes.
         distance_tolerance: 0.02
-        near_max_cost: 120
+        near_max_cost: 240  # Strong repulsion inside the preferred distance band.
         # Used only when the second lane is enabled.
         inter_lane_peak_cost: 100
         far_cost_slope: 50.0
@@ -150,6 +150,6 @@ rviz_goal_bridge:
     position_search_step: 0.10
     angle_search_step_deg: 22.5
     max_planning_attempts: 48
-    footprint_length: 0.240
-    footprint_width: 0.160
+    footprint_length: 0.0
+    footprint_width: 0.10
     collision_cost_threshold: 99

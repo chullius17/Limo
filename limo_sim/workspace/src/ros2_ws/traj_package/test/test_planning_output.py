@@ -348,3 +348,87 @@ def test_virtual_start_success_uses_quantized_pose(bridge):
     assert actual_start.header.stamp == planned.header.stamp
     assert 'Quantized virtual start:' in bridge.planning_log
     assert 'SUCCESS:' in bridge.planning_log
+
+
+@pytest.mark.parametrize('cost,expected', [(0, True), (98, True), (99, False), (100, False), (-1, False)])
+def test_point_footprint_checks_containing_cell_away_from_center(cost, expected):
+    from nav_msgs.msg import OccupancyGrid
+    grid = OccupancyGrid()
+    grid.header.frame_id = 'map'
+    grid.info.resolution = 1.0
+    grid.info.width = grid.info.height = 3
+    grid.info.origin.orientation.w = 1.0
+    grid.data = [100] * 9
+    grid.data[4] = cost
+    node = SimpleNamespace(costmap=grid, footprint_half_length=0.0,
+                           footprint_half_width=0.0, collision_cost_threshold=99,
+                           _quaternion_to_yaw=RvizGoalBridge._quaternion_to_yaw,
+                           _world_to_grid_continuous=RvizGoalBridge._world_to_grid_continuous)
+    pose = PoseStamped()
+    pose.header.frame_id = 'map'
+    pose.pose.orientation.w = 1.0
+    pose.pose.position.x, pose.pose.position.y = 1.01, 1.99
+    assert RvizGoalBridge._is_footprint_free(node, pose) is expected
+
+
+def test_point_footprint_rotated_grid_and_bounds():
+    import math
+    from nav_msgs.msg import OccupancyGrid
+    grid = OccupancyGrid()
+    grid.header.frame_id = 'map'
+    grid.info.resolution = 1.0
+    grid.info.width = grid.info.height = 3
+    grid.info.origin.position.x, grid.info.origin.position.y = 10.0, 20.0
+    grid.info.origin.orientation.z = math.sin(math.pi / 4)
+    grid.info.origin.orientation.w = math.cos(math.pi / 4)
+    grid.data = [0] * 9
+    node = SimpleNamespace(costmap=grid, footprint_half_length=0.0,
+                           footprint_half_width=0.0, collision_cost_threshold=99,
+                           _quaternion_to_yaw=RvizGoalBridge._quaternion_to_yaw,
+                           _world_to_grid_continuous=RvizGoalBridge._world_to_grid_continuous)
+    pose = PoseStamped()
+    pose.header.frame_id = 'map'
+    pose.pose.orientation.w = 1.0
+    pose.pose.position.x, pose.pose.position.y = 8.01, 21.01
+    assert RvizGoalBridge._is_footprint_free(node, pose)
+    pose.pose.position.x, pose.pose.position.y = 10.1, 21.01
+    assert not RvizGoalBridge._is_footprint_free(node, pose)
+
+
+@pytest.mark.parametrize('heading', [0.0, 1.5707963267948966, 0.7853981633974483])
+@pytest.mark.parametrize('map_heading', [0.0, 1.5707963267948966])
+@pytest.mark.parametrize('blocked_cost', [None, 100, -1])
+def test_zero_length_ten_cm_width_checks_rotated_segment(heading, map_heading, blocked_cost):
+    import math
+    from nav_msgs.msg import OccupancyGrid
+    grid = OccupancyGrid()
+    grid.header.frame_id = 'map'
+    grid.info.resolution = 0.01
+    grid.info.width = grid.info.height = 40
+    grid.info.origin.position.x = 10.0
+    grid.info.origin.position.y = 20.0
+    grid.info.origin.orientation.z = math.sin(map_heading / 2)
+    grid.info.origin.orientation.w = math.cos(map_heading / 2)
+    grid.data = [0] * 1600
+    if blocked_cost is not None:
+        x = 0.205 - math.sin(heading) * 0.045
+        y = 0.205 + math.cos(heading) * 0.045
+        grid.data[math.floor(y / 0.01) * 40 + math.floor(x / 0.01)] = blocked_cost
+    else:
+        # An obstacle ahead of the segment must not add longitudinal extent.
+        x = 0.205 + math.cos(heading) * 0.04
+        y = 0.205 + math.sin(heading) * 0.04
+        grid.data[math.floor(y / 0.01) * 40 + math.floor(x / 0.01)] = 100
+    node = SimpleNamespace(costmap=grid, footprint_half_length=0.0,
+                           footprint_half_width=0.05, collision_cost_threshold=99,
+                           _quaternion_to_yaw=RvizGoalBridge._quaternion_to_yaw,
+                           _world_to_grid_continuous=RvizGoalBridge._world_to_grid_continuous)
+    pose = PoseStamped()
+    pose.header.frame_id = 'map'
+    pose.pose.position.x = 10 + 0.205 * (math.cos(map_heading) - math.sin(map_heading))
+    pose.pose.position.y = 20 + 0.205 * (math.sin(map_heading) + math.cos(map_heading))
+    pose.pose.orientation.z = math.sin((heading + map_heading) / 2)
+    pose.pose.orientation.w = math.cos((heading + map_heading) / 2)
+    assert RvizGoalBridge._is_footprint_free(node, pose) is (blocked_cost is None)
+    pose.pose.position.x = 100.0
+    assert not RvizGoalBridge._is_footprint_free(node, pose)

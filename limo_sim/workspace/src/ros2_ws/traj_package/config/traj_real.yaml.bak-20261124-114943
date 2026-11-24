@@ -1,0 +1,155 @@
+# real trajectory profile; selected by robot_model.
+# SMAC Hybrid-A* profile for ROS 2 Foxy (smac_planner 0.4.7).
+#
+# Profile assumptions:
+# - LIMO operating in Ackermann mode;
+# - costmap resolution of 0.05 m/cell;
+# - controller speed range from -0.10 m/s to 0.50 m/s;
+# - execution alongside the CV pipeline on a Jetson Nano.
+#
+# The profile clock can be overridden by the launch without changing tuning.
+
+lifecycle_manager_global_planner:
+  ros__parameters:
+    use_sim_time: false
+    autostart: true  # Automatically configure and activate the planner.
+    node_names: ["planner_server"]
+
+planner_server:
+  ros__parameters:
+    use_sim_time: false
+
+    # Nav2 uses this frequency to report slow planning; it does not make the
+    # Behavior Tree replan at 1 Hz by itself. Since the LIMO moves slowly, there
+    # is no benefit in expecting 20 global plans per second.
+    expected_planner_frequency: 1.0
+
+    planner_plugins: ["GridBased"]
+
+    GridBased:
+      # Foxy's SE2 SMAC plugin implements Hybrid A* with Dubins primitives.
+      plugin: "limo_smac_planner/ExplicitStartPlanner"
+
+      # Keep the map at 5 cm: at 10 cm, the small LIMO footprint and narrow
+      # passages would be represented by too few cells.
+      downsample_costmap: false
+      downsampling_factor: 1
+
+      # Allow up to 15 cm positional goal tolerance for the planner.
+      tolerance: 0.15
+
+      # The combined map explicitly distinguishes known and unknown cells. For
+      # safety, the planner must not traverse areas that were never mapped.
+      allow_unknown: false
+
+      # Bound the Hybrid-A* search to 750k iterations. This Foxy plugin does
+      # not support the newer search wall-time or on-approach iteration limits.
+      max_iterations: 750000
+
+      # Dubins paths preserve the Ackermann turning-radius constraint and only
+      # permit forward motion, so the planned path contains no reversals.
+      motion_model_for_search: "DUBIN"
+
+      # 64 headings correspond to 5.625 degrees per bin: sufficient accuracy for
+      # a 5 cm grid, with fewer states than the default 72-bin configuration.
+      angle_quantization_bins: 64
+
+      # Control how often search attempts collision-checked Dubins connections
+      # to the goal. Foxy does not expose an analytic-expansion length limit.
+      analytic_expansion_ratio: 3.5
+
+      # Retain 3.8 cm of margin above the physical centre-line limit of 0.462 m.
+      minimum_turning_radius: 0.50
+      explicit_start_service: /compute_path_with_start
+
+      change_penalty: 0.0
+      non_straight_penalty: 1.15
+      # Penalize traversable semantic costs below 60. Yellow lines (60),
+      # boardwalk (90) and occupied cells (100) are lethal in StaticLayer.
+      cost_penalty: 4.0
+
+      # Preserve the curvature of the kinematically feasible Hybrid-A* path.
+      # Geometric smoothing is disabled so it cannot tighten bends afterward.
+      smooth_path: false
+
+# SMAC plans against this Costmap2D instance. The online node already merges
+# the static map, CV observations, and lidar endpoints, so another obstacle
+# plugin here would duplicate sensor processing.
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: false
+      update_frequency: 2.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_link
+      transform_tolerance: 0.3
+
+      # Keep the source-map geometry and resolution. The map topic itself is
+      # overridden by trajectory.launch.py.
+      rolling_window: false
+      resolution: 0.05
+      track_unknown_space: true
+      # RViz Foxy repeats the first update row across every row when applying
+      # OccupancyGridUpdate, producing stripes after the first good frame.
+      # Publish complete grids to bypass that bug (about 38 kB at 1 Hz here).
+      always_send_full_costmap: true
+
+      # These are costmap-wide StaticLayer inputs in Foxy. Keeping
+      # trinary mode disabled preserves intermediate OccupancyGrid costs.
+      trinary_costmap: false
+      # Yellow lines (60) and higher source-map costs are hard obstacles for
+      # SMAC. White markings (30) remain traversable with a soft cost.
+      lethal_cost_threshold: 60
+      unknown_cost_value: 255
+      use_maximum: false
+
+      # Transverse 0.10 m segment (zero length) for planning and start/goal validation.
+      # Execution retains the controller's 0.322 x 0.220 m collision footprint.
+      footprint: "[[0.0, -0.05], [0.0, 0.05], [0.0, 0.05], [0.0, -0.05]]"
+      footprint_padding: 0.0
+
+      plugins: ["static_layer", "border_follow_layer"]
+
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_topic: "/limo/map_package/online/map/combined_grid"
+        map_subscribe_transient_local: true
+        subscribe_to_updates: false
+
+      border_follow_layer:
+        plugin: "limo_inflation::BorderFollowLayer"
+        source_topic: "/limo/map_package/online/map/combined_grid"
+        obstacle_threshold: 10
+        robot_width: 0.220
+        safety_margin: 0.04  # First lane: 0.5 * 0.22 + 0.04 = 0.15 m.
+        second_lane_enabled: false  # Keep only the first preferred distance band.
+        second_lane_distance: 0.29  # Explicit center distance; 0.14 m between lanes.
+        distance_tolerance: 0.02
+        near_max_cost: 120
+        # Used only when the second lane is enabled.
+        inter_lane_peak_cost: 100
+        far_cost_slope: 50.0
+        far_max_cost: 40
+
+# Goal selection and validation use the same footprint as the planner.
+rviz_goal_bridge:
+  ros__parameters:
+    use_sim_time: false
+    planner_id: GridBased
+    use_explicit_start_service: true
+    explicit_start_service: /compute_path_with_start
+    costmap_topic: /global_costmap/costmap
+    adjusted_goal_topic: /adjusted_goal_pose
+    adjusted_start_topic: /adjusted_start_pose
+    robot_base_frame: base_link
+    start_transform_timeout: 0.20
+    enable_start_adjustment: false
+    enable_goal_adjustment: true
+    position_search_radius: 0.75
+    position_search_step: 0.10
+    angle_search_step_deg: 22.5
+    max_planning_attempts: 48
+    footprint_length: 0.0
+    footprint_width: 0.10
+    collision_cost_threshold: 99

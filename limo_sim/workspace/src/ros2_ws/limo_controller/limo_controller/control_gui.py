@@ -23,9 +23,11 @@ from action_msgs.msg import GoalStatus, GoalStatusArray
 from geometry_msgs.msg import Twist
 import rclpy
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QApplication,
     QLabel,
+    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -43,6 +45,7 @@ class GuiSignals(QWidget):
     status_received = pyqtSignal(str)
     active_received = pyqtSignal(bool)
     paused_received = pyqtSignal(bool)
+    planning_log_received = pyqtSignal(str)
 
 
 class ControlGuiNode(Node):
@@ -51,6 +54,8 @@ class ControlGuiNode(Node):
     def __init__(self, signals):
         super().__init__('control_gui')
         self.signals = signals
+        self.planning_log = None
+        self.declare_parameter('planning_log_topic', '/limo/planning/log')
         self.start_abort_client = self.create_client(
             SetBool,
             '/limo/control/set_active',
@@ -111,7 +116,17 @@ class ControlGuiNode(Node):
                 f'CMD_VEL SOURCE: {msg.data}'),
             state_qos,
         )
+        self.create_subscription(
+            String,
+            self.get_parameter('planning_log_topic').value,
+            self._receive_planning_log,
+            state_qos,
+        )
         self.create_timer(1.0, self._report_service_availability)
+
+    def _receive_planning_log(self, msg):
+        self.planning_log = msg.data
+        self.signals.planning_log_received.emit(msg.data)
 
     def _diagnostic(self, message):
         self.get_logger().info(message)
@@ -248,7 +263,7 @@ class ControlWindow(QWidget):
         self.setWindowTitle('LIMO Control')
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         self.setMinimumWidth(360)
-        self.resize(420, 180)
+        self.resize(620, 480)
 
         layout = QVBoxLayout(self)
         self.state_label = QLabel('Control state: waiting for status')
@@ -265,11 +280,33 @@ class ControlWindow(QWidget):
         self.start_button.clicked.connect(self._toggle_active)
         layout.addWidget(self.start_button)
 
+        layout.addWidget(QLabel('PLANNING LOG — attempts and results'))
+        self.terminal = QPlainTextEdit()
+        self.terminal.setReadOnly(True)
+        self.terminal.setFont(QFont('Monospace', 10))
+        self.terminal.setStyleSheet(
+            'QPlainTextEdit { background: #101419; color: #d6e1eb; border: 0; }')
+        layout.addWidget(self.terminal, 1)
+        signals.planning_log_received.connect(self._set_planning_log)
+        # Restore a retained log received before the window was constructed.
+        if node.planning_log is not None:
+            self._set_planning_log(node.planning_log)
+
         signals.request_finished.connect(self._request_finished)
         signals.status_received.connect(self._set_status)
         signals.active_received.connect(self._set_active)
         signals.paused_received.connect(self._set_paused)
         self._refresh_buttons()
+
+    @pyqtSlot(str)
+    def _set_planning_log(self, text):
+        if text == self.terminal.toPlainText():
+            return
+        scrollbar = self.terminal.verticalScrollBar()
+        position = scrollbar.value()
+        follow = position >= scrollbar.maximum() - 1
+        self.terminal.setPlainText(text)
+        scrollbar.setValue(scrollbar.maximum() if follow else position)
 
     @staticmethod
     def _button_style(color):

@@ -91,13 +91,12 @@ def test_planning_validation_and_control_footprint_relationship(profile):
     footprint = ast.literal_eval(global_params['footprint'])
     if profile == 'real':
         local_footprint = ast.literal_eval(local_params['footprint'])
-        assert len(local_footprint) == len(footprint)
-        assert local_params['footprint_padding'] == 0.0
-        for local_point, global_point in zip(local_footprint, footprint):
-            for local_coord, global_coord in zip(local_point, global_point):
-                assert local_coord * global_coord > 0
-                assert abs(local_coord) + local_params['footprint_padding'] == pytest.approx(
-                    abs(global_coord) + global_params['footprint_padding'] - 0.005)
+        assert all(point[0] == 0.0 for point in footprint)
+        assert min(y for _, y in footprint) == -0.05
+        assert max(y for _, y in footprint) == 0.05
+        assert global_params['footprint_padding'] == 0.0
+        assert max(x for x, _ in local_footprint) > 0.0
+        assert max(y for _, y in local_footprint) > 0.0
     else:
         assert global_params['footprint'] == local_params['footprint']
     bridge = config['rviz_goal_bridge']['ros__parameters']

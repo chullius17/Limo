@@ -22,7 +22,7 @@ import pytest
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 pytest.importorskip('rclpy')
 pytest.importorskip('PyQt5')
-from PyQt5.QtWidgets import QApplication, QLabel, QTextEdit  # noqa: E402
+from PyQt5.QtWidgets import QApplication, QLabel, QPlainTextEdit  # noqa: E402
 import rclpy  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
@@ -59,13 +59,16 @@ def spin_until(app, executor, predicate):
     assert predicate()
 
 
-def test_gui_has_only_status_and_controls_without_terminal_or_mpc_panel(gui):
+def test_gui_has_planning_terminal_and_controls(gui):
     _, node, window, _ = gui
     labels = [label.text() for label in window.findChildren(QLabel)]
-    assert 'CONTROL TERMINAL' not in labels
+    assert 'PLANNING LOG — attempts and results' in labels
     assert all('MPC' not in label for label in labels)
     assert all('/mpc_' not in subscription.topic_name for subscription in node.subscriptions)
-    assert not window.findChildren(QTextEdit)
+    assert window.findChildren(QPlainTextEdit) == [window.terminal]
+    assert window.terminal.isReadOnly()
+    assert any(subscription.topic_name == '/limo/planning/log'
+               for subscription in node.subscriptions)
     assert not window.start_button.isEnabled()
 
 
@@ -140,6 +143,47 @@ def test_gui_receives_ros_state_and_sends_start_pause_resume_abort(gui):
         spin_until(app, executor, lambda: window.start_button.text() == 'START CONTROL')
         assert requests == [('active', True), ('enabled', False),
                             ('enabled', True), ('active', False)]
+    finally:
+        executor.remove_node(node)
+        executor.remove_node(transport)
+        transport.destroy_node()
+        executor.shutdown()
+
+
+def test_planning_terminal_receives_retained_log_and_replaces_transcript(gui):
+    app, node, window, _ = gui
+    transport = Node('gui_planning_log_test')
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    executor.add_node(transport)
+    qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                     durability=DurabilityPolicy.TRANSIENT_LOCAL)
+    publisher = transport.create_publisher(String, '/limo/planning/log', qos)
+    first = 'Attempt 1: planning\nResult: path found'
+    # Publish before discovery to exercise retained delivery.
+    publisher.publish(String(data=first))
+    try:
+        spin_until(app, executor, lambda: window.terminal.toPlainText() == first)
+        second = 'Attempt 2: planning\nResult: no path'
+        publisher.publish(String(data=second))
+        spin_until(app, executor, lambda: window.terminal.toPlainText() == second)
+        assert first not in window.terminal.toPlainText()
+        # Construction must also recover a log received before signal wiring.
+        late_window = ControlWindow(node, node.signals)
+        try:
+            assert late_window.terminal.toPlainText() == second
+        finally:
+            late_window.close()
+        long_log = '\n'.join('Attempt {}'.format(i) for i in range(200))
+        publisher.publish(String(data=long_log))
+        spin_until(app, executor, lambda: window.terminal.toPlainText() == long_log)
+        scrollbar = window.terminal.verticalScrollBar()
+        assert scrollbar.value() == scrollbar.maximum()
+        scrollbar.setValue(0)
+        publisher.publish(String(data=long_log + '\nResult: path found'))
+        spin_until(app, executor, lambda: window.terminal.toPlainText().endswith(
+            'Result: path found'))
+        assert scrollbar.value() == 0
     finally:
         executor.remove_node(node)
         executor.remove_node(transport)

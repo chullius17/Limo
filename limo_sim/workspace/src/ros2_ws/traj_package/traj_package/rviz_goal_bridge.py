@@ -264,10 +264,12 @@ class RvizGoalBridge(Node):
             raise ValueError('robot_base_frame must not be empty')
         if self.start_transform_timeout < 0.0:
             raise ValueError('start_transform_timeout must be non-negative')
-        if self.footprint_half_length <= 0.0:
-            raise ValueError('footprint_length must be positive')
-        if self.footprint_half_width <= 0.0:
-            raise ValueError('footprint_width must be positive')
+        if (not math.isfinite(self.footprint_half_length)
+                or self.footprint_half_length < 0.0):
+            raise ValueError('footprint_length must be finite and non-negative')
+        if (not math.isfinite(self.footprint_half_width)
+                or self.footprint_half_width < 0.0):
+            raise ValueError('footprint_width must be finite and non-negative')
         if not 0 <= self.collision_cost_threshold <= 100:
             raise ValueError('collision_cost_threshold must be in [0, 100]')
 
@@ -559,9 +561,52 @@ class RvizGoalBridge(Node):
         origin_sin = math.sin(origin_yaw)
         candidate_x = pose.pose.position.x
         candidate_y = pose.pose.position.y
+        if self.footprint_half_length == 0.0 and self.footprint_half_width == 0.0:
+            # A point occupies its containing cell, regardless of cell-center alignment.
+            gx, gy = self._world_to_grid_continuous(
+                candidate_x, candidate_y, origin.position.x, origin.position.y,
+                origin_cos, origin_sin, resolution)
+            gx, gy = math.floor(gx), math.floor(gy)
+            if not (0 <= gx < grid.info.width and 0 <= gy < grid.info.height):
+                return False
+            cost = grid.data[gy * grid.info.width + gx]
+            return 0 <= cost < self.collision_cost_threshold
         candidate_yaw = self._quaternion_to_yaw(pose.pose.orientation)
         candidate_cos = math.cos(candidate_yaw)
         candidate_sin = math.sin(candidate_yaw)
+        if self.footprint_half_length == 0.0 or self.footprint_half_width == 0.0:
+            # Test every grid cell intersected by the zero-area segment.
+            dx = (candidate_cos * self.footprint_half_length
+                  - candidate_sin * self.footprint_half_width)
+            dy = (candidate_sin * self.footprint_half_length
+                  + candidate_cos * self.footprint_half_width)
+            ends = [self._world_to_grid_continuous(
+                candidate_x + sign * dx, candidate_y + sign * dy,
+                origin.position.x, origin.position.y,
+                origin_cos, origin_sin, resolution) for sign in (-1, 1)]
+            if any(not (0 <= x < grid.info.width and 0 <= y < grid.info.height)
+                   for x, y in ends):
+                return False
+            x0, y0 = ends[0]
+            vx, vy = ends[1][0] - x0, ends[1][1] - y0
+            for gy in range(math.floor(min(y for _, y in ends)),
+                            math.floor(max(y for _, y in ends)) + 1):
+                for gx in range(math.floor(min(x for x, _ in ends)),
+                                math.floor(max(x for x, _ in ends)) + 1):
+                    lo, hi = 0.0, 1.0
+                    for start, delta, cell in ((x0, vx, gx), (y0, vy, gy)):
+                        if abs(delta) < 1e-12:
+                            if not cell <= start <= cell + 1:
+                                lo, hi = 1.0, 0.0
+                                break
+                        else:
+                            a, b = (cell - start) / delta, (cell + 1 - start) / delta
+                            lo, hi = max(lo, min(a, b)), min(hi, max(a, b))
+                    if lo <= hi:
+                        cost = grid.data[gy * grid.info.width + gx]
+                        if cost < 0 or cost >= self.collision_cost_threshold:
+                            return False
+            return True
         radius = math.hypot(
             self.footprint_half_length,
             self.footprint_half_width,
