@@ -366,8 +366,7 @@ ros2 launch user_package desktop_app.launch.py
 ```
 
 This opens one RViz for mapping, planned paths and the local costmap, together
-with the control GUI. It also starts the MPC image renderer on the PC; open
-`rqt_image_view` manually to display its output. The additional CV RViz is disabled by default, independently
+with the control GUI and a native Qt MPC inspector on the PC. The additional CV RViz is disabled by default, independently
 of CV processing on the robot. Enable it explicitly with `start_cv_rviz:=true`.
 Each RViz client runs in its own launch scope. The desktop launch starts no mapping, CV processing,
 planner, controller, velocity mux, path executor or second goal bridge.
@@ -382,15 +381,19 @@ they follow the robot and reflect configuration changes without copying sizes
 into RViz. They appear once their costmaps are active and localization is ready.
 The control GUI contains the control buttons and status terminal, with no MPC
 telemetry/image panel. Read MPC telemetry separately on `/limo/control/mpc_debug`.
-The controller YAML's `FollowPath.MPC.Debug.preview_enabled` starts the MPC image
-renderer by default in simulation and leaves it off on the real robot.
+The controller YAML's `FollowPath.MPC.Debug.preview_enabled` opens the native
+MPC inspector by default in simulation and leaves it off on the real backend.
 Override it for one run with `start_mpc_preview:=true` or `start_mpc_preview:=false`.
-View `/limo/control/mpc_preview/image/compressed` separately with `rqt_image_view`.
-On the physical robot, `desktop_app.launch.py` starts the renderer on the PC
-using wall time. The real backend leaves its renderer disabled to avoid a second
-publisher. The desktop does not open an image-viewing window. Override its
-rendering YAML with `mpc_preview_params_file` and supply the same
+On the physical robot, `desktop_app.launch.py` opens the inspector on the PC
+using wall time. The GUI reads telemetry and costmaps directly, with zoom, pan,
+layer filters, freeze and candidate inspection; no `rqt_image_view` is needed.
+Override display settings with `mpc_preview_params_file` and supply the same
 `controller_params_file` used on the robot to share tube and goal-circle sizes.
+Open only the MPC GUI with:
+
+```bash
+ros2 launch limo_controller mpc_gui.launch.py robot_model:=real
+```
 
 The real RViz profiles show **Waterfall Lane Overlay** using a desktop
 `image_transport` decoder. The robot sends JPEG on

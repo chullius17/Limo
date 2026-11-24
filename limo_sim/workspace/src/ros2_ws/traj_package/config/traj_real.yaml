@@ -104,9 +104,9 @@ global_costmap:
       unknown_cost_value: 255
       use_maximum: false
 
-      # Use the physical 0.322 x 0.220 m LIMO footprint for planning and goal
-      # validation; the real controller footprint is inset 5 mm per side.
-      footprint: "[[-0.161, -0.100], [-0.161, 0.100], [0.161, 0.100], [0.161, -0.100]]"
+      # Reduced 0.240 x 0.160 m footprint for planning and goal validation.
+      # Execution retains the controller's 0.322 x 0.220 m collision footprint.
+      footprint: "[[-0.120, -0.080], [-0.120, 0.080], [0.120, 0.080], [0.120, -0.080]]"
       footprint_padding: 0.0
 
       plugins: ["static_layer", "border_follow_layer"]
@@ -144,12 +144,12 @@ rviz_goal_bridge:
     adjusted_start_topic: /adjusted_start_pose
     robot_base_frame: base_link
     start_transform_timeout: 0.20
-    enable_start_adjustment: true
+    enable_start_adjustment: false
     enable_goal_adjustment: true
     position_search_radius: 0.75
     position_search_step: 0.10
     angle_search_step_deg: 22.5
     max_planning_attempts: 48
-    footprint_length: 0.322
-    footprint_width: 0.220
+    footprint_length: 0.240
+    footprint_width: 0.160
     collision_cost_threshold: 99

@@ -425,23 +425,40 @@ timestamps and result epochs let the report check SMAC's 250 ms spacing at
 across epochs are listed separately. The runtime cap also spans reference and
 detour resets. Older CSVs without async columns remain
 supported.
-`FollowPath.MPC.Debug.preview_enabled` starts the image renderer: it is `true`
-in `control_sim.yaml` and `false` in `control_real.yaml`. For the real robot,
-`desktop_app.launch.py` starts the renderer on the PC by default; open
-`rqt_image_view` manually. Both the standalone controller and application
-launches use the selected controller YAML setting.
-Use `start_mpc_preview:=true` or `start_mpc_preview:=false` to override it for
-one run. The viewer can run with MPC telemetry disabled: it still shows the
-planned global path and published local costmap before START and during PAUSE.
-Clock overrides do not change these flags; a custom controller YAML uses its
-own flags (missing means disabled).
+`FollowPath.MPC.Debug.preview_enabled` opens the native Qt MPC inspector:
+it is `true` in `control_sim.yaml` and `false` in `control_real.yaml`.
+For the real robot, `desktop_app.launch.py` opens the inspector on the PC.
+Use `start_mpc_preview:=true` or `start_mpc_preview:=false` to override this.
 
-The node publishes `sensor_msgs/CompressedImage` on
-`/limo/control/mpc_preview/image/compressed` (PNG by default).
-The renderer opens no window of its own; `rqt_image_view` can display the
-compressed image separately from the control GUI.
-Image output uses reliable delivery to support Foxy's `rqt_image_view`; the
-telemetry subscription remains best effort.
+To open only the MPC inspector on the PC, without starting controller nodes:
+
+```bash
+ros2 launch limo_controller mpc_gui.launch.py robot_model:=real
+# Simulation:
+ros2 launch limo_controller mpc_gui.launch.py robot_model:=sim
+```
+
+The GUI subscribes directly to MPC telemetry, the raw local costmap, the global
+path, footprint, TF and source points. It renders native Qt vector overlays;
+only the original costmap cells use a raster. No image transport or rqt window
+is required. Wheel zoom and drag pan retain the selected viewport across updates.
+The layer checkboxes filter candidates, rejected/pruned trajectories, footprint,
+path tube and avoidance targets. Select a candidate table row to highlight its
+trajectory and inspect its cost. The selected MPC winner stays visible even when
+other candidates are hidden. Freeze preserves the displayed cycle while ROS
+callbacks continue; it does not pause the robot. Save PNG exports the viewport.
+The map and global path remain live without fresh candidate telemetry; stale
+predictions and their table rows are cleared. Closing the GUI stops only its
+viewer node. It sends no motion commands or control service requests.
+
+`controller_params_file` shares tube, goal-circle and trigger-region geometry
+with the selected controller YAML. `mpc_preview_params_file` selects display
+settings. The real GUI defaults to wall time, simulation to the ROS clock.
+
+The legacy headless `mpc_preview` executable remains available for explicit image
+streaming and recording. It publishes `sensor_msgs/CompressedImage` on
+`/limo/control/mpc_preview/image/compressed`, using reliable delivery for Foxy's
+`rqt_image_view`. The native GUI publishes no compressed image stream.
 
 The top-down image is centered on `base_link`, with +x upward and +y leftward.
 The shipped viewer YAML defaults to `view_mode: sources` and
@@ -517,7 +534,7 @@ Settings are split between two YAML files:
 
 - `config/control_sim.yaml` / `config/control_real.yaml`, under `FollowPath.MPC.Debug`:
   enable telemetry with `enabled` (true in both profiles) and start the image
-  renderer with `preview_enabled` (true in simulation; the real desktop runs it on the PC); configure the
+  native GUI with `preview_enabled` (true in simulation; the real desktop opens it on the PC); configure the
   telemetry topic, publication rate, samples per family and pose downsampling stride.
   Representatives are evenly distributed over each family's generated order;
   the winner is always included even if it was not among those representatives.

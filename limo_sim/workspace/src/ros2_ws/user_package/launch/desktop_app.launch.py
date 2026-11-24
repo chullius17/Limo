@@ -117,7 +117,7 @@ def _launch_desktop(context):
                 for name, value in parameters.items()},
         )
         actions.append(Node(
-            package='limo_controller', executable='mpc_preview',
+            package='limo_controller', executable='mpc_gui',
             name='mpc_preview', output='screen',
             parameters=[preview_parameters, parameters],
         ))
@@ -148,7 +148,7 @@ def generate_launch_description():
             description='Open the remote start/pause/resume/abort control window.'),
         DeclareLaunchArgument(
             'start_mpc_preview', default_value='true',
-            description='Publish the MPC preview image on the PC; open its viewer manually.'),
+            description='Open the native MPC inspector on the PC.'),
         DeclareLaunchArgument(
             'controller_params_file', default_value=os.path.join(
                 control_share, 'config', 'control_real.yaml'),
@@ -156,6 +156,6 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'mpc_preview_params_file', default_value=os.path.join(
                 control_share, 'config', 'mpc_preview_sim.yaml'),
-            description='MPC image rendering settings; the desktop uses the wall clock.'),
+            description='MPC display settings; the desktop uses the wall clock.'),
         OpaqueFunction(function=_launch_desktop),
     ])

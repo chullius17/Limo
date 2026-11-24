@@ -74,7 +74,7 @@ def mpc_preview_node(context, configured_params, preview_params):
     if 'tube_radius' in tube:
         preview_parameters.append({'tube_radius': float(tube['tube_radius'])})
     return [Node(
-        package='limo_controller', executable='mpc_preview', name='mpc_preview',
+        package='limo_controller', executable='mpc_gui', name='mpc_preview',
         output='screen', parameters=preview_parameters,
         condition=IfCondition(str(preview_enabled).lower()),
     )]
@@ -211,7 +211,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'mpc_preview_params_file',
             default_value=os.path.join(package_share, 'config', 'mpc_preview_sim.yaml'),
-            description='MPC preview rendering and compression settings.',
+            description='MPC display settings for the native Qt inspector.',
         ),
         controller_server,
         cmd_vel_mux,

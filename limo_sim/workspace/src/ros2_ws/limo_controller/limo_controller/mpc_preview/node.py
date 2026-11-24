@@ -42,7 +42,7 @@ from limo_controller.mpc_preview.sources import laser_points, semantic_points, t
 class MpcPreview(Node):
     """Render bounded MPC telemetry outside the real-time controller loop."""
 
-    def __init__(self):
+    def __init__(self, *, gui=False):
         super().__init__('mpc_preview')
         defaults = {
             'debug_topic': '/limo/control/mpc_debug',
@@ -105,8 +105,8 @@ class MpcPreview(Node):
         # Reliable image output also serves best-effort viewers; telemetry input
         # keeps its existing best-effort contract with the controller.
         image_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
-        self.publisher = self.create_publisher(
-            CompressedImage, self.get_parameter('image_topic').value, image_qos)
+        self.publisher = (None if gui else self.create_publisher(
+            CompressedImage, self.get_parameter('image_topic').value, image_qos))
         self.subscription = self.create_subscription(
             MpcDebug, self.get_parameter('debug_topic').value, self._snapshot, input_qos)
         context_qos = QoSProfile(
@@ -139,8 +139,11 @@ class MpcPreview(Node):
         self.received_at = None
         self.last_warning = 0.0
         self.render_clock = Clock(clock_type=ClockType.STEADY_TIME)
-        self.timer = self.create_timer(1.0 / rate, self._publish, clock=self.render_clock)
-        self.get_logger().info('MPC preview publishes ' + self.get_parameter('image_topic').value)
+        self.timer = (None if gui else self.create_timer(
+            1.0 / rate, self._publish, clock=self.render_clock))
+        if not gui:
+            self.get_logger().info(
+                'MPC preview publishes ' + self.get_parameter('image_topic').value)
 
     @staticmethod
     def _yaw(q):
@@ -314,9 +317,8 @@ class MpcPreview(Node):
         self.base_frame = msg.base_frame
         self.received_at = time.monotonic()
 
-    def _publish(self):
-        if self.publisher.get_subscription_count() == 0:
-            return
+    def scene_snapshot(self):
+        """Resolve the live context for either the native GUI or image output."""
         fresh = (self.received_at is not None
                  and time.monotonic() - self.received_at <= self.stale_timeout)
         frame = self.frame if fresh else None
@@ -348,6 +350,13 @@ class MpcPreview(Node):
         except TransformException:
             global_path = ()
             status += ' | Path TF unavailable'
+        return frame, status, background, global_path, sources
+
+    def _publish(self):
+        if self.publisher is None or self.publisher.get_subscription_count() == 0:
+            return
+        frame, status, background, global_path, sources = self.scene_snapshot()
+        fresh = frame is not None
         try:
             image = render_preview(frame, self.options, status, background, global_path, sources)
             output = BytesIO()

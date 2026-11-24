@@ -81,7 +81,7 @@ def test_desktop_expands_to_viewers_and_overlay_decoder(monkeypatch):
     nodes = expanded_viewers(monkeypatch, desktop(monkeypatch))
     assert {(node['package'], node['executable']) for node in nodes} == {
         ('rviz2', 'rviz2'), ('limo_controller', 'control_gui'),
-        ('image_transport', 'republish'), ('limo_controller', 'mpc_preview')}
+        ('image_transport', 'republish'), ('limo_controller', 'mpc_gui')}
     assert {node['name'] for node in nodes} == {
         'rviz2', 'control_gui', 'online_rviz_waterfall_overlay_decoder', 'mpc_preview'}
     assert sum(node['executable'] == 'rviz2' for node in nodes) == 1

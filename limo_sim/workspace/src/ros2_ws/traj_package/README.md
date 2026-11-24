@@ -136,8 +136,10 @@ explicit start missing from Foxy's `ComputePathToPose` action. With
 `enable_start_adjustment: true`, the bridge samples collision-free virtual
 starts as well as goals, and tries at most `max_planning_attempts` start/goal
 pairs. Exact starts retain normal obstacle checks.
-Both `traj_real.yaml` and `traj_sim.yaml` enable this start adjustment, searching
-within 0.75 m at 0.10 m steps and 22.5 degree heading increments.
+`traj_real.yaml` disables start adjustment and plans from the robot's current
+pose. `traj_sim.yaml` enables start adjustment, searching within 0.75 m at
+0.10 m steps and 22.5 degree heading increments. Goal adjustment remains
+enabled in both profiles.
 
 The path starts at the selected planning pose. The wrapper quantizes that
 pose to SMAC's grid and heading bins and checks its footprint. Foxy's backtrace
@@ -183,13 +185,14 @@ separately. Their current geometry, together with the corresponding
 | Parameter | Real | Simulation |
 | --- | --- | --- |
 | Planner minimum turning radius | 0.50 m | 0.70 m |
-| Global planner footprint, length × width | 0.322 × 0.200 m | 0.322 × 0.220 m |
-| Bridge validation footprint, length × width | 0.322 × 0.220 m | 0.322 × 0.220 m |
+| Global planner footprint, length × width | 0.240 × 0.160 m | 0.322 × 0.220 m |
+| Bridge validation footprint, length × width | 0.240 × 0.160 m | 0.322 × 0.220 m |
 | Controller collision footprint after padding, length × width | 0.322 × 0.220 m | 0.342 × 0.240 m |
 
 Both global planner costmaps use `footprint_padding: 0.0`. In the real profile,
-the planner footprint is 0.020 m narrower than the bridge validation and
-controller footprints. In simulation, the planner, bridge and controller share
+the planner and bridge use a reduced 0.240 × 0.160 m footprint. The controller
+retains its 0.322 × 0.220 m collision footprint, so it may reject passages that
+the planner accepts. In simulation, the planner, bridge and controller share
 the same base footprint, but the controller adds `footprint_padding: 0.01`
 (0.01 m per side), producing the effective collision footprint listed above.
 The real controller uses zero padding.
