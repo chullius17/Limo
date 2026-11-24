@@ -58,7 +58,7 @@ amcl:
   global_frame_id: map
   scan_topic: /scan
   tf_broadcast: true
-  cv_enabled: false
+  cv_enabled: true
   cv_cloud_topic: /limo/cv_package/visual_ptcld/points
   cv_buffer_size: 10
   cv_sync_tolerance: 0.20
@@ -67,9 +67,9 @@ amcl:
   # Ignore CV localization updates without enough independent non-road evidence.
   cv_min_non_road_voxels: 20
   cv_occupied_threshold: 50
-  # Laser-only AMCL baseline; CV localization is disabled.
+  # Equal laser/CV factors; unusable CV leaves the laser update intact.
   laser_weight_factor: 1.0
-  cv_weight_factor: 0.0
+  cv_weight_factor: 1.0
   cv_sad_gain: 20.0
   cv_quality_gate_enabled: true
   cv_min_information: 0.02
