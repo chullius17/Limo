@@ -27,6 +27,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'control_experiment = user_package.control_experiment:main',
             'amcl_visualization = user_package.amcl_visualization:main',
             'amcl_stats = user_package.amcl_stats:main',
             'circuit_experiment = user_package.circuit_experiment:main',

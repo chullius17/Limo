@@ -1,5 +1,55 @@
 # LIMO application launch
 
+## Control experiment: map and measured-speed footprint image
+
+The desktop **Control Experiment — Map and Speed** GUI implements the first
+experiment output: the complete robot map, the global reference path, and the
+estimated executed trajectory with physical robot footprints colored by measured
+planar speed magnitude, `sqrt(vx² + vy²)`. Forward and reverse share the same
+rainbow scale. It reads `/odometry/filtered`, not `/cmd_vel`; the pose is an EKF
+estimate transformed into the map frame at each odometry message's timestamp,
+not ground truth or the MPC prediction. Footprints include the controller's
+padding and are rotated at every retained robot pose.
+
+With the real application running on the robot, launch on the PC/Docker:
+
+```bash
+colcon build --packages-select user_package --symlink-install
+source install/setup.bash
+ros2 launch user_package control_experiment.launch.py
+```
+
+The launch reads the complete map topic from `mapping_real.yaml` and the
+footprint, base frame, measured odometry topic and speed limit from
+`control_real.yaml`. Defaults are `/map`, `/limo/planning/path`,
+`/odometry/filtered`, and the physical 0.322 × 0.220 m polygon with zero padding.
+Use `mapping_config` and `controller_params_file` for different backend profiles;
+`map_topic`, `path_topic`, `odom_topic` and `speed_scale_max` override individual
+display inputs. The speed scale is fixed for the run; values above its maximum
+saturate at the upper color, indicated by the colorbar's upper extension.
+
+1. Plan a global path using the existing robot application.
+2. Press **Start recording** in this GUI before starting the robot's path execution.
+   This freezes the map and global reference for the experiment. Recording does
+   not activate, pause or stop the robot.
+3. Press **Stop recording** to freeze the captured footprint trail.
+4. Use **Save image…** to export output 1 as a 300 DPI PNG with the global path,
+   measured-speed legend and footprints. Pan/zoom changes the exported viewport;
+   **Fit complete map** restores the entire map.
+5. **Clear run** explicitly discards the local capture before starting another run.
+
+There is no latest-TF fallback: missing timestamped transforms wait at most 0.5 s
+before the input is dropped. Data gaps above 0.5 s, position jumps above 0.5 m,
+and heading jumps above 90° split the drawn trajectory instead of inventing
+connections. A backward clock jump greater than one second or a map-frame
+change stops recording. The complete captured run is preserved up to 50000
+samples, normally sampled at most every 0.1 s; reaching the cap stops acquisition
+rather than discarding the beginning. Both limits are launch arguments.
+
+All controls, plot labels and legends are English. This observer runs only on
+the desktop and does not require rebuilding or restarting the robot. The second
+experiment output is intentionally left for a later change.
+
 ## AMCL localization history on the real robot's complete map
 
 The desktop application opens **AMCL Localization History** by default. It
