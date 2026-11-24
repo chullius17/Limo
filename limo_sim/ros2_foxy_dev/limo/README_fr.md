@@ -89,8 +89,10 @@ ne déclare pas Gazebo comme dépendance.
 bash setup-devices.sh
 ```
 
-Ce script ajoute votre utilisateur aux groupes `dialout` et `video`, installe
-les règles udev fournies et les recharge. **Déconnectez-vous puis reconnectez-vous**
+Ce script désactive durablement la console série Jetson `nvgetty`, qui occupe
+sinon l'UART du châssis et modifie ses permissions au démarrage. Il ajoute aussi
+votre utilisateur aux groupes `dialout` et `video`, installe les règles udev
+fournies et les recharge. **Déconnectez-vous puis reconnectez-vous**
 pour appliquer l'appartenance aux groupes. Si vous utilisez SSH, fermez la
 connexion puis reconnectez-vous. Rebranchez les capteurs USB si nécessaire.
 
@@ -99,9 +101,18 @@ Vérifiez les périphériques :
 ```bash
 id
 ls -l /dev/ttyTHS1
+systemctl is-enabled nvgetty.service  # Attendu : disabled (code de sortie 1).
 ls -l /dev/ydlidar
 lsusb
 ```
+
+L'UART du châssis doit appartenir à `root:dialout` avec les permissions `0660`
+(`crw-rw----`), et votre utilisateur doit appartenir à `dialout`. Si `limo_base`
+affiche `Failed to open: '/dev/ttyTHS1'` et que le port est `root:tty` en `0620`,
+relancez `bash setup-devices.sh` : `nvgetty` a pris le contrôle de l'UART.
+Redémarrez ensuite le bringup du robot (`Ctrl+C`, puis `start`), car un pilote
+déjà arrêté n'est pas relancé automatiquement. La correction persiste après
+redémarrage ; n'utilisez pas de contournement récurrent avec `chmod 777`.
 
 Le port par défaut du châssis est `/dev/ttyTHS1`. Le launch du lidar utilise
 `/dev/ydlidar`, créé par les règles pour les identifiants d'adaptateur utilisés

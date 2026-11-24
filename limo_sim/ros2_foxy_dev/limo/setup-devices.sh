@@ -6,6 +6,11 @@ if [[ "$(id -u)" == 0 ]]; then
   echo "Run as the normal robot user, without sudo in front of the command." >&2
   exit 1
 fi
+# On Jetson Nano nvgetty starts a login console on the chassis UART.
+# Besides consuming chassis frames, getty changes the port to root:tty 0620.
+if systemctl cat nvgetty.service >/dev/null 2>&1; then
+  sudo systemctl disable --now nvgetty.service
+fi
 sudo usermod -aG dialout,video "$(id -un)"
 sudo install -m 0644 "$SCRIPT_DIR/99-limo-hardware.rules" /etc/udev/rules.d/99-limo-hardware.rules
 sudo udevadm control --reload-rules
