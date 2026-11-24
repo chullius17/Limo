@@ -61,6 +61,18 @@ def _launch_desktop(context):
         LaunchConfiguration('start_mpc_preview').perform(context))
 
     actions = []
+    if _boolean(LaunchConfiguration('start_amcl_visualization').perform(context)):
+        map_topic = LaunchConfiguration('amcl_map_topic').perform(context)
+        actions.append(Node(
+            package='user_package', executable='amcl_visualization',
+            name='amcl_visualization', output='screen',
+            parameters=[{
+                'use_sim_time': False,
+                'map_topic': map_topic or profile.get('map_servers', {}).get(
+                    'complete_topic', '/map'),
+                'pose_topic': LaunchConfiguration('amcl_pose_topic').perform(context),
+            }],
+        ))
     if start_mapping_rviz:
         actions.append(_desktop_include(
             'online_map_package', 'online_map.launch.py', {
@@ -146,6 +158,15 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'start_control_gui', default_value='true',
             description='Open the remote start/pause/resume/abort control window.'),
+        DeclareLaunchArgument(
+            'start_amcl_visualization', default_value='true',
+            description='Open AMCL pose history and covariance on the complete robot map.'),
+        DeclareLaunchArgument(
+            'amcl_map_topic', default_value='',
+            description='Complete map override; empty uses map_servers.complete_topic.'),
+        DeclareLaunchArgument(
+            'amcl_pose_topic', default_value='/amcl_pose',
+            description='AMCL pose and published covariance used by the desktop viewer.'),
         DeclareLaunchArgument(
             'start_mpc_preview', default_value='true',
             description='Open the native MPC inspector on the PC.'),

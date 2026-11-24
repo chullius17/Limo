@@ -1,5 +1,55 @@
 # LIMO application launch
 
+## AMCL localization history on the real robot's complete map
+
+The desktop application opens **AMCL Localization History** by default. It
+subscribes to the complete map selected by `map_servers.complete_topic` in the
+robot's `mapping_real.yaml` (normally `/map`) and to `/amcl_pose`. It runs on the
+PC and starts no localization, camera, planning or control nodes on the Jetson.
+Retained map and pose messages allow opening it after the robot has stopped.
+
+Each circle is centered on an AMCL pose mean. Its radius is
+`sqrt(-2 ln(0.05)) * sqrt(lambda_max(covariance_XY))`, in metres: a circular bound
+enclosing the 95% XY Gaussian covariance ellipse, including XY correlation.
+This is a conservative bound, not an exact anisotropic confidence ellipse or
+the physical robot footprint. Heading and yaw standard deviation are shown
+separately. Non-finite/invalid covariance and poses in a different map frame
+are rejected rather than overlaid at incorrect coordinates.
+
+The rainbow legend identifies elapsed **AMCL timestamp** time, from the oldest
+retained pose to the newest. History starts when the viewer receives its first
+pose; it retains at most 5000 circles, sampled no more often than every 0.25 s.
+The latest pose updates independently of this sampling. A clock rollback
+greater than one second restarts history. **Clear history** only resets this
+viewer's data and color timeline. **Fit complete map** restores the full map;
+the standard toolbar supports pan, zoom and image export. All UI text is English.
+
+Build and run on the desktop, with the real robot backend already running:
+
+```bash
+colcon build --packages-select user_package --symlink-install
+source install/setup.bash
+ros2 launch user_package desktop_app.launch.py
+```
+
+Open only this viewer, without the other desktop windows:
+
+```bash
+ros2 launch user_package amcl_visualization.launch.py
+```
+
+For a custom robot mapping profile or history size:
+
+```bash
+ros2 launch user_package amcl_visualization.launch.py \
+  mapping_config:=/path/to/mapping_real.yaml max_samples:=10000 sample_period:=0.5
+```
+
+The standalone launch also accepts `map_topic`, `pose_topic` and `refresh_hz`.
+In `desktop_app.launch.py`, use `start_amcl_visualization:=false` to disable the
+viewer, or override `amcl_map_topic` / `amcl_pose_topic` when needed. No robot
+rebuild is required for this desktop-only viewer.
+
 ## GUI sperimentale: circuito dall’alto e ostacoli Gazebo
 
 `circuit_experiment` mostra la texture originale del circuito, i muri e le

@@ -81,9 +81,11 @@ def test_desktop_expands_to_viewers_and_overlay_decoder(monkeypatch):
     nodes = expanded_viewers(monkeypatch, desktop(monkeypatch))
     assert {(node['package'], node['executable']) for node in nodes} == {
         ('rviz2', 'rviz2'), ('limo_controller', 'control_gui'),
-        ('image_transport', 'republish'), ('limo_controller', 'mpc_gui')}
+        ('image_transport', 'republish'), ('limo_controller', 'mpc_gui'),
+        ('user_package', 'amcl_visualization')}
     assert {node['name'] for node in nodes} == {
-        'rviz2', 'control_gui', 'online_rviz_waterfall_overlay_decoder', 'mpc_preview'}
+        'rviz2', 'control_gui', 'online_rviz_waterfall_overlay_decoder', 'mpc_preview',
+        'amcl_visualization'}
     assert sum(node['executable'] == 'rviz2' for node in nodes) == 1
     assert all(node['parameters'][-1]['use_sim_time'] is False for node in nodes)
     gui = next(node for node in nodes if node['name'] == 'control_gui')
@@ -154,7 +156,7 @@ def test_custom_cv_profile_and_client_switches_are_forwarded(monkeypatch):
     actions = desktop(
         monkeypatch, cv_config='/tmp/custom_cv.yaml',
         start_mapping_rviz='false', start_control_gui='false', start_cv_rviz='true',
-        start_mpc_preview='false')
+        start_mpc_preview='false', start_amcl_visualization='false')
     assert len(actions) == 1
     arguments = dict(actions[0][0].launch_arguments)
     assert arguments['config_file'] == '/tmp/custom_cv.yaml'
@@ -167,7 +169,8 @@ def test_cv_profile_is_resolved_from_mapping_yaml(monkeypatch, tmp_path):
     path.write_text(yaml.safe_dump(config))
     actions = desktop(
         monkeypatch, mapping_config=str(path),
-        start_mapping_rviz='false', start_control_gui='false', start_cv_rviz='true')
+        start_mapping_rviz='false', start_control_gui='false', start_cv_rviz='true',
+        start_amcl_visualization='false')
     arguments = dict(actions[0][0].launch_arguments)
     assert arguments['config_file'] == str(
         PACKAGES / 'cv_package/config/custom_cv.yaml')
@@ -176,11 +179,13 @@ def test_cv_profile_is_resolved_from_mapping_yaml(monkeypatch, tmp_path):
 def test_all_desktop_clients_can_be_disabled(monkeypatch):
     assert desktop(
         monkeypatch, start_mapping_rviz='false',
-        start_cv_rviz='false', start_control_gui='false', start_mpc_preview='false') == []
+        start_cv_rviz='false', start_control_gui='false', start_mpc_preview='false',
+        start_amcl_visualization='false') == []
 
 
 @pytest.mark.parametrize('name', [
-    'start_mapping_rviz', 'start_cv_rviz', 'start_control_gui', 'start_mpc_preview'])
+    'start_mapping_rviz', 'start_cv_rviz', 'start_control_gui', 'start_mpc_preview',
+    'start_amcl_visualization'])
 def test_invalid_desktop_switch_is_rejected(monkeypatch, name):
     with pytest.raises(ValueError, match='Expected true or false'):
         desktop(monkeypatch, **{name: 'typo'})
@@ -196,7 +201,8 @@ def test_desktop_requires_mapping_launch_settings(monkeypatch, tmp_path):
 def test_viewer_includes_have_separate_launch_scopes():
     module = load_launch('user_package', 'desktop_app.launch.py')
     context = launch_context(module, {
-        'start_control_gui': 'false', 'start_cv_rviz': 'true', 'start_mpc_preview': 'false'})
+        'start_control_gui': 'false', 'start_cv_rviz': 'true', 'start_mpc_preview': 'false',
+        'start_amcl_visualization': 'false'})
     actions = module._launch_desktop(context)
     assert len(actions) == 2
     assert all(isinstance(action, GroupAction) for action in actions)
@@ -211,3 +217,30 @@ def test_desktop_launch_uses_deferred_profile_resolution():
     description = module.generate_launch_description()
     assert any(isinstance(action, OpaqueFunction)
                for action in description.entities)
+
+
+@pytest.mark.parametrize('override', ['', '/custom_complete_map'])
+def test_amcl_viewer_follows_complete_map_profile(monkeypatch, tmp_path, override):
+    profile = yaml.safe_load(
+        (PACKAGES / 'online_map_package/config/mapping_real.yaml').read_text())
+    profile['map_servers']['complete_topic'] = '/robot/complete_map'
+    profile['map_servers']['laser_topic'] = '/robot/laser_only'
+    path = tmp_path / 'mapping.yaml'
+    path.write_text(yaml.safe_dump(profile))
+    nodes = desktop(monkeypatch, mapping_config=str(path), amcl_map_topic=override,
+                    amcl_pose_topic='/robot/amcl_pose')
+    viewer = next(action for action in nodes if isinstance(action, dict)
+                  and action['name'] == 'amcl_visualization')
+    assert viewer['parameters'] == [{
+        'use_sim_time': False, 'map_topic': override or '/robot/complete_map',
+        'pose_topic': '/robot/amcl_pose'}]
+
+
+def test_standalone_amcl_viewer_uses_same_complete_map_and_wall_clock(monkeypatch):
+    module = load_launch('user_package', 'amcl_visualization.launch.py')
+    context = launch_context(module, {})
+    monkeypatch.setattr(module, 'Node', lambda **kwargs: kwargs)
+    viewer, = module._launch_viewer(context)
+    assert viewer['parameters'] == [{
+        'use_sim_time': False, 'map_topic': '/map', 'pose_topic': '/amcl_pose',
+        'max_samples': 5000, 'sample_period': 0.25, 'refresh_hz': 4.0}]
