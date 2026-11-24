@@ -60,14 +60,48 @@ def history(**kwargs):
     return result
 
 
-def test_circle_encloses_correlated_xy_ellipse_in_metres():
+def test_correlated_xy_ellipse_has_two_principal_axes_in_metres():
     model = history()
     model.append(pose_record(pose()))
     maximum_eigenvalue = 0.065 + math.sqrt(0.025**2 + 0.03**2)
-    assert model.latest.radius == pytest.approx(XY_95_SCALE*math.sqrt(maximum_eigenvalue))
-    assert model.latest.radius > XY_95_SCALE*0.3  # Correlation must not be discarded.
+    minimum_eigenvalue = 0.065 - math.sqrt(0.025**2 + 0.03**2)
+    assert model.latest.semi_major == pytest.approx(XY_95_SCALE*math.sqrt(maximum_eigenvalue))
+    assert model.latest.semi_minor == pytest.approx(XY_95_SCALE*math.sqrt(minimum_eigenvalue))
+    assert model.latest.semi_major > XY_95_SCALE*0.3  # Include correlation.
+    assert model.latest.semi_minor < XY_95_SCALE*0.2
     assert model.latest.yaw_std == pytest.approx(0.1)
     assert model.latest.elapsed == 0
+
+
+@pytest.mark.parametrize('angle,major_std,minor_std', [
+    (0, 0.3, 0.1), (30, 0.3, 0.1), (-40, 0.3, 0.1), (90, 0.3, 0.1),
+    (45, 0.3, 0), (0, 0.2, 0.2), (0, 0, 0),
+])
+def test_ellipse_reconstructs_rotated_covariance_including_degenerate_cases(
+        angle, major_std, minor_std):
+    theta = math.radians(angle)
+    rotation = np.array([[math.cos(theta), -math.sin(theta)],
+                         [math.sin(theta), math.cos(theta)]])
+    covariance = rotation @ np.diag([major_std**2, minor_std**2]) @ rotation.T
+    message = pose()
+    message.pose.covariance[0] = covariance[0, 0]
+    message.pose.covariance[1] = covariance[0, 1]
+    message.pose.covariance[6] = covariance[1, 0]
+    message.pose.covariance[7] = covariance[1, 1]
+    # The uncertainty axes follow map covariance, independently of robot heading.
+    message.pose.pose.orientation.z = math.sin(0.6)
+    message.pose.pose.orientation.w = math.cos(0.6)
+    model = history()
+    model.append(pose_record(message))
+    sample = model.latest
+    assert sample.semi_major == pytest.approx(XY_95_SCALE*major_std)
+    assert sample.semi_minor == pytest.approx(XY_95_SCALE*minor_std, abs=1e-8)
+    if major_std != minor_std:
+        assert sample.ellipse_yaw == pytest.approx(theta % math.pi)
+    c, s = math.cos(sample.ellipse_yaw), math.sin(sample.ellipse_yaw)
+    axes = np.array([[c*sample.semi_major, -s*sample.semi_minor],
+                     [s*sample.semi_major, c*sample.semi_minor]])
+    np.testing.assert_allclose(axes @ axes.T, XY_95_SCALE**2 * covariance, atol=1e-12)
 
 
 def test_full_map_origin_rotation_bounds_and_unknown_pixels():
@@ -123,7 +157,7 @@ def test_invalid_map_is_rejected(kind):
         MapSnapshot.from_message(message)
 
 
-def test_retained_ros_inputs_render_colored_circles_and_preserve_manual_view():
+def test_retained_ros_inputs_render_colored_ellipses_and_preserve_manual_view():
     app = QApplication.instance() or QApplication([])
     rclpy.init(args=[])
     peer = Node('amcl_visualization_test_inputs')
@@ -158,10 +192,19 @@ def test_retained_ros_inputs_render_colored_circles_and_preserve_manual_view():
         window.canvas.draw()
         assert window.axes.get_xlim() == (-4, 4)
         assert window.axes.get_ylim() == (-3, 3)
-        assert len(window.circles.get_offsets()) == 3
-        edge_colors = window.circles.get_edgecolors()
+        assert len(window.ellipses.get_offsets()) == 3
+        # Check actual rendered axes, including diameters, rotation and metric units.
+        shape = window.ellipses.get_transforms()[0, :2, :2]
+        expected_covariance = np.array([[0.04, 0.03], [0.03, 0.09]])
+        np.testing.assert_allclose(shape @ shape.T,
+                                   XY_95_SCALE**2 * expected_covariance, atol=1e-12)
+        np.testing.assert_allclose(
+            window.ellipses.get_transform().get_matrix()[:2, :2],
+            window.axes.transData.get_affine().get_matrix()[:2, :2])
+        edge_colors = window.ellipses.get_edgecolors()
         assert not np.allclose(edge_colors[0], edge_colors[-1])
-        assert 'XY bound radius' in window.pose_details.text()
+        assert '95% XY semi-axes' in window.pose_details.text()
+        assert 'Ellipse angle' in window.pose_details.text()
         assert 'Elapsed AMCL time' in window.colorbar.ax.get_ylabel()
         node.receive_map(OccupancyGrid())
         window.refresh()
@@ -171,7 +214,7 @@ def test_retained_ros_inputs_render_colored_circles_and_preserve_manual_view():
         window.refresh()
         assert 'Input rejected' not in window.status.text()
         window.clear_history()
-        assert not node.history.samples and window.circles is None
+        assert not node.history.samples and window.ellipses is None
         assert len(window.latest_marker.get_xdata()) == 0
         assert window.map_snapshot is not None
     finally:

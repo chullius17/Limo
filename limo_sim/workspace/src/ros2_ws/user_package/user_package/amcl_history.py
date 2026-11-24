@@ -9,7 +9,7 @@ import numpy as np
 from user_package.map_geometry import MapSnapshot  # noqa: F401 — compatibility import
 
 
-# A circle enclosing the 95% XY Gaussian ellipse, including XY correlation.
+# Scale principal standard deviations to a 95% joint XY Gaussian ellipse.
 XY_95_SCALE = math.sqrt(-2.0 * math.log(0.05))
 
 
@@ -21,12 +21,14 @@ class HistoryPose:
     y: float
     yaw: float
     elapsed: float
-    radius: float
+    semi_major: float
+    semi_minor: float
+    ellipse_yaw: float
     yaw_std: float
 
 
 class LocalizationHistory:
-    """Retain sampled circles while always updating the latest accepted pose."""
+    """Retain sampled ellipses while always updating the latest accepted pose."""
 
     def __init__(self, max_samples=5000, sample_period=0.25):
         if max_samples < 2 or not math.isfinite(sample_period) or sample_period < 0:
@@ -62,7 +64,7 @@ class LocalizationHistory:
                        [row['cov_1_0'], row['cov_1_1']]])
         if not np.allclose(xy, xy.T, rtol=1e-6, atol=1e-10):
             raise ValueError('XY covariance is not symmetric')
-        eigenvalues = np.linalg.eigvalsh((xy + xy.T) / 2)
+        eigenvalues, eigenvectors = np.linalg.eigh((xy + xy.T) / 2)
         if not np.all(np.isfinite(eigenvalues)) or eigenvalues[0] < -1e-10:
             raise ValueError('XY covariance is not positive semidefinite')
         stamp = row['stamp_s']
@@ -77,6 +79,8 @@ class LocalizationHistory:
         sample = HistoryPose(
             row['x'], row['y'], row['yaw'], stamp-self.first_stamp,
             XY_95_SCALE*math.sqrt(max(0.0, eigenvalues[-1])),
+            XY_95_SCALE*math.sqrt(max(0.0, eigenvalues[0])),
+            math.atan2(eigenvectors[1, -1], eigenvectors[0, -1]) % math.pi,
             math.sqrt(row['cov_5_5']))
         self.latest = sample
         self.last_stamp = stamp

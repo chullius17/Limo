@@ -58,17 +58,19 @@ robot's `mapping_real.yaml` (normally `/map`) and to `/amcl_pose`. It runs on th
 PC and starts no localization, camera, planning or control nodes on the Jetson.
 Retained map and pose messages allow opening it after the robot has stopped.
 
-Each circle is centered on an AMCL pose mean. Its radius is
-`sqrt(-2 ln(0.05)) * sqrt(lambda_max(covariance_XY))`, in metres: a circular bound
-enclosing the 95% XY Gaussian covariance ellipse, including XY correlation.
-This is a conservative bound, not an exact anisotropic confidence ellipse or
-the physical robot footprint. Heading and yaw standard deviation are shown
+Each ellipse is centered on an AMCL pose mean. Its semi-axes are
+`sqrt(-2 ln(0.05)) * sqrt(lambda_max/min(covariance_XY))`, in metres, and its
+major axis follows the eigenvector of the largest XY covariance eigenvalue.
+This draws the 95% joint XY Gaussian confidence ellipse, including XY correlation;
+its angle is measured from map X and is independent of the robot heading.
+The ellipse represents estimated localization uncertainty, not the physical
+robot footprint or measured ground-truth error. Heading and yaw standard deviation are shown
 separately. Non-finite/invalid covariance and poses in a different map frame
 are rejected rather than overlaid at incorrect coordinates.
 
 The rainbow legend identifies elapsed **AMCL timestamp** time, from the oldest
 retained pose to the newest. History starts when the viewer receives its first
-pose; it retains at most 5000 circles, sampled no more often than every 0.25 s.
+pose; it retains at most 5000 ellipses, sampled no more often than every 0.25 s.
 The latest pose updates independently of this sampling. A clock rollback
 greater than one second restarts history. **Clear history** only resets this
 viewer's data and color timeline. **Fit complete map** restores the full map;

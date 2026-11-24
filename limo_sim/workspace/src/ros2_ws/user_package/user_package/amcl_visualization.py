@@ -83,7 +83,7 @@ class AmclVisualizationNode(Node):
 
 
 class AmclVisualizationWindow(QWidget):
-    """Keep the complete map visible and overlay metric covariance circles."""
+    """Keep the complete map visible and overlay metric covariance ellipses."""
 
     def __init__(self, node):
         super().__init__()
@@ -121,20 +121,20 @@ class AmclVisualizationWindow(QWidget):
                   Patch(facecolor='black', label='Occupied / high map cost'),
                   Patch(facecolor='#8c96a3', label='Unknown'),
                   Line2D([], [], color='#a330b0', marker='o', markerfacecolor='none',
-                         linestyle='none', label='95% XY covariance bound'),
+                         linestyle='none', label='95% XY confidence ellipse'),
                   Line2D([], [], color='black', marker='+', linestyle='none',
                          label='Latest pose and heading')]
         self.axes.legend(handles=legend, loc='upper center', bbox_to_anchor=(0.5, -0.10),
                          ncol=3, fontsize=9)
-        self.details = QLabel('Circle radius = 2.448 × largest XY standard deviation [m]. '
-                              'Encloses the 95% Gaussian covariance ellipse; '
-                              'heading uncertainty is reported separately.')
+        self.details = QLabel('95% Gaussian XY ellipses: semi-axes = 2.448 × principal '
+                              'standard deviations [m], oriented by XY covariance. '
+                              'Heading uncertainty is reported separately.')
         self.details.setWordWrap(True)
         layout.addWidget(self.details)
         self.pose_details = QLabel('No AMCL pose received')
         self.pose_details.setWordWrap(True)
         layout.addWidget(self.pose_details)
-        self.image = self.circles = None
+        self.image = self.ellipses = None
         self.map_snapshot = None
         self.revision = -1
         self.centers, = self.axes.plot([], [], '.', markersize=2, zorder=3)
@@ -177,7 +177,7 @@ class AmclVisualizationWindow(QWidget):
             self.status.setText('Waiting for AMCL pose: ' + self.node.settings['pose_topic'])
         else:
             age = time.monotonic() - self.node.last_arrival
-            self.status.setText('Pose age: {:.1f} s | Frame: {} | Circles: {}/{}'.format(
+            self.status.setText('Pose age: {:.1f} s | Frame: {} | Ellipses: {}/{}'.format(
                 age, history.map.frame, len(history.samples), self.node.settings['max_samples']))
         if self.revision == history.revision:
             return
@@ -198,9 +198,9 @@ class AmclVisualizationWindow(QWidget):
             self.axes.set_ylabel('{} Y [m]'.format(grid.frame))
             if first_map:
                 self.fit_map()
-        if self.circles is not None:
-            self.circles.remove()
-            self.circles = None
+        if self.ellipses is not None:
+            self.ellipses.remove()
+            self.ellipses = None
         samples = list(history.samples)
         if samples:
             elapsed = np.array([p.elapsed for p in samples])
@@ -210,14 +210,14 @@ class AmclVisualizationWindow(QWidget):
             fill[:, 3] = 0.07
             rgba[:, 3] = 0.75
             positions = np.array([(p.x, p.y) for p in samples])
-            diameters = np.array([2*p.radius for p in samples])
-            self.circles = EllipseCollection(
-                diameters, diameters, np.zeros(len(samples)), units='xy',
+            self.ellipses = EllipseCollection(
+                [2*p.semi_major for p in samples], [2*p.semi_minor for p in samples],
+                [math.degrees(p.ellipse_yaw) for p in samples], units='xy',
                 offsets=positions, transOffset=self.axes.transData,
                 facecolors=fill, edgecolors=rgba, linewidths=0.8, zorder=2)
-            self.axes.add_collection(self.circles, autolim=False)
+            self.axes.add_collection(self.ellipses, autolim=False)
             self.centers.set_data(positions[:, 0], positions[:, 1])
-            # Covariance circles carry individual time colors; pose means stay subtle.
+            # Covariance ellipses carry individual time colors; pose means stay subtle.
             self.centers.set_color('#515964')
             self.color_scale.set_norm(norm)
             self.colorbar.update_normal(self.color_scale)
@@ -234,8 +234,10 @@ class AmclVisualizationWindow(QWidget):
                                         pose.y+0.35*math.sin(pose.yaw)))
             self.pose_details.setText(
                 'Latest pose: X {:.3f} m | Y {:.3f} m | Heading {:.1f}° | '
-                'XY bound radius {:.3f} m | Yaw σ {:.1f}° | Clock resets: {}'.format(
-                    pose.x, pose.y, math.degrees(pose.yaw), pose.radius,
+                '95% XY semi-axes {:.3f} / {:.3f} m | Ellipse angle {:.1f}° | '
+                'Yaw σ {:.1f}° | Clock resets: {}'.format(
+                    pose.x, pose.y, math.degrees(pose.yaw), pose.semi_major,
+                    pose.semi_minor, math.degrees(pose.ellipse_yaw),
                     math.degrees(pose.yaw_std), history.clock_resets))
         else:
             self.latest_marker.set_data([], [])

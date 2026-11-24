@@ -40,7 +40,7 @@ def generate_launch_description():
         DeclareLaunchArgument('pose_topic', default_value='/amcl_pose'),
         DeclareLaunchArgument('max_samples', default_value='5000'),
         DeclareLaunchArgument('sample_period', default_value='0.25',
-                              description='Minimum AMCL time between retained circles, seconds.'),
+                              description='Minimum AMCL time between retained ellipses, seconds.'),
         DeclareLaunchArgument('refresh_hz', default_value='4.0'),
         OpaqueFunction(function=_launch_viewer),
     ])
