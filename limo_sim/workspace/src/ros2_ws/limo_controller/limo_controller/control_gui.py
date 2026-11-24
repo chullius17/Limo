@@ -239,8 +239,11 @@ class ControlGuiNode(Node):
         except Exception as exc:
             success = False
             message = f'Control request failed: {exc}'
-        log = self.get_logger().info if success else self.get_logger().error
-        log(message)
+        # Foxy caches severity per call site; keep each level on its own line.
+        if success:
+            self.get_logger().info(message)
+        else:
+            self.get_logger().error(message)
         self.signals.request_finished.emit(
             kind,
             success,

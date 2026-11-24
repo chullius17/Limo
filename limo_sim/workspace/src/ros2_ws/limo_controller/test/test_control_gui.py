@@ -26,6 +26,7 @@ from PyQt5.QtWidgets import QApplication, QLabel, QPlainTextEdit  # noqa: E402
 import rclpy  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
+from rclpy.task import Future  # noqa: E402
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy  # noqa: E402
 from std_msgs.msg import String  # noqa: E402
 from std_srvs.srv import SetBool  # noqa: E402
@@ -70,6 +71,31 @@ def test_gui_has_planning_terminal_and_controls(gui):
     assert any(subscription.topic_name == '/limo/planning/log'
                for subscription in node.subscriptions)
     assert not window.start_button.isEnabled()
+
+
+def test_request_results_can_alternate_success_failure_and_exception(gui):
+    app, node, window, signals = gui
+    results = []
+    signals.request_finished.connect(lambda *result: results.append(result))
+    window._set_status('READY: path available')
+    for success in (True, False, True, False):
+        future = Future()
+        message = 'accepted' if success else 'No planned path is ready.'
+        future.set_result(SetBool.Response(success=success, message=message))
+        node._request_done(future, 'active', True)
+        app.processEvents()
+        assert results[-1] == ('active', success, True, message)
+        assert window.start_button.isEnabled()
+        if not success:
+            assert message in window.state_label.text()
+
+    future = Future()
+    future.set_exception(RuntimeError('service disconnected'))
+    node._request_done(future, 'active', True)
+    app.processEvents()
+    assert results[-1] == (
+        'active', False, True, 'Control request failed: service disconnected')
+    assert len(results) == 5
 
 
 @pytest.mark.parametrize('status, path_ready', [
