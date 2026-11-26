@@ -1,0 +1,35 @@
+# Optional ROS parameter overlay. Load after cloud.yaml with a second --params-file.
+# This file is never loaded automatically. The core remains class-independent;
+# enabling these instances deliberately adds plugin-defined processing.
+limo_cloud:
+  ros__parameters:
+    # Instance execution order: mask.process_images, selection.process_images,
+    # projection, mask.process_cloud, selection.process_cloud. Unimplemented hooks
+    # do nothing. Each instance keeps its own configuration and persistent state.
+    plugins: [mask, selection]
+
+    mask:
+      # Required implementation identifier: Python import path and class name.
+      # BackgroundMask creates frame.images['background/mask'] as a uint8 image,
+      # available to all subsequent C++ and Python hooks in the current frame.
+      type: python:limo_cloud.examples:BackgroundMask
+
+      # Class ID selected for the intermediate mask. The example plugin defaults
+      # to 3 (background); the depth and classified input images remain unchanged.
+      # class_id: 3
+
+    selection:
+      # Required pluginlib lookup name for the C++ selection example.
+      type: limo_cloud/SelectClasses
+
+      # Optional retained class IDs, integers in [0, 255]. The plugin default is
+      # [] (retain all). This intentional override retains only classes 1 and 3;
+      # all other points are removed after projection, without changing coordinates.
+      keep_classes: [1, 3]
+
+    # Alternative Python implementation. To activate it, replace 'selection' with
+    # 'python_selection' in plugins above and uncomment this block. Its default
+    # keep_classes is also [] (retain all); [1, 3] applies the same explicit filter.
+    # python_selection:
+    #   type: python:limo_cloud.examples:SelectClasses
+    #   keep_classes: [1, 3]

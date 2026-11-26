@@ -1,0 +1,6 @@
+<library path="limo_cloud_processors">
+  <class name="limo_cloud/SelectClasses" type="limo_cloud::SelectClasses"
+         base_class_type="limo_cloud::Processor">
+    <description>Optional class selection example. Empty keep_classes disables selection.</description>
+  </class>
+</library>

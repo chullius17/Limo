@@ -1,0 +1,30 @@
+# Real-robot SLAM settings used by map.launch.py with profile:=real.
+# Matches offline_map_package/config/mapping_real.yaml. Keep these separate from
+# the simulation: slow manual robot mapping uses denser scan insertion.
+slam_toolbox:
+  ros__parameters:
+    # Driver inputs and continuous TF chain. The EKF alone publishes
+    # odom->base_link; the base driver must not publish the same transform.
+    scan_topic: /scan
+    base_frame: base_link
+    map_frame: map
+    odom_frame: odom
+    resolution: 0.05
+    mode: mapping
+
+    # The existing real pipeline accepts one map cell / about 3 degrees of
+    # movement. These values are intentionally smaller than simulation's 0.5.
+    throttle_scans: 1
+    minimum_time_interval: 0.1
+    minimum_travel_distance: 0.05
+    minimum_travel_heading: 0.05
+    max_laser_range: 8.0
+
+    # Real-robot map refresh in seconds, TF period and history. The launch copies
+    # map/odom frames and resolution from the selected mapper configuration.
+    map_update_interval: 0.5
+    transform_publish_period: 0.02
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    scan_queue_size: 1
+    # use_sim_time is supplied by the launch (false for profile:=real by default).
