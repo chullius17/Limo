@@ -1,0 +1,134 @@
+# ROS 2 parameter file for limo_depth_node / depth.launch.py.
+# Commented entries are the actual C++ defaults; uncomment to customize.
+# All parameters are startup-only except enable_telemetry and max_processing_rate_hz.
+# Topics without a leading '/' are relative to the node namespace.
+limo_depth:
+  ros__parameters: {}
+    # Optical-axis depth, not Euclidean range: 32FC1 metres or 16UC1/mono16 mm.
+    # Padded rows and both byte orders are supported. Input QoS: best effort, depth 1.
+    # input_topic: /depth_camera/depth/image_raw
+
+    # Full-resolution source calibration. Width/height and frame must match depth.
+    # Intrinsic matrix K must describe a pinhole image: finite, fx/fy>0, no skew.
+    # Distortion must be zero (|D|<=1e-8); nontrivial binning/ROI is rejected.
+    # This node does not undistort images. Rectify upstream when needed.
+    # camera_info_topic: /depth_camera/depth/camera_info
+
+    # true: forward-project source measurements into RGB, using CameraInfo + TF
+    # at each depth timestamp and retaining the nearest RGB Z on collisions.
+    # false: crop/nearest-resize the source depth directly; output stays in its
+    # optical frame. This mode does not create RGB alignment for separate cameras.
+    # register_to_rgb: true
+    # rgb_camera_info_topic: /rgb/camera_info
+
+    # Fraction of the TARGET image discarded from the top: [0,1).
+    # The retained region starts at floor(CameraInfo.height * input_crop_y_min).
+    # Output is on the same pixel-centre grid used by limo_cloud. Configure the
+    # detector's geometry and limo_cloud.input_crop_y_min to this same crop.
+    # input_crop_y_min: 0.5
+    # output_width: 320
+    # output_height: 120
+
+    # Inclusive optical Z limits, finite, 0 < min < max, in metres. Applied to
+    # source samples, transformed RGB Z and plane predictions. Invalid/out-of-range
+    # samples become NaN before filling; foreground measurements are never replaced.
+    # min_depth_m: 0.1
+    # max_depth_m: 5.0
+
+    # Optional CPU reduction for registration only. Bound source rays that can
+    # reach the target crop over the configured depth interval, then select at
+    # most output_width x output_height native samples using nearest-neighbour
+    # indices. Cached rays use exactly those source pixels. May discard small
+    # obstacles; false keeps all source measurements. Plane fitting always uses
+    # original full-resolution depth, independently from this setting.
+    # registration_reduce_input: false
+
+    # Local rigid frame with Z UP, camera above the ground (e.g. camera_link).
+    # Needed TF: depth optical -> RGB optical (when registered), depth optical ->
+    # plane_frame, and RGB optical -> plane_frame, all at the depth timestamp.
+    # A frame moving relative to the camera causes recalibration when TF changes.
+    # plane_frame: camera_link
+
+    # NaN: estimate normal AND offset from measured depth. Finite: use a horizontal
+    # plane z=plane_height_m in plane_frame immediately (no fitting/stability gate).
+    # E.g. -0.18 for ground 18 cm below camera_link. This is a Z coordinate, not
+    # a positive camera height. Infinity is invalid. Both registration modes support it.
+    # plane_height_m: .nan
+
+    # Number of successfully fitted frames before freezing the LUT; integer >=1.
+    # Failed fits do not contribute. Frames need not be consecutive. The robot
+    # should remain on one plane throughout calibration. Restart/reset on slopes.
+    # calibration_frames: 30
+
+    # Ground candidates in the ORIGINAL source image, before reduction/filling.
+    # Fractional ROI: 0<=y_min<1, 0<=x_min<x_max<=1; integer stride>=1.
+    # This selects lower central pixels to avoid horizon/edges. Candidates must
+    # also satisfy the intersection of calibration and general depth limits.
+    # calibration_y_min: 0.6
+    # calibration_x_min: 0.08
+    # calibration_x_max: 0.92
+    # calibration_stride: 3
+    # calibration_min_depth_m: 0.25
+    # calibration_max_depth_m: 2.5
+    # Maximum candidate Z in plane_frame, metres; exclude camera-level objects.
+    # calibration_max_z_m: -0.04
+
+    # Deterministic RANSAC (seed 42), then three least-squares refinements.
+    # threshold: orthogonal point/plane distance in metres, (0,1].
+    # min_points>=3; max_points>=min_points caps fitting work via random sampling.
+    # ground_inlier_threshold_m: 0.008
+    # ground_min_points: 150
+    # ground_max_points: 2500
+    # ground_ransac_iterations: 96
+    # Fraction of sampled candidates supporting the plane, (0,1].
+    # ground_min_inlier_ratio: 0.6
+    # Maximum angle between normal and +Z, degrees [0,89]; rejects walls.
+    # ground_max_tilt_deg: 20.0
+    # Allowed positive signed plane offset d in n.p+d=0, n unit/upward.
+    # For a horizontal plane, d equals the height above ground; 0<min<max.
+    # ground_min_height_m: 0.05
+    # ground_max_height_m: 0.6
+    # Minimum spatial standard deviation along the second principal inlier axis,
+    # metres (>0); rejects nearly collinear/narrow ground support.
+    # ground_min_spread_m: 0.025
+
+    # Stability across the accepted calibration window: maximum normal angle to
+    # its normalized component-wise median, degrees (0,90], and max(d)-min(d), m.
+    # An unstable window drops its oldest fit and waits for another accepted frame.
+    # calibration_max_angle_deg: 1.0
+    # calibration_max_offset_m: 0.015
+
+    # Corrected 32FC1 metres: target RGB optical frame when registered, otherwise
+    # source depth optical frame. Timestamp always equals the input depth stamp.
+    # Before calibration, publish measured depth with unfilled NaNs. Afterwards,
+    # fill missing pixels only where a downward ray intersects the frozen plane
+    # within the depth limits. Output QoS: best effort, keep last 1.
+    # depth_output_topic: limo/cv_package/depth_correction/depth_corrected/raw
+
+    # Plane-only 32FC1 LUT, same geometry/header/QoS as corrected depth. Published
+    # when subscribed; entirely NaN until calibration. Useful for diagnosing fills.
+    # ground_depth_topic: limo/cv_package/depth_correction/ground_depth/raw
+
+    # JPEG JET views before/after filling; reliable, keep last 1. Generated only
+    # when enabled AND subscribed. Invalid pixels are black; min/max map to JET.
+    # Debug work is performed inside the processing callback, so it affects CPU use.
+    # enable_debug_publications: true
+    # output_topic: limo/cv_package/depth_correction/image_jet/compressed
+    # corrected_output_topic: limo/cv_package/depth_correction/image_jet_corrected/compressed
+    # debug_jpeg_quality: 80
+
+    # 0: process every received frame. Positive: wall-clock timer consumes only
+    # the latest pending frame, once; superseded frames are dropped. This works
+    # even with paused /clock and adds no growing queue. Finite >=0, representable
+    # as an int64 nanosecond period. Runtime changes discard any pending frame.
+    # max_processing_rate_hz: 0.0
+
+    # Rolling successful-callback time (including requested debug output) and
+    # cumulative received/published/overwritten/skipped counters. Integers >=1.
+    # enable_telemetry: false
+    # telemetry_window_size: 30
+    # telemetry_log_interval_frames: 30
+
+    # Standard ROS clock. Launch argument takes precedence over this YAML;
+    # default follows profile: sim=true, real=false. Direct ros2 run defaults false.
+    # use_sim_time: false

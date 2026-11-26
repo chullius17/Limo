@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>limo_depth</name>
+  <version>0.0.1</version>
+  <description>Calibrated RGB depth registration and robust ground-plane hole completion in C++.</description>
+  <maintainer email="giulio.cataldo@studio.unibo.it">Giulio Cataldo</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>eigen</depend>
+  <depend>libopencv-dev</depend>
+  <depend>rclcpp</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>tf2_ros</depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>rclpy</test_depend>
+  <test_depend>geometry_msgs</test_depend>
+  <test_depend>python3-numpy</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>
