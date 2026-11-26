@@ -16,6 +16,7 @@
 
 from types import SimpleNamespace
 from unittest.mock import Mock
+import math
 
 import pytest
 
@@ -112,6 +113,7 @@ def ready_path(executor):
     path.header.frame_id = 'map'
     path.header.stamp.sec = 42
     path.poses = [PoseStamped()]
+    path.poses[-1].pose.orientation.w = 1.0
     executor._path_callback(path)
     return path
 
@@ -532,7 +534,7 @@ def arriving_executor(executor, monkeypatch):
     return executor
 
 
-def arrival_sample(executor, now, *, stamp=None, x=10.1, linear=0.0, angular=0.0):
+def arrival_sample(executor, now, *, stamp=None, x=10.1, linear=0.0, angular=0.0, yaw=0.0):
     from geometry_msgs.msg import TransformStamped
     from nav_msgs.msg import Odometry
     from rclpy.time import Time
@@ -547,6 +549,8 @@ def arrival_sample(executor, now, *, stamp=None, x=10.1, linear=0.0, angular=0.0
     transform = TransformStamped()
     transform.transform.translation.x = x
     transform.transform.translation.y = 5.0
+    transform.transform.rotation.z = math.sin(yaw / 2)
+    transform.transform.rotation.w = math.cos(yaw / 2)
     executor.tf_buffer.lookup_transform.return_value = transform
     executor._arrival_odometry(odometry)
 
@@ -657,3 +661,44 @@ def test_controller_failure_cannot_turn_into_success_from_idle_measurements(arri
         arrival_sample(node, index / 10)
     assert control_status(node).startswith('ERROR:')
     assert not node.control_requested
+
+
+@pytest.mark.parametrize('yaw_deg', [-20.0, 20.0])
+def test_arrival_accepts_both_heading_boundaries(arriving_executor, yaw_deg):
+    node = arriving_executor
+    for index in range(21):
+        arrival_sample(node, index / 10, yaw=math.radians(yaw_deg))
+    assert control_status(node).startswith('SUCCESS:')
+
+
+def test_heading_outside_tolerance_resets_stopped_arrival(arriving_executor):
+    node = arriving_executor
+    for index in range(11):
+        arrival_sample(node, index / 10)
+    arrival_sample(node, 1.1, yaw=math.radians(20.01))
+    assert node.arrival_monitor.started_at is None
+    for index in range(12, 32):
+        arrival_sample(node, index / 10)
+        assert not control_status(node).startswith('SUCCESS:')
+    arrival_sample(node, 3.2)
+    assert control_status(node).startswith('SUCCESS:')
+
+
+def test_arrival_uses_final_path_heading_and_wraps_at_pi(arriving_executor):
+    node = arriving_executor
+    goal = node.control_path.poses[-1].pose.orientation
+    goal.z = math.sin(math.radians(179) / 2)
+    goal.w = math.cos(math.radians(179) / 2)
+    for index in range(21):
+        arrival_sample(node, index / 10, yaw=math.radians(-179))
+    assert control_status(node).startswith('SUCCESS:')
+
+
+@pytest.mark.parametrize('invalid', [0.0, float('nan'), float('inf')])
+def test_invalid_final_orientation_cannot_confirm_arrival(arriving_executor, invalid):
+    node = arriving_executor
+    node.control_path.poses[-1].pose.orientation.w = invalid
+    for index in range(25):
+        arrival_sample(node, index / 10)
+    assert not control_status(node).startswith('SUCCESS:')
+    assert node.arrival_monitor.started_at is None

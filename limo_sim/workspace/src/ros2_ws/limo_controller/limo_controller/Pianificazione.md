@@ -193,22 +193,32 @@ il budget attuale di 59 non basta con le griglie dei profili distribuiti.
 
 ## Stato della procedura: SUCCESS
 
+Quando il centro di `base_link` entra nel cerchio verde e l'errore rispetto
+all'orientamento dell'ultima posa del percorso è entro **±20°**, Nav2 conclude
+FollowPath e comanda l'arresto. Le due condizioni devono valere nello stesso
+ciclo; un ingresso precedente nel cerchio non basta se il robot ne è uscito.
+
 Dopo l'accettazione di START, la procedura termina in `SUCCESS` quando il centro
 di `base_link` rimane dentro il cerchio finale per **2 secondi consecutivi**, con
 velocità planare misurata non superiore a **0,01 m/s** e velocità angolare in
-modulo non superiore a **0,05 rad/s**. Non è richiesto un orientamento finale
-specifico per questa condizione.
+modulo non superiore a **0,05 rad/s**, mantenendo anche l'errore angolare entro
+la tolleranza. I due secondi confermano l'arresto misurato e non ritardano il
+comando di stop. La differenza angolare segue il percorso più breve anche
+attraversando il limite −180°/+180°; orientamenti non validi azzerano il conteggio.
 
 Il raggio condiviso fra cerchio verde e riconoscimento dell'arrivo è
 `path_executor.ros__parameters.goal_circle_radius` nel profilo sim o real:
 il valore è **0,30 m nel reale** e **0,20 m in simulazione**.
+`goal_yaw_tolerance_deg` imposta la tolleranza angolare, inizialmente **20°**.
+Il launch trasferisce questi due valori al goal checker Nav2 e disabilita il
+latch della posizione, così il controllo usa la stessa regione mostrata in GUI.
 `success_dwell_time` modifica la durata;
 `stopped_linear_velocity` e `stopped_angular_velocity` modificano le soglie.
 L'odometria arriva da `success_odom_topic`, inizialmente `/odometry/filtered`;
 la posa del centro viene trasformata nel riferimento della traiettoria.
 
 Il conteggio usa i timestamp ROS e riparte da zero se il robot si muove, esce
-dal cerchio, mancano dati validi o TF, cambia il percorso, oppure viene richiesta
+dal cerchio o dalla tolleranza angolare, mancano dati validi o TF, cambia il percorso, oppure viene richiesta
 PAUSE o ABORT. Durante l'attesa di START o la pausa non si può entrare in SUCCESS.
 
 Se Nav2 conclude prima, la procedura rimane `ACTIVE` per verificare l'arresto

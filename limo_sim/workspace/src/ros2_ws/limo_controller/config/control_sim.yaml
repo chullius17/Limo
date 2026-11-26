@@ -24,9 +24,9 @@ controller_server:
 
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      stateful: true
-      xy_goal_tolerance: 0.10
-      yaw_goal_tolerance: 0.20
+      stateful: false  # Require position and heading at the same control cycle.
+      xy_goal_tolerance: 0.20  # Synchronized from path_executor.goal_circle_radius at launch.
+      yaw_goal_tolerance: 0.3490658503998659  # +/-20 deg inclusive; synchronized from path_executor at launch.
 
     FollowPath:
       plugin: "limo_dwb_critics::AckermannMPCController"
@@ -284,6 +284,7 @@ local_costmap:
 path_executor:
   ros__parameters:
     goal_circle_radius: 0.20  # Shared with the preview's green circle (meters).
+    goal_yaw_tolerance_deg: 20.0  # Stop inside the circle within this final-path heading error.
     success_dwell_time: 2.0  # Continuous measured stop inside the circle (ROS seconds).
     stopped_linear_velocity: 0.01  # m/s; measured planar speed.
     stopped_angular_velocity: 0.05  # rad/s; measured yaw rate.

@@ -36,6 +36,16 @@ from limo_controller.chassis_safety import ChassisSafety
 from limo_runtime.tf_buffer import ConditionalCallbackGroup, QueryTransformBuffer
 
 
+def quaternion_yaw(quaternion):
+    """Read a finite, nonzero orientation; normalize before extracting yaw."""
+    x, y, z, w = quaternion.x, quaternion.y, quaternion.z, quaternion.w
+    norm = math.hypot(x, y, z, w)
+    if not math.isfinite(norm) or norm < 1e-12:
+        raise ValueError('Invalid arrival orientation quaternion')
+    x, y, z, w = x / norm, y / norm, z / norm, w / norm
+    return math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+
+
 class PathExecutor(Node):
     """Own path execution, cancellation and the GUI control services."""
 
@@ -49,6 +59,7 @@ class PathExecutor(Node):
         self.declare_parameter('commanded_control_mode', 1)
         self.declare_parameter('chassis_status_timeout', 1.0)
         self.declare_parameter('goal_circle_radius', 0.20)
+        self.declare_parameter('goal_yaw_tolerance_deg', 20.0)
         self.declare_parameter('success_dwell_time', 2.0)
         self.declare_parameter('stopped_linear_velocity', 0.01)
         self.declare_parameter('stopped_angular_velocity', 0.05)
@@ -60,7 +71,8 @@ class PathExecutor(Node):
             duration=self.get_parameter('success_dwell_time').value,
             linear_limit=self.get_parameter('stopped_linear_velocity').value,
             angular_limit=self.get_parameter('stopped_angular_velocity').value,
-            sample_timeout=self.get_parameter('success_odom_timeout').value)
+            sample_timeout=self.get_parameter('success_odom_timeout').value,
+            yaw_tolerance=math.radians(self.get_parameter('goal_yaw_tolerance_deg').value))
         self.robot_base_frame = self.get_parameter('robot_base_frame').value
         self.declare_parameter('optimize_idle_io', True)
         self.optimize_idle_io = self.get_parameter('optimize_idle_io').value
@@ -195,9 +207,15 @@ class PathExecutor(Node):
         endpoint = endpoint_pose.pose.position
         center = transform.transform.translation
         twist = odometry.twist.twist
+        try:
+            yaw_error = (quaternion_yaw(transform.transform.rotation)
+                         - quaternion_yaw(endpoint_pose.pose.orientation))
+        except ValueError:
+            self.arrival_monitor.reset()
+            return
         if self.arrival_monitor.update(
                 stamp.nanoseconds * 1e-9, math.hypot(center.x - endpoint.x, center.y - endpoint.y),
-                math.hypot(twist.linear.x, twist.linear.y), twist.angular.z):
+                math.hypot(twist.linear.x, twist.linear.y), twist.angular.z, yaw_error):
             self.success_generation = self.path_generation
             self.arrival_pending = False
             self.control_requested = False
@@ -207,8 +225,10 @@ class PathExecutor(Node):
             if self.active_control_goal_handle is not None:
                 self.active_control_goal_handle.cancel_goal_async()
             self._publish_control_state(
-                'SUCCESS: stopped for {:g} s inside the goal circle (r={:g} m)'.format(
-                    self.arrival_monitor.duration, self.arrival_monitor.radius))
+                'SUCCESS: stopped for {:g} s inside the goal circle '
+                '(r={:g} m, heading error within +/-{:g} deg)'.format(
+                    self.arrival_monitor.duration, self.arrival_monitor.radius,
+                    math.degrees(self.arrival_monitor.yaw_tolerance)))
 
     def _path_callback(self, path):
         # Empty paths invalidate the previous plan. A replacement never starts

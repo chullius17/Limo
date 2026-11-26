@@ -15,6 +15,7 @@
 """Launch the Nav2 controller using a real or simulation YAML profile."""
 
 import os
+import math
 
 import yaml
 
@@ -26,6 +27,34 @@ from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from nav2_common.launch import RewrittenYaml
+
+
+class ControlParameters(RewrittenYaml):
+    """Share the displayed arrival region with Nav2's immediate stop condition."""
+
+    def perform(self, context):
+        """Rewrite only the generated YAML, preserving the user's source profile."""
+        path = super().perform(context)
+        with open(path, encoding='utf-8') as stream:
+            config = yaml.safe_load(stream)
+        arrival = config.get('path_executor', {}).get('ros__parameters', {})
+        radius = float(arrival.get('goal_circle_radius', 0.20))
+        yaw_deg = float(arrival.get('goal_yaw_tolerance_deg', 20.0))
+        if (not math.isfinite(radius) or radius <= 0
+                or not math.isfinite(yaw_deg) or not 0 <= yaw_deg <= 180):
+            raise ValueError('Invalid goal circle radius or goal_yaw_tolerance_deg')
+        controller = config['controller_server']['ros__parameters']
+        checker_name = controller.get('goal_checker_plugin', 'goal_checker')
+        checker = controller.setdefault(checker_name, {})
+        checker['xy_goal_tolerance'] = radius
+        # Foxy's checker uses a strict '<': include the stated +/- boundary,
+        # matching ArrivalDwell's tiny guard against quaternion roundoff.
+        checker['yaw_goal_tolerance'] = math.radians(yaw_deg) + 1e-12
+        # Position and heading must qualify together, even after entering once.
+        checker['stateful'] = False
+        with open(path, 'w', encoding='utf-8') as stream:
+            yaml.safe_dump(config, stream)
+        return path
 
 
 def controller_node(context, configured_params, log_level):
@@ -129,7 +158,7 @@ def generate_launch_description():
         source_file=LaunchConfiguration('mpc_preview_params_file'),
         root_key='', param_rewrites={'use_sim_time': use_sim_time}, convert_types=True)
 
-    configured_params = RewrittenYaml(
+    configured_params = ControlParameters(
         source_file=controller_params_file,
         root_key='',
         param_rewrites={'use_sim_time': use_sim_time},

@@ -21,7 +21,7 @@ class ArrivalDwell:
     """Accumulate dwell only across fresh, consecutive qualifying samples."""
 
     def __init__(self, radius=0.20, duration=2.0, linear_limit=0.01,
-                 angular_limit=0.05, sample_timeout=0.5):
+                 angular_limit=0.05, sample_timeout=0.5, yaw_tolerance=math.radians(20.0)):
         for name, value in (('radius', radius), ('duration', duration),
                             ('sample_timeout', sample_timeout)):
             if not math.isfinite(value) or value <= 0:
@@ -29,11 +29,14 @@ class ArrivalDwell:
         for name, value in (('linear_limit', linear_limit), ('angular_limit', angular_limit)):
             if not math.isfinite(value) or value < 0:
                 raise ValueError(name + ' must be finite and nonnegative')
+        if not math.isfinite(yaw_tolerance) or not 0 <= yaw_tolerance <= math.pi:
+            raise ValueError('yaw_tolerance must be finite and between 0 and pi radians')
         self.radius = radius
         self.duration = duration
         self.linear_limit = linear_limit
         self.angular_limit = angular_limit
         self.sample_timeout = sample_timeout
+        self.yaw_tolerance = yaw_tolerance
         self.reset()
 
     def reset(self):
@@ -41,16 +44,19 @@ class ArrivalDwell:
         self.started_at = None
         self.last_sample_at = None
 
-    def update(self, stamp, distance, linear_speed, angular_speed):
+    def update(self, stamp, distance, linear_speed, angular_speed, yaw_error=0.0):
         """Use measurement time, so a paused clock cannot complete the dwell."""
-        if not all(math.isfinite(v) for v in (stamp, distance, linear_speed, angular_speed)):
+        if not all(math.isfinite(v) for v in (
+                stamp, distance, linear_speed, angular_speed, yaw_error)):
             self.reset()
             return False
         if (self.last_sample_at is not None and
                 not 0 <= stamp - self.last_sample_at <= self.sample_timeout):
             self.reset()
         self.last_sample_at = stamp
-        if (not 0 <= distance <= self.radius or abs(linear_speed) > self.linear_limit
+        yaw_error = abs(math.atan2(math.sin(yaw_error), math.cos(yaw_error)))
+        if (not 0 <= distance <= self.radius or yaw_error > self.yaw_tolerance + 1e-12
+                or abs(linear_speed) > self.linear_limit
                 or abs(angular_speed) > self.angular_limit):
             self.started_at = None
             return False

@@ -67,7 +67,31 @@ def test_custom_radius_duration_and_speed_thresholds_are_used():
 @pytest.mark.parametrize('values', [
     {'radius': 0.0}, {'duration': -1.0}, {'duration': math.inf},
     {'sample_timeout': 0.0}, {'linear_limit': math.nan}, {'angular_limit': -0.01},
+    {'yaw_tolerance': -0.01}, {'yaw_tolerance': math.nan}, {'yaw_tolerance': math.pi + 0.01},
 ])
 def test_invalid_completion_parameters_are_rejected(values):
     with pytest.raises(ValueError):
         ArrivalDwell(**values)
+
+
+@pytest.mark.parametrize('error_deg', [-20, 20, 360 - 20, -360 + 20])
+def test_heading_tolerance_includes_boundaries_and_wraps(error_deg):
+    monitor = ArrivalDwell()
+    for index in range(20):
+        assert not monitor.update(index / 10, 0.1, 0, 0, math.radians(error_deg))
+    assert monitor.update(2, 0.1, 0, 0, math.radians(error_deg))
+
+
+@pytest.mark.parametrize('yaw', [math.radians(20.01), math.radians(-20.01), math.nan, math.inf])
+def test_heading_must_remain_valid_and_within_tolerance(yaw):
+    monitor = ArrivalDwell()
+    for index in range(11):
+        assert not monitor.update(index / 10, 0.1, 0, 0)
+    assert not monitor.update(1.1, 0.1, 0, 0, yaw)
+    assert monitor.started_at is None
+
+
+def test_custom_heading_tolerance_is_honored():
+    monitor = ArrivalDwell(yaw_tolerance=math.radians(10))
+    assert not monitor.update(0, 0.1, 0, 0, math.radians(11))
+    assert monitor.started_at is None

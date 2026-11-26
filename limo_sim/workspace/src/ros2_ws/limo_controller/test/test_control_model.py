@@ -15,6 +15,7 @@
 """Check model YAML selection, clock overrides, controller geometry and mux."""
 
 import importlib.util
+import math
 from pathlib import Path
 
 import pytest
@@ -143,6 +144,49 @@ def test_clock_override_does_not_change_control_profile(monkeypatch, profile, cl
         clock == 'true')
     assert config['twist_mux']['ros__parameters']['use_sim_time'] is (
         clock == 'true')
+
+
+@pytest.mark.parametrize('profile,radius', [('sim', 0.20), ('real', 0.30)])
+def test_goal_checker_stops_in_displayed_circle_with_twenty_degree_heading(
+        monkeypatch, profile, radius):
+    _, config, _ = controller(monkeypatch, robot_model=profile)
+    checker = config['controller_server']['ros__parameters']['goal_checker']
+    assert checker['xy_goal_tolerance'] == radius
+    assert checker['yaw_goal_tolerance'] == pytest.approx(math.radians(20))
+    # Nav2's strict comparison must still accept exactly +/-20 degrees.
+    assert 0 < checker['yaw_goal_tolerance'] - math.radians(20) < 1e-10
+    assert checker['stateful'] is False
+
+
+def test_custom_arrival_parameters_drive_goal_checker_without_changing_mpc(
+        monkeypatch, tmp_path):
+    config = yaml.safe_load((PACKAGE / 'config/control_sim.yaml').read_text())
+    config['path_executor']['ros__parameters'].update(
+        goal_circle_radius=0.35, goal_yaw_tolerance_deg=12.0)
+    source = tmp_path / 'arrival.yaml'
+    original = yaml.safe_dump(config)
+    source.write_text(original)
+    _, result, _ = controller(monkeypatch, controller_params_file=str(source))
+    checker = result['controller_server']['ros__parameters']['goal_checker']
+    assert checker['xy_goal_tolerance'] == 0.35
+    assert checker['yaw_goal_tolerance'] == pytest.approx(math.radians(12))
+    assert checker['stateful'] is False
+    assert result['controller_server']['ros__parameters']['FollowPath'] == (
+        config['controller_server']['ros__parameters']['FollowPath'])
+    assert source.read_text() == original
+
+
+@pytest.mark.parametrize('setting,value', [
+    ('goal_yaw_tolerance_deg', -1.0), ('goal_yaw_tolerance_deg', 181.0),
+    ('goal_yaw_tolerance_deg', float('nan')), ('goal_circle_radius', 0.0),
+])
+def test_invalid_shared_arrival_parameters_fail_before_start(monkeypatch, tmp_path, setting, value):
+    config = yaml.safe_load((PACKAGE / 'config/control_sim.yaml').read_text())
+    config['path_executor']['ros__parameters'][setting] = value
+    source = tmp_path / 'invalid_arrival.yaml'
+    source.write_text(yaml.safe_dump(config))
+    with pytest.raises(ValueError, match='goal circle'):
+        controller(monkeypatch, controller_params_file=str(source))
 
 
 @pytest.mark.parametrize('profile', ['real', 'sim'])

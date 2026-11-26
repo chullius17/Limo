@@ -340,12 +340,20 @@ before START can run again. PAUSE retains the path for RESUME.
 
 ## Confirmed arrival: SUCCESS
 
-After START has been accepted, `path_executor` publishes a latched `SUCCESS`
-status when the measured robot center stays inside the green goal circle while
-remaining stopped continuously for the configured dwell time. Position is
+After START has been accepted, Nav2 stops path following as soon as the robot
+center is inside the green goal circle and its heading error relative to the
+last global path pose is within **±20°**. Position and heading must qualify at
+the same control cycle; entering the circle earlier does not latch position.
+The stop does not wait for the SUCCESS dwell time.
+
+`path_executor` publishes a latched `SUCCESS` status when the measured robot
+center and heading stay inside those tolerances while remaining stopped
+continuously for the configured dwell time. Position is
 `base_link` transformed into the global path frame at the odometry timestamp;
 velocity comes from measured odometry, including planar lateral velocity and
-yaw rate. Final orientation is not part of this SUCCESS condition.
+yaw rate. Heading comes from the same timestamped TF and the final path pose;
+the shortest angular difference is used across the ±180° boundary. Invalid
+orientations reset the dwell.
 
 Tune these in `path_executor.ros__parameters` of `control_sim.yaml` or
 `control_real.yaml`:
@@ -353,13 +361,20 @@ Tune these in `path_executor.ros__parameters` of `control_sim.yaml` or
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | `goal_circle_radius` | real: 0.30 m; sim: 0.20 m | Shared radius for the green circle and arrival detection |
+| `goal_yaw_tolerance_deg` | 20.0° | Maximum absolute error from the final path heading, in [0,180] degrees |
 | `success_dwell_time` | 2.0 s | Continuous stopped time, measured on the ROS clock |
 | `stopped_linear_velocity` | 0.01 m/s | Maximum measured planar speed considered stopped |
 | `stopped_angular_velocity` | 0.05 rad/s | Maximum absolute measured yaw rate considered stopped |
 | `success_odom_topic` | `/odometry/filtered` | Measured odometry source |
 | `success_odom_timeout` | 0.5 s | Maximum measurement age and gap between qualifying samples |
 
-Motion, leaving the circle, unavailable TF, stale or invalid odometry, clock
+The launch also copies these position/heading tolerances into Nav2's goal
+checker, converts degrees to radians, and disables its stateful position latch.
+Change the shared values here rather than tuning the goal checker separately.
+The MPC's independent `FollowPath.xy_goal_tolerance` still controls its motion
+preference near the endpoint; it does not define the green circle.
+
+Motion, leaving the circle or heading tolerance, unavailable TF, stale or invalid odometry, clock
 rewind, PAUSE, ABORT or a replacement path reset the dwell. Repeated timestamps
 do not advance it. No SUCCESS is reported before START or during PAUSE.
 The radius applies to the robot center, not the footprint.
@@ -369,8 +384,8 @@ FollowPath action. Late action results preserve SUCCESS. The GUI shows SUCCESS
 in green, restores START and disables PAUSE. A new path, START or ABORT clears
 the latched success state; there is no automatic restart.
 
-Nav2's existing goal checker still decides when FollowPath finishes. If it
-finishes first, the procedure stays ACTIVE while waiting for the measured
+Nav2's goal checker ends FollowPath and sends zero velocity when the shared
+position/heading condition is met. The procedure stays ACTIVE while waiting for the measured
 arrival condition, then reports SUCCESS instead of returning directly to READY.
 Errors remain ERROR and cannot produce SUCCESS from subsequent idle samples.
 Restart the control application after changing these parameters.
