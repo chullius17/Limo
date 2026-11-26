@@ -17,19 +17,19 @@ from cv_package.visual_ptcld.cloud_cpu import RayCache, transform_xy
 from cv_package.visual_ptcld.visual_ptcld import VisualPtcld
 from limo_cloud.api import Frame, POINT_DTYPE
 from limo_cloud._runtime import has_hook, load
-from limo_cloud_example.configuration import load_parameters
-from limo_cloud_example.cv_configuration import cloud_parameters
+from limo_cloud_utilities.configuration import load_parameters
+from limo_cloud_utilities.cv_configuration import cloud_parameters
 
 PACKAGE = Path(__file__).resolve().parents[1]
 PACKAGES = PACKAGE.parent.parent
 
 DEFAULT_TYPES = {
-    'masks': 'python:limo_cloud_example.image_plugins:BoundaryMasks',
-    'sampling': 'python:limo_cloud_example.image_plugins:PixelSampling',
-    'debug': 'python:limo_cloud_example.debug:DebugOutputs',
-    'boardwalk': 'python:limo_cloud_example.cloud_plugins:Boardwalk',
-    'class_filter': 'python:limo_cloud_example.cloud_plugins:RoadBoardwalkOnly',
-    'voxel': 'python:limo_cloud_example.cloud_plugins:MetricVoxel',
+    'masks': 'python:limo_cloud_utilities.image_plugins:BoundaryMasks',
+    'sampling': 'python:limo_cloud_utilities.image_plugins:PixelSampling',
+    'debug': 'python:limo_cloud_utilities.debug:DebugOutputs',
+    'boardwalk': 'python:limo_cloud_utilities.cloud_plugins:Boardwalk',
+    'class_filter': 'python:limo_cloud_utilities.cloud_plugins:RoadBoardwalkOnly',
+    'voxel': 'python:limo_cloud_utilities.cloud_plugins:MetricVoxel',
 }
 
 

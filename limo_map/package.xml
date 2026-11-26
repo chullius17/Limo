@@ -18,7 +18,7 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <exec_depend>limo_cloud_example</exec_depend>
+  <exec_depend>limo_cloud_utilities</exec_depend>
   <exec_depend>limo_rviz</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>slam_toolbox</exec_depend>

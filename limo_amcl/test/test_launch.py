@@ -58,7 +58,7 @@ class AmclLaunch(unittest.TestCase):
             'limo_amcl_complete_map_server', 'limo_amcl_laser_map_server',
             'limo_amcl_cv_map_server', 'amcl'])
         cv = next(a['group'][0] for a in actions if 'group' in a)
-        self.assertTrue(cv['source'].endswith('limo_cloud_example/launch/sim.launch.py'))
+        self.assertTrue(cv['source'].endswith('limo_cloud_utilities/launch/sim.launch.py'))
         self.assertEqual(cv['arguments']['mode'], 'backend')
         self.assertEqual(cv['arguments']['start_rviz'], 'false')
 

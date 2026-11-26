@@ -8,7 +8,7 @@ only for ROS launch files and integration tests.
 
 | Direction | Default topic / source | Content |
 | --- | --- | --- |
-| Input | `/limo/cv_package/visual_ptcld/points` | `sensor_msgs/PointCloud2`: `x/y/z` FLOAT32 and `class_id` UINT8. Compatible with `limo_cloud` and `limo_cloud_example`. |
+| Input | `/limo/cv_package/visual_ptcld/points` | `sensor_msgs/PointCloud2`: `x/y/z` FLOAT32 and `class_id` UINT8. Compatible with `limo_cloud` and `limo_cloud_utilities`. |
 | Input | `/map` | Complete SLAM laser `nav_msgs/OccupancyGrid`, including free and unknown cells. Each message replaces the previous laser layer. |
 | Input | TF | Planar, upright cloud-frame → `map` transform at the sensor timestamp. |
 | Output | `/limo/map_package/offline/map/semantic_grid` | Semantic costs before laser fusion. |
@@ -58,7 +58,7 @@ ros2 launch limo_map map.launch.py
 ```
 
 This is a complete mapping example. By default it starts the simulation CV
-pipeline through `limo_cloud_example` (detector, depth correction and semantic
+pipeline through `limo_cloud_utilities` (detector, depth correction and semantic
 cloud), SLAM Toolbox, the C++ mapper, its save GUI and a mapping RViz viewer.
 The original `visual_ptcld` is disabled; the example supplies the cloud instead.
 Gazebo/the robot drivers must already supply camera images, CameraInfo, `/scan`,

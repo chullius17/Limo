@@ -32,7 +32,7 @@ class DebugOutputs(Processor):
         rclpy.init(args=[], context=self.context)
         try:
             self.node = Node(
-                'limo_cloud_example_debug', namespace=namespace,
+                'limo_cloud_utilities_debug', namespace=namespace,
                 context=self.context, use_global_arguments=False)
             prefix = 'limo/cv_package/visual_ptcld/'
             self.debug_pub = self.node.create_publisher(

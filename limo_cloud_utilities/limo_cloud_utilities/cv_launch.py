@@ -10,7 +10,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from limo_cloud_example.cv_configuration import cloud_parameters
+from limo_cloud_utilities.cv_configuration import cloud_parameters
 
 
 def _boolean(value):
@@ -56,8 +56,8 @@ def _launch(context):
         if value('enable_telemetry'):
             parameters['enable_telemetry'] = _boolean(value('enable_telemetry'))
         actions.append(Node(
-            package='limo_cloud_example', executable='limo_cloud_example_node',
-            name='limo_cloud_example', output='screen', emulate_tty=True,
+            package='limo_cloud_utilities', executable='limo_cloud_utilities_node',
+            name='limo_cloud_utilities', output='screen', emulate_tty=True,
             parameters=[parameters], additional_env={
                 'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1',
                 'MKL_NUM_THREADS': '1', 'BLIS_NUM_THREADS': '1',

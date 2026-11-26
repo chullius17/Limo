@@ -9,8 +9,8 @@ from launch import LaunchContext
 from launch.actions import DeclareLaunchArgument
 from launch_ros.utilities import evaluate_parameters, normalize_parameters
 
-from limo_cloud_example.cv_configuration import cloud_parameters
-from limo_cloud_example import cv_launch
+from limo_cloud_utilities.cv_configuration import cloud_parameters
+from limo_cloud_utilities import cv_launch
 
 
 PACKAGE = Path(__file__).resolve().parents[1]
@@ -79,7 +79,7 @@ def test_backend_reuses_upstream_and_replaces_only_cloud(monkeypatch, profile, d
     assert len(replacements) == 1
     replacement = replacements[0]
     assert (replacement['package'], replacement['executable']) == (
-        'limo_cloud_example', 'limo_cloud_example_node')
+        'limo_cloud_utilities', 'limo_cloud_utilities_node')
     params = replacement['parameters'][0]
     assert params == cloud_parameters(legacy['visual_ptcld']['parameters'][0])
     assert params['sampling.point_voxel_size'] == 5
@@ -136,6 +136,6 @@ def test_custom_cv_profile_updates_cpp_plugin_tuning(monkeypatch, tmp_path):
     ('desktop.launch.py', {'profile': 'real', 'mode': 'desktop', 'start_rviz': 'true'}),
 ])
 def test_entrypoints_select_the_expected_pipeline(filename, expected):
-    module = load_launch('limo_cloud_example', filename)
+    module = load_launch('limo_cloud_utilities', filename)
     context = context_for(module)
     assert {name: context.launch_configurations[name] for name in expected} == expected

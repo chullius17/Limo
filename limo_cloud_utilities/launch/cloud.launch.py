@@ -8,7 +8,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from limo_cloud_example.configuration import load_parameters
+from limo_cloud_utilities.configuration import load_parameters
 
 
 def _launch(context):
@@ -19,7 +19,7 @@ def _launch(context):
     parameters = load_parameters(value('config_file'))
     if profile != 'default':
         # These are local cloud-only settings, independent of cv_package.
-        directory = os.path.join(get_package_share_directory('limo_cloud_example'), 'config')
+        directory = os.path.join(get_package_share_directory('limo_cloud_utilities'), 'config')
         parameters.update(load_parameters(os.path.join(directory, profile + '.yaml')))
     for argument in ('use_sim_time', 'enable_telemetry'):
         override = value(argument)
@@ -28,8 +28,8 @@ def _launch(context):
                 raise ValueError(argument + ' must be true or false')
             parameters[argument] = override.lower() == 'true'
     return [Node(
-        package='limo_cloud_example', executable='limo_cloud_example_node',
-        name='limo_cloud_example', output='screen', emulate_tty=True,
+        package='limo_cloud_utilities', executable='limo_cloud_utilities_node',
+        name='limo_cloud_utilities', output='screen', emulate_tty=True,
         parameters=[parameters], additional_env={
             'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1',
             'MKL_NUM_THREADS': '1', 'BLIS_NUM_THREADS': '1',
@@ -38,7 +38,7 @@ def _launch(context):
 
 
 def generate_launch_description():
-    config = os.path.join(get_package_share_directory('limo_cloud_example'), 'config', 'cloud.yaml')
+    config = os.path.join(get_package_share_directory('limo_cloud_utilities'), 'config', 'cloud.yaml')
     return LaunchDescription([
         DeclareLaunchArgument('config_file', default_value=config,
                               description='Local classified-RGBD node parameters and Python plugin overrides.'),

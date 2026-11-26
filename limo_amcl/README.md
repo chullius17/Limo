@@ -58,7 +58,7 @@ source install/setup.bash
 ros2 launch limo_amcl amcl.launch.py map_directory:=/workspace/ros2_maps/semantic
 ```
 
-The default example starts the `limo_cloud_example` simulation CV pipeline, three
+The default example starts the `limo_cloud_utilities` simulation CV pipeline, three
 static map servers, C++ `limo_amcl_node`, lifecycle management and a localization
 RViz configuration. Robot/simulator, sensor drivers and odometry/EKF must already
 be running. It does not start SLAM. Stop the mapping launch before localization:

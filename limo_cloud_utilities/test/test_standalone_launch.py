@@ -8,7 +8,7 @@ from launch import LaunchContext
 from launch.actions import DeclareLaunchArgument
 
 from helpers import PACKAGE, default_parameters, run_plugins, scene
-from limo_cloud_example.configuration import load_parameters
+from limo_cloud_utilities.configuration import load_parameters
 
 
 def launch_node(monkeypatch, **overrides):
@@ -17,7 +17,7 @@ def launch_node(monkeypatch, **overrides):
     spec.loader.exec_module(module)
 
     def package_share(package):
-        assert package == 'limo_cloud_example', 'Launch requested an external pipeline'
+        assert package == 'limo_cloud_utilities', 'Launch requested an external pipeline'
         return str(PACKAGE)
 
     module.get_package_share_directory = package_share
@@ -31,7 +31,7 @@ def launch_node(monkeypatch, **overrides):
     assert len(nodes) == 1
     node = nodes[0]
     assert (node['package'], node['executable'], node['name']) == (
-        'limo_cloud_example', 'limo_cloud_example_node', 'limo_cloud_example')
+        'limo_cloud_utilities', 'limo_cloud_utilities_node', 'limo_cloud_utilities')
     return node['parameters'][0]
 
 
@@ -61,7 +61,7 @@ def test_explicit_clock_and_telemetry_override_profile(monkeypatch):
 
 
 def test_runtime_algorithms_have_no_cv_package_imports():
-    for path in (PACKAGE / 'limo_cloud_example').rglob('*.py'):
+    for path in (PACKAGE / 'limo_cloud_utilities').rglob('*.py'):
         tree = ast.parse(path.read_text())
         for item in ast.walk(tree):
             if isinstance(item, ast.ImportFrom):
