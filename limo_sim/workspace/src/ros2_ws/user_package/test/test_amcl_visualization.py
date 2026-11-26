@@ -18,9 +18,9 @@ from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy  # noqa: E402
 
-from user_package.amcl_history import LocalizationHistory, MapSnapshot, XY_95_SCALE  # noqa: E402
-from user_package.amcl_stats_model import pose_record  # noqa: E402
-from user_package.amcl_visualization import (  # noqa: E402
+from user_package.amcl.amcl_history import LocalizationHistory, MapSnapshot, XY_95_SCALE  # noqa: E402
+from user_package.amcl.amcl_stats_model import pose_record  # noqa: E402
+from user_package.amcl.amcl_visualization import (  # noqa: E402
     AmclVisualizationNode, AmclVisualizationWindow,
 )
 

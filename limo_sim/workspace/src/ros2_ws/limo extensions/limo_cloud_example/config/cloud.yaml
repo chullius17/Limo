@@ -1,0 +1,119 @@
+# Standalone node parameters: inputs are ALREADY aligned depth and classified
+# images, plus CameraInfo/TF. No RGB detector, segmentation or depth correction
+# node is started. The classified image contains uint8 IDs rather than RGB colors.
+# Active values override defaults. Commented values document editable defaults.
+# Optional LOCAL real.yaml/sim.yaml overlays preserve the previous cloud tuning;
+# no runtime code or configuration is loaded from cv_package.
+limo_cloud_example:
+  ros__parameters:
+    # Ordered plugin instances. Image hooks run before C++ sparse projection;
+    # cloud hooks run afterwards, in this same order. Debug observes pre-boardwalk
+    # points. These instances and their types are defaults of the example executable;
+    # generic limo_cloud has no default semantic plugins.
+    # plugins: [masks, sampling, debug, boardwalk, class_filter, voxel]
+
+    # masks:
+      # Required Python implementation: derive road boundary/interior masks by
+      # dilating background before applying the ROI. Labels 0/>3 are ignored here.
+      # type: python:limo_cloud_example.image_plugins:BoundaryMasks
+
+      # Global OpenCV worker count, positive integer. The CV profile sets this.
+      # opencv_num_threads: 1
+
+      # Odd square dilation-kernel side length in INPUT pixels, strictly positive.
+      # A road pixel belongs to the boundary when it touches dilated background;
+      # the remaining road becomes class 5. Applied before ROI, like visual_ptcld.
+      # blue_boundary_kernel_size: 7
+
+    sampling:
+      # Required Python implementation: emit explicit ordered (row, col, class_id)
+      # requests for the C++ projector; repeated pixels are deliberately preserved.
+      # type: python:limo_cloud_example.image_plugins:PixelSampling
+
+      # Image-space sampling cell side in pixels, positive integer. Road boundary,
+      # background and interior road use rounded centroids; yellow keeps all pixels.
+      # Only interior-road centroids are checked against their source mask. The
+      # plugin implementation default is 3. This example intentionally uses 5.
+      point_voxel_size: 5
+
+      # Preserve input IDs greater than 3 as additional ordered projection samples.
+      # true keeps such classes alongside road/yellow/background. Later plugins may
+      # select or reduce them explicitly. The local legacy profiles set false to
+      # reproduce the original pipeline's behavior for unsupported detector IDs.
+      # passthrough_extra_classes: true
+
+    # debug:
+      # Required Python observer. Preserves the legacy JPEG and points_before_kdtree
+      # topics. Uses a publishing-only rclpy context, created only when enabled.
+      # type: python:limo_cloud_example.debug:DebugOutputs
+
+      # Enable compatibility debug outputs; drawing/JPEG/serialization only occurs
+      # when the respective topic has subscribers. Disabled by default.
+      # enable_debug_publications: false
+
+      # JPEG quality, integer in [1, 100]. Only affects subscribed debug images.
+      # debug_jpeg_quality: 85
+
+    # boardwalk:
+      # Required Python implementation: the same two exact cKDTree neighbor passes
+      # as visual_ptcld. Distances are metric BEV XY distances, not image distances.
+      # type: python:limo_cloud_example.cloud_plugins:Boardwalk
+
+      # Enable background relabeling. false retains original background class 3.
+      # The legacy road_boardwalk_only option requires this to remain true.
+      # enable_boardwalk: true
+
+      # Initial seeds are background points whose nearest boundary-road distance
+      # satisfies min < distance <= max. Both radii are finite metres, 0 <= min <= max.
+      # Background farther than max becomes interior boardwalk (6). Seeds become
+      # boardwalk (4). The real profile currently overrides the minimum to 0.07 m.
+      # blue_radius_min_m: 0.15
+      # blue_radius_max_m: 0.25
+
+      # Second-pass radius in metres, finite and >=0. Only background already within
+      # max may join class 4 when its nearest INITIAL seed is strictly closer than
+      # this radius. Propagation is not recursive; zero disables the second pass.
+      # boardwalk_propagation_radius_m: 0.15
+
+    # class_filter:
+      # Required optional legacy output selector, executed before metric voxelization.
+      # type: python:limo_cloud_example.cloud_plugins:RoadBoardwalkOnly
+
+      # true retains road 1/5 and boardwalk 4/6, dropping yellow 2/background 3.
+      # false keeps all projected classes. The local real profile overrides this to true.
+      # road_boardwalk_only: false
+
+    # voxel:
+      # Required Python reducer: identical legacy per-class BEV voxel centroids,
+      # retaining representative ordering. This plugin requires flatten_to_bev=true.
+      # type: python:limo_cloud_example.cloud_plugins:MetricVoxel
+
+      # Metric XY voxel side length in metres, finite and strictly positive.
+      # Different semantic classes never merge, even when they occupy the same voxel.
+      # pointcloud_voxel_size_m: 0.02
+
+    # Classified input topic: mono8/8UC1 semantic IDs, same pixel grid as depth.
+    # Zero is invalid. This node consumes classification; it does not calculate it.
+    # classified_image_topic: limo/cv_package/detection/lane_labels/raw
+
+    # Already aligned depth, 32FC1 metres or 16UC1/mono16 millimetres. The historical
+    # default topic name is retained for compatibility; no correction runs here.
+    # depth_topic: limo/cv_package/depth_correction/depth_corrected/raw
+
+    # Intrinsics of the source RGB pixel grid. Depth/labels/CameraInfo share a frame.
+    # camera_info_topic: /rgb/camera_info
+    # require_rgb_depth: true
+
+    # TF destination; lookup uses the classified-image timestamp. Default output
+    # is BEV XY with z=0. See limo_cloud/config/cloud.yaml for all generic options.
+    # bev_frame: base_link
+    # pointcloud_topic: limo/cv_package/visual_ptcld/points
+
+    # Top fraction already discarded upstream, in [0,1). Zero assumes full images.
+    # This adjusts projection rays only. Local legacy profiles explicitly use 0.5.
+    # input_crop_y_min: 0.0
+
+    # Inclusive optical camera-Z limits, finite metres, 0 < min < max.
+    # pointcloud_min_depth_m: 0.1
+    # pointcloud_max_depth_m: 2.5
+    # flatten_to_bev: true

@@ -1,0 +1,14 @@
+# Optional local CLOUD-ONLY tuning copied from the previous simulated CV cloud stage.
+# Inputs must already be classified/aligned/cropped upstream. No detector runs.
+limo_cloud_example:
+  ros__parameters:
+    # Read /clock for TF consistency with simulated image timestamps.
+    use_sim_time: true
+    # Upstream images contain only the lower half of the original RGB grid.
+    input_crop_y_min: 0.5
+    sampling:
+      # Match the original pipeline's handling of unsupported detector IDs.
+      passthrough_extra_classes: false
+    debug:
+      # Reproduce subscribed legacy images and the pre-boardwalk cloud.
+      enable_debug_publications: true

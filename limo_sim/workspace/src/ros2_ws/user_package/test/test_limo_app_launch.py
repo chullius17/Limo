@@ -61,6 +61,7 @@ def compose(monkeypatch, profile, **overrides):
             'launch': launch,
             'arguments': arguments or {},
         })
+    monkeypatch.setattr(module, 'GroupAction', lambda actions: actions[0])
     opaque_action = next(
         action for action in description.entities
         if isinstance(action, OpaqueFunction))
@@ -73,6 +74,7 @@ def test_sim_launches_map_trajectory_and_controller(monkeypatch):
         ('online_map_package', 'online_map_sim.launch.py'),
         ('traj_package', 'trajectory.launch.py'),
         ('limo_controller', 'control.launch.py'),
+        ('user_package', 'control/control_experiment.launch.py'),
     ]
     assert actions[1]['arguments'] == {
         'robot_model': 'sim',
@@ -189,7 +191,7 @@ def test_cv_inherits_config_and_explicit_override_is_forwarded_once(monkeypatch,
     actions = compose(monkeypatch, profile)
     assert 'start_cv' not in actions[0]['arguments']
     actions = compose(monkeypatch, profile, start_cv='true', cv_config='/tmp/custom_cv.yaml')
-    assert len(actions) == 3
+    assert len(actions) == (3 if profile == 'real' else 4)
     assert actions[0]['arguments']['start_cv'] == 'true'
     assert actions[0]['arguments']['cv_config'] == '/tmp/custom_cv.yaml'
     assert all(item['package'] != 'cv_package' for item in actions)
@@ -338,7 +340,7 @@ def test_application_forwards_custom_planner_and_controller_files(monkeypatch):
 def test_application_resolves_yaml_defaults_despite_empty_parent_arguments(
         monkeypatch, profile, model, clock):
     application = compose(monkeypatch, profile)
-    for include in application[1:]:
+    for include in application[1:3]:
         module = load_subsystem(include['package'], include['launch'])
         monkeypatch.setattr(module, 'Node', lambda **kwargs: kwargs)
         context = launch_context(module, {
@@ -357,3 +359,35 @@ def test_application_resolves_yaml_defaults_despite_empty_parent_arguments(
         assert selected.endswith('_' + model + '.yaml')
         config = yaml.safe_load(Path(node['parameters'][0].perform(context)).read_text())
         assert config[node['name']]['ros__parameters']['use_sim_time'] is clock
+
+
+@pytest.mark.parametrize('profile,clock', [('sim', True), ('legacy', False)])
+def test_experiment_shares_application_profile_and_clock(monkeypatch, profile, clock):
+    actions = compose(monkeypatch, profile)
+    experiment = actions[-1]
+    module = load_subsystem(experiment['package'], experiment['launch'])
+    monkeypatch.setattr(module, 'Node', lambda **kwargs: kwargs)
+    context = launch_context(module, experiment['arguments'])
+    node, = module._launch_experiment(context)
+    params = node['parameters'][0]
+    assert node['executable'] == 'control_experiment'
+    assert params['use_sim_time'] is clock
+    assert params['map_topic'] == '/map'
+    assert experiment['arguments']['mapping_config'].endswith('/mapping_sim.yaml')
+    assert experiment['arguments']['controller_params_file'] == (
+        actions[2]['arguments']['controller_params_file'])
+
+
+def test_experiment_shares_custom_app_settings_and_can_be_disabled(monkeypatch):
+    experiment = compose(
+        monkeypatch, 'sim', map_topic='/custom_map',
+        mapping_config='/tmp/mapping.yaml', controller_params_file='/tmp/control.yaml')[-1]
+    assert experiment['arguments'] == {
+        'map_topic': '/custom_map', 'mapping_config': '/tmp/mapping.yaml',
+        'controller_params_file': '/tmp/control.yaml', 'use_sim_time': 'true'}
+    assert len(compose(monkeypatch, 'sim', start_control_experiment='false')) == 3
+    assert len(compose(monkeypatch, 'real')) == 3
+    with pytest.raises(ValueError, match='desktop_app.launch.py'):
+        compose(monkeypatch, 'real', start_control_experiment='true')
+    with pytest.raises(ValueError, match='Expected true or false'):
+        compose(monkeypatch, 'sim', start_control_experiment='invalid')

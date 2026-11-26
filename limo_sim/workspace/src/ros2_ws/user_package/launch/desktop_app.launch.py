@@ -102,6 +102,14 @@ def _launch_desktop(context):
             name='control_gui', output='screen',
             parameters=[{'use_sim_time': False}],
         ))
+    if _boolean(LaunchConfiguration('start_control_experiment').perform(context)):
+        actions.append(_desktop_include(
+            'user_package', 'control/control_experiment.launch.py', {
+                'mapping_config': mapping_config,
+                'controller_params_file': os.path.expanduser(
+                    LaunchConfiguration('controller_params_file').perform(context)),
+                'use_sim_time': 'false',
+            }))
     if start_mpc_preview:
         controller_file = os.path.expanduser(
             LaunchConfiguration('controller_params_file').perform(context))
@@ -158,6 +166,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'start_control_gui', default_value='true',
             description='Open the remote start/pause/resume/abort control window.'),
+        DeclareLaunchArgument(
+            'start_control_experiment', default_value='true',
+            description='Open the map, goal and two future plot panels on the PC.'),
         DeclareLaunchArgument(
             'start_amcl_visualization', default_value='true',
             description='Open AMCL pose history and covariance on the complete robot map.'),

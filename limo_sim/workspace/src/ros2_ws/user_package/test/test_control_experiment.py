@@ -17,12 +17,16 @@ from launch import LaunchContext  # noqa: E402
 from launch.actions import DeclareLaunchArgument  # noqa: E402
 from nav_msgs.msg import OccupancyGrid, Odometry, Path as RosPath  # noqa: E402
 from PyQt5.QtWidgets import QApplication  # noqa: E402
+from sensor_msgs.msg import LaserScan  # noqa: E402
+from std_msgs.msg import Bool, String  # noqa: E402
+from limo_interfaces.msg import MpcDebug  # noqa: E402
+from geometry_msgs.msg import Pose2D  # noqa: E402
 import rclpy  # noqa: E402
 
-from user_package.control_experiment import (  # noqa: E402
+from user_package.control.control_experiment import (  # noqa: E402
     ControlExperimentNode, ControlExperimentWindow,
 )
-from user_package.control_experiment_model import (  # noqa: E402
+from user_package.control.control_experiment_model import (  # noqa: E402
     ControlRecording, TrackPose, footprint_vertices, map_pose,
 )
 from user_package.map_geometry import MapSnapshot  # noqa: E402
@@ -209,6 +213,53 @@ def test_window_freezes_reference_and_exports_actual_run(tmp_path, client):
         window.close()
 
 
+def test_goal_arrow_and_two_empty_plots_below_map(client):
+    app, node = client
+    node.receive_map(grid())
+    goal = path(((3, 2),)).poses[0]
+    goal.pose.orientation.z = math.sin(math.pi/4)
+    goal.pose.orientation.w = math.cos(math.pi/4)
+    node.receive_goal(goal)
+    window = ControlExperimentWindow(node)
+    try:
+        window.canvas.draw()
+        assert window.goal_arrow.get_visible()
+        assert node.goal_pose(node.live_map) == pytest.approx((3, 2, math.pi/2))
+        assert len(window.plot_axes) == 2
+        top, bottom = [axes.get_position() for axes in window.plot_axes]
+        assert bottom.y1 < top.y0
+        assert top.y1 < window.axes.get_position().y0
+        assert (top.x0, top.x1) == pytest.approx((bottom.x0, bottom.x1))
+        assert all(not line.get_xdata() for line in window.plot_lines)
+    finally:
+        window.timer.stop()
+        window.close()
+
+
+def test_goal_uses_plan_endpoint_then_freezes_selected_pose(client):
+    _, node = client
+    node.receive_map(grid())
+    node.receive_path(path())
+    assert node.goal_pose(node.live_map) == pytest.approx((3, 2, 0))
+    node.receive_goal(path(((4, 3),)).poses[0])
+    node.receive_odom(odometry(frame='map'))
+    node.start_recording()
+    node.receive_goal(path(((1, 2),)).poses[0])
+    assert node.run_goal == pytest.approx((4, 3, 0))
+
+
+def test_goal_transforms_to_map_and_rejects_invalid_orientation(client):
+    _, node = client
+    node.receive_map(grid())
+    node.tf_buffer.set_transform(transform(10, x=2.0, yaw=math.pi/2), 'test')
+    goal = path(((1, 0),), frame='odom').poses[0]
+    goal.header.stamp.sec = 10
+    node.receive_goal(goal)
+    assert node.goal_pose(node.live_map) == pytest.approx((2, 1, math.pi/2))
+    goal.pose.orientation.w = 0.0
+    assert node.goal_pose(node.live_map) is None
+
+
 def test_map_frame_change_stops_recording_but_keeps_original_output(client):
     _, node = client
     node.receive_map(grid())
@@ -234,7 +285,7 @@ def test_clock_rollback_stops_before_waiting_for_a_missing_transform(client):
 
 def test_launch_shares_real_controller_footprint_and_measurement_sources(monkeypatch):
     spec = importlib.util.spec_from_file_location(
-        'control_experiment_launch_test', PACKAGE/'launch/control_experiment.launch.py')
+        'control_experiment_launch_test', PACKAGE/'launch/control/control_experiment.launch.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     monkeypatch.setattr(
@@ -249,7 +300,91 @@ def test_launch_shares_real_controller_footprint_and_measurement_sources(monkeyp
     assert parameters['use_sim_time'] is False
     assert parameters['map_topic'] == '/map'
     assert parameters['path_topic'] == '/limo/planning/path'
+    assert parameters['goal_topic'] == '/goal_pose'
     assert parameters['odom_topic'] == '/odometry/filtered'
     assert parameters['footprint'] == list(np.asarray(FOOTPRINT).ravel())
     assert parameters['base_frame'] == 'base_link'
     assert parameters['speed_scale_max'] > 0
+
+
+def test_execution_plots_follow_pause_resume_success_and_export(tmp_path, client):
+    app, node = client
+    clock = [10.0]
+    node.ros_seconds = lambda: clock[0]
+    node.receive_map(grid())
+    node.receive_path(path(((0, 0), (4, 0))))
+    node.receive_odom(odometry(frame='map'))
+    node.receive_status(String(data='ACTIVE: following path'))
+    assert node.run.recording
+    assert node.telemetry.distance == [(0.0, 1.0)]
+    scan = LaserScan()
+    scan.header.stamp.sec = 10
+    scan.range_min, scan.range_max = 0.1, 10.0
+    scan.ranges = [float('nan'), float('inf'), 0.05, 2.0, 0.8, 20.0]
+    node.receive_scan(scan)
+    assert node.telemetry.scan == [(0.0, pytest.approx(0.8))]
+    debug = MpcDebug()
+    debug.header.stamp.sec = 10
+    debug.guidance_backend = 'SMAC'
+    debug.guidance_path = [Pose2D(x=1.0, y=1.0)]
+    node.receive_debug(debug)
+    clock[0] = 10.2
+    node.receive_odom(odometry(10.2, x=1.1, frame='map'))
+    node.receive_status(String(data='PAUSED: control pause requested'))
+    node.receive_paused(Bool(data=True))  # Repeated retained state is idempotent.
+    counts = len(node.run.samples), len(node.telemetry.scan), len(node.telemetry.distance)
+    clock[0] = 12.2
+    scan.header.stamp.sec = 12
+    node.receive_scan(scan)
+    node.receive_odom(odometry(12.2, x=2, frame='map'))
+    assert counts == (len(node.run.samples), len(node.telemetry.scan), len(node.telemetry.distance))
+    assert node.telemetry.status == 'PAUSED' and len(node.telemetry.pauses) == 1
+    assert node.telemetry.avoidance[0] == pytest.approx((0, 0.2))
+    node.receive_status(String(data='ACTIVE: following path'))
+    clock[0] = 12.4
+    node.receive_odom(odometry(12.4, x=2.1, frame='map'))
+    scan.header.stamp.sec = 12
+    scan.header.stamp.nanosec = 400000000
+    node.receive_scan(scan)
+    assert node.telemetry.distance[-1][0] == pytest.approx(0.4)
+    assert node.run.samples[-1].segment == 1
+    node.receive_status(String(data='SUCCESS: stopped inside goal circle'))
+    assert not node.run.recording and node.telemetry.status == 'SUCCESS'
+    before = list(node.telemetry.scan)
+    scan.header.stamp.sec = 13
+    node.receive_scan(scan)
+    assert node.telemetry.scan == before
+    window = ControlExperimentWindow(node)
+    try:
+        window.canvas.draw()
+        assert window.plot_axes[0].get_title(loc='left') == 'Distance to global reference'
+        assert 'SUCCESS' not in window.status.text()
+        assert len(window.plot_marks) == 3  # Two pause markers and one red interval.
+        exported = window.export_image(tmp_path/'plots.png')
+        assert exported.read_bytes().startswith(b'\x89PNG')
+    finally:
+        window.timer.stop()
+        window.close()
+
+
+@pytest.mark.parametrize('terminal,expected', [('IDLE: waiting for a planned path', 'ABORTED'),
+                                            ('ERROR: controller failed', 'ERROR')])
+def test_executor_abort_and_error_freeze_plots(client, terminal, expected):
+    _, node = client
+    node.ros_seconds = lambda: 10.2
+    node.receive_map(grid())
+    node.receive_path(path())
+    node.receive_odom(odometry(frame='map'))
+    node.receive_status(String(data='ACTIVE: following path'))
+    node.receive_status(String(data=terminal))
+    original = list(node.telemetry.distance)
+    node.receive_odom(odometry(10.4, x=3, frame='map'))
+    assert node.telemetry.status == expected and not node.run.recording
+    assert node.telemetry.distance == original
+    window = ControlExperimentWindow(node)
+    try:
+        assert expected not in window.plot_axes[0].get_title(loc='left')
+        assert expected not in window.status.text()
+    finally:
+        window.timer.stop()
+        window.close()

@@ -6,6 +6,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    GroupAction,
     IncludeLaunchDescription,
     OpaqueFunction,
 )
@@ -56,6 +57,12 @@ def _launch_app(context):
             'The real application is headless; use desktop_app.launch.py '
             'for the control GUI.')
 
+    start_experiment = _optional_boolean(context, 'start_control_experiment', simulation)
+    if not simulation and start_experiment:
+        raise ValueError(
+            'The real application is headless; use desktop_app.launch.py '
+            'for the control experiment GUI.')
+
     map_topic = LaunchConfiguration('map_topic').perform(context)
     online_map_arguments = {'use_sim_time': use_sim_time}
     online_map_file = 'online_map_{}.launch.py'.format(profile)
@@ -103,11 +110,23 @@ def _launch_app(context):
         arguments[name] = os.path.expanduser(params_file) if params_file else os.path.join(
             get_package_share_directory(package), 'config', prefix + '_' + profile + '.yaml')
 
-    return [
+    actions = [
         _include('online_map_package', online_map_file, online_map_arguments),
         _include('traj_package', 'trajectory.launch.py', trajectory_arguments),
         _include('limo_controller', 'control.launch.py', controller_arguments),
     ]
+    if start_experiment:
+        experiment_mapping = os.path.expanduser(mapping_config) if mapping_config else os.path.join(
+            get_package_share_directory('online_map_package'), 'config',
+            'mapping_' + profile + '.yaml')
+        actions.append(GroupAction(actions=[_include(
+            'user_package', 'control/control_experiment.launch.py', {
+                'mapping_config': experiment_mapping,
+                'controller_params_file': controller_arguments['controller_params_file'],
+                'map_topic': map_topic,
+                'use_sim_time': use_sim_time,
+            })]))
+    return actions
 
 
 def generate_launch_description():
@@ -149,5 +168,8 @@ def generate_launch_description():
             'start_control_gui', default_value='',
             description=(
                 'Simulation GUI override; the real GUI runs in desktop_app.launch.py.')),
+        DeclareLaunchArgument(
+            'start_control_experiment', default_value='',
+            description='Open the experiment GUI by default in simulation; real uses desktop_app.'),
         OpaqueFunction(function=_launch_app),
     ])

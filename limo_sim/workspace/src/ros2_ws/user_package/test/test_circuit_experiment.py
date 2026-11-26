@@ -14,8 +14,8 @@ from PyQt5.QtCore import QPointF  # noqa: E402
 from PyQt5.QtWidgets import QApplication  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from user_package.circuit_experiment import CircuitView, CircuitWindow  # noqa: E402
-from user_package.circuit_scene import load_world_scene, Pose2D  # noqa: E402
+from user_package.control.circuit_experiment import CircuitView, CircuitWindow  # noqa: E402
+from user_package.control.circuit_scene import load_world_scene, Pose2D  # noqa: E402
 
 WORLD = Path(__file__).resolve().parents[3] / 'custom_start/worlds/limo_obstacle_world.world'
 
@@ -55,7 +55,7 @@ def test_model_states_update_gui_when_ros_is_available(app):
     rclpy = pytest.importorskip('rclpy')
     from gazebo_msgs.msg import ModelStates
     from geometry_msgs.msg import Pose
-    from user_package.circuit_experiment import create_gazebo_node
+    from user_package.control.circuit_experiment import create_gazebo_node
     rclpy.init()
     receiver = create_gazebo_node('/circuit_test/model_states')
     sender = rclpy.create_node('circuit_test_sender')
@@ -229,7 +229,7 @@ def test_link_updates_independently_when_ros_is_available(app):
     rclpy = pytest.importorskip('rclpy')
     from gazebo_msgs.msg import LinkStates
     from geometry_msgs.msg import Pose
-    from user_package.circuit_experiment import create_gazebo_node
+    from user_package.control.circuit_experiment import create_gazebo_node
     rclpy.init()
     receiver = create_gazebo_node('/base_test/models', '/base_test/links')
     sender = rclpy.create_node('base_test_sender')

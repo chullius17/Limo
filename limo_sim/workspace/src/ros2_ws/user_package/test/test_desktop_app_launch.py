@@ -58,6 +58,12 @@ def expanded_viewers(monkeypatch, actions):
         include = action[0]
         assert isinstance(include, IncludeLaunchDescription)
         arguments = dict(include.launch_arguments)
+        if 'mapping_config' in arguments:
+            module = load_launch('user_package', 'control/control_experiment.launch.py')
+            context = launch_context(module, arguments)
+            monkeypatch.setattr(module, 'Node', lambda **kwargs: kwargs)
+            nodes.extend(module._launch_experiment(context))
+            continue
         assert arguments['mode'] == 'desktop'
         assert arguments['use_sim_time'] == 'false'
         package = (
@@ -82,10 +88,10 @@ def test_desktop_expands_to_viewers_and_overlay_decoder(monkeypatch):
     assert {(node['package'], node['executable']) for node in nodes} == {
         ('rviz2', 'rviz2'), ('limo_controller', 'control_gui'),
         ('image_transport', 'republish'), ('limo_controller', 'mpc_gui'),
-        ('user_package', 'amcl_visualization')}
+        ('user_package', 'amcl_visualization'), ('user_package', 'control_experiment')}
     assert {node['name'] for node in nodes} == {
         'rviz2', 'control_gui', 'online_rviz_waterfall_overlay_decoder', 'mpc_preview',
-        'amcl_visualization'}
+        'amcl_visualization', 'control_experiment'}
     assert sum(node['executable'] == 'rviz2' for node in nodes) == 1
     assert all(node['parameters'][-1]['use_sim_time'] is False for node in nodes)
     gui = next(node for node in nodes if node['name'] == 'control_gui')
@@ -143,7 +149,8 @@ def test_cv_view_requires_explicit_switch_independently_of_backend(
     actions = desktop(
         monkeypatch, mapping_config=str(path), start_cv_rviz=override)
     includes = [dict(action[0].launch_arguments)
-                for action in actions if isinstance(action, list)]
+                for action in actions if isinstance(action, list)
+                and 'config_file' in dict(action[0].launch_arguments)]
     expected = override == 'true'
     assert len(includes) == 1 + int(expected)
     assert includes[0]['config_file'] == str(path)
@@ -157,7 +164,7 @@ def test_custom_cv_profile_and_client_switches_are_forwarded(monkeypatch):
         monkeypatch, cv_config='/tmp/custom_cv.yaml',
         start_mapping_rviz='false', start_control_gui='false', start_cv_rviz='true',
         start_mpc_preview='false', start_amcl_visualization='false')
-    assert len(actions) == 1
+    assert len(actions) == 2
     arguments = dict(actions[0][0].launch_arguments)
     assert arguments['config_file'] == '/tmp/custom_cv.yaml'
     assert arguments['mode'] == 'desktop'
@@ -180,12 +187,12 @@ def test_all_desktop_clients_can_be_disabled(monkeypatch):
     assert desktop(
         monkeypatch, start_mapping_rviz='false',
         start_cv_rviz='false', start_control_gui='false', start_mpc_preview='false',
-        start_amcl_visualization='false') == []
+        start_amcl_visualization='false', start_control_experiment='false') == []
 
 
 @pytest.mark.parametrize('name', [
     'start_mapping_rviz', 'start_cv_rviz', 'start_control_gui', 'start_mpc_preview',
-    'start_amcl_visualization'])
+    'start_amcl_visualization', 'start_control_experiment'])
 def test_invalid_desktop_switch_is_rejected(monkeypatch, name):
     with pytest.raises(ValueError, match='Expected true or false'):
         desktop(monkeypatch, **{name: 'typo'})
@@ -204,7 +211,7 @@ def test_viewer_includes_have_separate_launch_scopes():
         'start_control_gui': 'false', 'start_cv_rviz': 'true', 'start_mpc_preview': 'false',
         'start_amcl_visualization': 'false'})
     actions = module._launch_desktop(context)
-    assert len(actions) == 2
+    assert len(actions) == 3
     assert all(isinstance(action, GroupAction) for action in actions)
     for action in actions:
         scoped_actions = action.get_sub_entities()
@@ -217,6 +224,20 @@ def test_desktop_launch_uses_deferred_profile_resolution():
     description = module.generate_launch_description()
     assert any(isinstance(action, OpaqueFunction)
                for action in description.entities)
+
+
+def test_desktop_experiment_shares_custom_profiles_and_can_be_disabled(monkeypatch):
+    actions = desktop(monkeypatch, controller_params_file='/tmp/custom_control.yaml',
+                      start_mpc_preview='false')
+    experiment = next(dict(action[0].launch_arguments) for action in actions
+                      if isinstance(action, list)
+                      and 'mapping_config' in dict(action[0].launch_arguments))
+    assert experiment['controller_params_file'] == '/tmp/custom_control.yaml'
+    assert experiment['mapping_config'].endswith('/mapping_real.yaml')
+    assert experiment['use_sim_time'] == 'false'
+    actions = desktop(monkeypatch, start_control_experiment='false')
+    assert all('mapping_config' not in dict(action[0].launch_arguments)
+               for action in actions if isinstance(action, list))
 
 
 @pytest.mark.parametrize('override', ['', '/custom_complete_map'])
@@ -237,7 +258,7 @@ def test_amcl_viewer_follows_complete_map_profile(monkeypatch, tmp_path, overrid
 
 
 def test_standalone_amcl_viewer_uses_same_complete_map_and_wall_clock(monkeypatch):
-    module = load_launch('user_package', 'amcl_visualization.launch.py')
+    module = load_launch('user_package', 'amcl/amcl_visualization.launch.py')
     context = launch_context(module, {})
     monkeypatch.setattr(module, 'Node', lambda **kwargs: kwargs)
     viewer, = module._launch_viewer(context)

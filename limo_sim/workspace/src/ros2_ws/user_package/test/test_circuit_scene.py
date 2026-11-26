@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from user_package.circuit_scene import load_world_scene, Pose2D  # noqa: E402
+from user_package.control.circuit_scene import load_world_scene, Pose2D  # noqa: E402
 
 SOURCE = Path(__file__).resolve().parents[3]
 WORLD = SOURCE / 'custom_start/worlds/limo_obstacle_world.world'
@@ -88,7 +88,7 @@ def test_quaternion_normalization_and_validation():
 
 
 def test_live_snapshot_loads_new_geometry_and_ignores_robot(tmp_path):
-    from user_package.circuit_scene import load_scene_sdf, world_sdf_from_response
+    from user_package.control.circuit_scene import load_scene_sdf, world_sdf_from_response
     import json
     original = load_world_scene(WORLD)
     sdf = '''<sdf version="1.7"><world name="default">
@@ -111,7 +111,7 @@ def test_live_snapshot_loads_new_geometry_and_ignores_robot(tmp_path):
 
 
 def test_gazebo_response_octals_and_rejection():
-    from user_package.circuit_scene import world_sdf_from_response
+    from user_package.control.circuit_scene import world_sdf_from_response
     assert world_sdf_from_response(r'data: "\303\250\n"') == 'è\n'
     with pytest.raises(ValueError):
         world_sdf_from_response('No response received')
@@ -120,7 +120,7 @@ def test_gazebo_response_octals_and_rejection():
 
 
 def test_link_states_select_exact_robot_link_and_handle_removal():
-    from user_package.circuit_scene import pose_from_link_states
+    from user_package.control.circuit_scene import pose_from_link_states
 
     def message_pose(x, y, yaw):
         return SimpleNamespace(position=SimpleNamespace(x=x, y=y), orientation=SimpleNamespace(

@@ -11,7 +11,7 @@ pytest.importorskip('matplotlib')
 from PyQt5.QtWidgets import QApplication  # noqa: E402
 import rclpy  # noqa: E402
 from nav_msgs.msg import Odometry  # noqa: E402
-from user_package.ekf_experiment import (  # noqa: E402
+from user_package.ekf.ekf_experiment import (  # noqa: E402
     ExperimentNode, ExperimentWindow, export_snapshot)
 
 

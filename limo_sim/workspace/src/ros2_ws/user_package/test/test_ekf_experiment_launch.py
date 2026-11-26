@@ -11,7 +11,7 @@ from launch.actions import DeclareLaunchArgument  # noqa: E402
 
 
 def compose(monkeypatch, **overrides):
-    path = Path(__file__).resolve().parents[1] / 'launch/experiments/ekf_experiment.launch.py'
+    path = Path(__file__).resolve().parents[1] / 'launch/ekf/ekf_experiment.launch.py'
     spec = importlib.util.spec_from_file_location('experiment_launch', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

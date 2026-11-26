@@ -1,6 +1,51 @@
 # LIMO application launch
 
-## Control experiment: map and measured-speed footprint image
+## Package layout
+
+Python tools in `user_package/` and their launch files in `launch/` are grouped
+by area:
+
+- `amcl/`: localization visualization, history, statistics and recording.
+- `ekf/`: raw/filtered odometry comparison and experiment viewer.
+- `control/`: control experiments, circuit viewer and scene geometry; the ideal
+  circuit simulation launch is in `launch/control/`.
+
+General application launches remain directly in `launch/`. Shared map geometry
+remains in `user_package/map_geometry.py`. ROS executable and launch filenames
+are unchanged, so the commands below still apply after rebuilding the package.
+
+## Control experiment: map, tracking distance and minimum laser range
+
+The window places the complete map at the top, with an arrow showing the goal
+position and heading. Two time plots are stacked below: distance to the global
+reference path, then minimum valid laser range. The goal comes from `/goal_pose` (override with
+`goal_topic:=/your/topic`); until a goal is received, the viewer uses the last pose
+of the global path. The displayed goal is frozen when recording starts, together
+with the reference path. PNG exports include the entire figure and both panels.
+
+Distance is the shortest Euclidean distance from the estimated robot center to
+the frozen global path's line segments, in metres. Red background intervals
+indicate an actual Dijkstra/SMAC avoidance path in `/limo/control/mpc_debug`;
+missing/stale telemetry does not imply active avoidance. The second plot uses
+the minimum finite `/scan` return within `range_min` and `range_max`, with gaps
+when no valid returns exist. `scan_topic` and `debug_topic` override the topics;
+their launch defaults follow the selected controller YAML.
+
+Acquisition starts automatically on the executor's START/ACTIVE state once map,
+path and fresh odometry are available. SUCCESS, ABORT (executor IDLE/READY after
+execution), and ERROR freeze the captured results. PAUSE stops acquisition;
+RESUME continues on an active-time axis excluding the pause duration. A black
+vertical mark appears in both plots for every pause, and the curves break at
+that point. Plot titles indicate PAUSED while acquisition is suspended; the
+SUCCESS/ABORTED outcome is hidden in both the GUI and exported image.
+**Clear run** discards the
+retained results and permits recording another execution.
+
+The GUI opens automatically with `limo_app_sim.launch.py`,
+`limo_app_ideal_sim.launch.py`, and `desktop_app.launch.py`. Disable it with
+`start_control_experiment:=false`. Simulation uses the application's clock and
+controller profile; the desktop uses the real robot profiles and wall time.
+`limo_app_real.launch.py` stays headless: run `desktop_app.launch.py` on the PC.
 
 The desktop **Control Experiment — Map and Speed** GUI implements the first
 experiment output: the complete robot map, the global reference path, and the
@@ -29,12 +74,12 @@ display inputs. The speed scale is fixed for the run; values above its maximum
 saturate at the upper color, indicated by the colorbar's upper extension.
 
 1. Plan a global path using the existing robot application.
-2. Press **Start recording** in this GUI before starting the robot's path execution.
-   This freezes the map and global reference for the experiment. Recording does
-   not activate, pause or stop the robot.
-3. Press **Stop recording** to freeze the captured footprint trail.
-4. Use **Save image…** to export output 1 as a 300 DPI PNG with the global path,
-   measured-speed legend and footprints. Pan/zoom changes the exported viewport;
+2. Start path execution in the control GUI to capture automatically, or press
+   **Start recording** here first to include pre-execution observations.
+   This freezes the map and global reference. The observer does not command motion.
+3. SUCCESS/ABORT/ERROR freeze the run automatically; **Stop recording** freezes it manually.
+4. Use **Save image…** to export a 300 DPI PNG with both plots, pause markers,
+   avoidance intervals, the global path, speed legend and footprints. Pan/zoom changes the exported viewport;
    **Fit complete map** restores the entire map.
 5. **Clear run** explicitly discards the local capture before starting another run.
 
@@ -47,8 +92,7 @@ samples, normally sampled at most every 0.1 s; reaching the cap stops acquisitio
 rather than discarding the beginning. Both limits are launch arguments.
 
 All controls, plot labels and legends are English. This observer runs only on
-the desktop and does not require rebuilding or restarting the robot. The second
-experiment output is intentionally left for a later change.
+the desktop and does not require rebuilding or restarting the robot.
 
 ## AMCL localization history on the real robot's complete map
 
@@ -188,7 +232,7 @@ ros2 run user_package circuit_experiment --offline --screenshot /tmp/circuito.pn
 
 ## Simulazione: traiettoria sulla mappa ideale e controllo dai sensori
 
-`launch/experiments/limo_app_ideal_sim.launch.py` avvia la mappa ideale del
+`launch/control/limo_app_ideal_sim.launch.py` avvia la mappa ideale del
 circuito su `/map`, la localizzazione AMCL con laser e CV dell'esperimento
 `online_map_ideal_sim`, `trajectory` e `control` con i profili di simulazione.
 Il planner usa la mappa ideale; la costmap locale dell'MPC conserva laser,
@@ -252,8 +296,8 @@ predefiniti sono i profili `sim` esistenti.
 ## AMCL statistics
 
 `amcl_stats` records AMCL's laser/CV usage and published pose covariance. The
-viewer and data model are `user_package/amcl_stats.py` and
-`user_package/amcl_stats_model.py`; the launch is under `launch/experiments/`.
+viewer and data model are `user_package/amcl/amcl_stats.py` and
+`user_package/amcl/amcl_stats_model.py`; the launch is under `launch/amcl/`.
 It reads existing topics without changing localization or starting Gazebo.
 
 Build and source the viewer in the ROS workspace:
@@ -321,7 +365,7 @@ running AMCL process.
 
 ## Esperimenti EKF: confronto delle odometrie
 
-Il launch unico `launch/experiments/ekf_experiment.launch.py` apre una finestra
+Il launch unico `launch/ekf/ekf_experiment.launch.py` apre una finestra
 con sei grafici aggiornati: traiettoria XY, yaw, velocità longitudinale, velocità
 angolare, distanza fra le posizioni e differenza di yaw. Confronta `/odom` e
 `/odometry/filtered` durante lo stesso movimento, senza pubblicare comandi o TF.
@@ -533,6 +577,7 @@ Optional desktop switches:
 ros2 launch user_package desktop_app.launch.py start_cv_rviz:=true
 ros2 launch user_package desktop_app.launch.py start_mapping_rviz:=false
 ros2 launch user_package desktop_app.launch.py start_control_gui:=false
+ros2 launch user_package desktop_app.launch.py start_control_experiment:=false
 ros2 launch user_package desktop_app.launch.py start_mpc_preview:=false
 ```
 

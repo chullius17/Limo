@@ -1,0 +1,109 @@
+# ROS 2 parameter file for limo_cloud_node / cloud.launch.py.
+# Active entries override the C++ defaults. Commented entries show the actual
+# defaults and may be uncommented to customize the node. Topics without a leading
+# slash are relative to the node namespace; topics starting with '/' are absolute.
+limo_cloud:
+  ros__parameters: {}
+    # Classified input image: mono8/8UC1, one uint8 class ID per pixel, not RGB colors.
+    # Its pixel grid must match the corrected depth image. All supported IDs are
+    # projected uniformly and preserved; invalid_class_id controls the only exclusion.
+    # classified_image_topic: limo/cv_package/detection/lane_labels/raw
+
+    # Preferred depth input: 32FC1 in metres, or 16UC1/mono16 in millimetres.
+    # This must already be registered, cropped and resized to the classified grid;
+    # the projector does not perform camera-to-camera depth registration.
+    # depth_topic: limo/cv_package/depth_correction/depth_corrected/raw
+
+    # Full-resolution RGB CameraInfo. Intrinsics and source image dimensions are
+    # used to reconstruct rays for the resized/cropped classified image.
+    # camera_info_topic: /rgb/camera_info
+
+    # Output PointCloud2 topic, compatible with the previous visual_ptcld consumer.
+    # Layout: x/y/z FLOAT32 at offsets 0/4/8, class_id UINT8 at offset 12; 16 bytes/point.
+    # Run only one producer on this topic, or change it when comparing both nodes.
+    # pointcloud_topic: limo/cv_package/visual_ptcld/points
+
+    # TF destination frame. The camera-to-target transform is looked up at the
+    # classified image timestamp; missing TF causes that frame to be skipped.
+    # bev_frame: base_link
+
+    # Require identical nonempty frame IDs for depth, classified image and CameraInfo.
+    # Also disables the raw-depth fallback subscription. Enabled by default because
+    # the normal input contract is already aligned classified RGBD images.
+    # require_rgb_depth: true
+
+    # Fraction of the ORIGINAL CameraInfo image height discarded from the top
+    # upstream, in [0, 1). 0.5 means the lower half was retained. This adjusts ray
+    # geometry; it does not crop the corrected inputs a second time. The fallback
+    # path also uses this fraction when cropping its full-resolution raw depth.
+    # input_crop_y_min: 0.0
+
+    # Additional output ROI in the ALREADY cropped/resized image, expressed as
+    # fractions of its height: 0 <= roi_y_min < roi_y_max <= 1. Retained rows are
+    # [floor(height * roi_y_min), floor(height * roi_y_max)); all columns remain.
+    # roi_y_min: 0.0
+    # roi_y_max: 1.0
+
+    # Inclusive accepted OPTICAL depth range in metres, before the TF transform.
+    # These are camera-Z limits, not planar distances from base_link. Zero, NaN,
+    # infinity and out-of-range measurements are discarded for every class.
+    # Require 0 < pointcloud_min_depth_m < pointcloud_max_depth_m, both finite.
+    # pointcloud_min_depth_m: 0.1
+    # pointcloud_max_depth_m: 2.5
+
+    # Single input class ID to exclude, in [0, 255]; -1 includes every ID.
+    # The detector uses 0 for invalid pixels. No other class-specific filtering,
+    # relabeling, voxelization or distance processing is enabled by the core.
+    # invalid_class_id: 0
+
+    # true: transform points into bev_frame and publish their XY coordinates with
+    # z=0, matching visual_ptcld. false: retain the full transformed XYZ coordinates.
+    # flatten_to_bev: true
+
+    # Maximum absolute difference between depth and classified timestamps, seconds.
+    # 0 disables this check and uses the latest available depth, like visual_ptcld;
+    # a positive finite limit skips pairs that differ by more than that value.
+    # This is a freshness check, not a synchronizer or an image-pairing queue.
+    # max_rgb_depth_delta_sec: 0.0
+
+    # Raw depth topic used only when require_rgb_depth=false and corrected depth
+    # has never arrived or has stopped arriving for corrected_depth_timeout_sec.
+    # Raw fallback is cropped/resized but is NOT registered into the RGB camera.
+    # fallback_depth_topic: /depth_camera/depth/image_raw
+
+    # Corrected-depth preference timeout in seconds, measured with a steady clock,
+    # independent of ROS/simulation time. Must be finite and strictly positive.
+    # Switching to fallback requires a new raw-depth message after this timeout.
+    # corrected_depth_timeout_sec: 1.0
+
+    # Raw-fallback output dimensions in pixels; both must be positive integers.
+    # They must match the classified image dimensions. Nearest-neighbor sampling
+    # preserves native depth values; these settings never resize corrected depth.
+    # fallback_depth_width: 320
+    # fallback_depth_height: 120
+
+    # Enable timing logs: point count, projection/packing, image/cloud plugin time,
+    # publication time, rolling worker mean, and overwritten pending label frames.
+    # enable_telemetry: true
+
+    # Number of successfully published frames in the rolling worker-time average.
+    # Positive integer; failed frames are excluded. Only used when telemetry is on.
+    # telemetry_window_size: 60
+
+    # Emit one timing report every N successfully published frames. Positive integer;
+    # disabled telemetry suppresses reports regardless of this value.
+    # telemetry_log_interval_frames: 30
+
+    # Ordered plugin INSTANCE names. Empty means direct C++ projection: no semantic
+    # postprocessing and no Python interpreter initialization. All process_images
+    # hooks run in list order, then projection, then all process_cloud hooks in the
+    # same order. Plugins share named image/cloud intermediates within each frame.
+    # Each instance needs '<instance>.type': a pluginlib class name (C++) or
+    # 'python:importable.module:ClassName'. Other instance parameters belong to that
+    # plugin. See plugins_example.yaml; it is an optional overlay, never auto-loaded.
+    # plugins: []
+
+    # Standard ROS clock selection. Set true with simulation /clock; TF and message
+    # timestamps must use the same clock. cloud.launch.py supplies this parameter
+    # through its use_sim_time launch argument, which takes precedence over this file.
+    # use_sim_time: false

@@ -96,13 +96,13 @@ def _launch_cv(context):
     )
     nodes = []
     if start_pipeline:
-        nodes.extend([
-            lane_node,
-            depth_node,
-            RegisterEventHandler(OnProcessStart(
+        nodes.extend([lane_node, depth_node])
+        # Integration launches can reuse the detector/depth/viewer unchanged and
+        # provide another cloud consumer without starting a second producer.
+        if _boolean(LaunchConfiguration('start_visual_ptcld').perform(context)):
+            nodes.append(RegisterEventHandler(OnProcessStart(
                 target_action=lane_node, on_start=[cloud_node],
-            )),
-        ])
+            )))
     if start_rviz:
         config_dir = os.path.join(
             get_package_share_directory('limo_rviz'), 'config')
@@ -133,6 +133,9 @@ def generate_launch_description():
                               description='Override the profile clock.'),
         DeclareLaunchArgument('start_rviz', default_value='',
                               description='Override the profile RViz setting.'),
+        DeclareLaunchArgument(
+            'start_visual_ptcld', default_value='true',
+            description='Start the legacy cloud node; false allows an external replacement.'),
         DeclareLaunchArgument(
             'visual_ptcld_enable_telemetry', default_value='',
             description='Override the visual point cloud telemetry setting.'),

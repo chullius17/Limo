@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from user_package.ekf_experiment_model import ExperimentHistory, Sample, compare
+from user_package.ekf.ekf_experiment_model import ExperimentHistory, Sample, compare
 
 
 def sample(stamp, **overrides):

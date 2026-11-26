@@ -15,10 +15,10 @@ from PyQt5.QtWidgets import QApplication  # noqa: E402
 import rclpy  # noqa: E402
 from rclpy.parameter import Parameter  # noqa: E402
 
-from user_package.amcl_stats import (  # noqa: E402
+from user_package.amcl.amcl_stats import (  # noqa: E402
     ExperimentNode, ExperimentWindow, default_results_directory,
 )
-from user_package.amcl_stats_model import (  # noqa: E402
+from user_package.amcl.amcl_stats_model import (  # noqa: E402
     ExperimentSession, cv_records, laser_records, pose_record,
 )
 
