@@ -2,7 +2,7 @@
 
 This repo contains five packages that exploit the LIMO's visual information to build **global/local costmaps** and significantly improve the accuracy of **autonomous localization**. The packages are compatible with **ROS 2 Foxy**.
 
-#### 1. [limo_depth]
+#### 1. limo_depth
 
 Assuming the LIMO travels on a **planar surface**, this package estimates the pose of the traveling plane through frame sampling and uses it to estimate the values of the **unknown pixels** in the depth image.
 
