@@ -1,0 +1,37 @@
+# Simulation SLAM settings used by map.launch.py with profile:=sim.
+# Matches offline_map_package/config/mapping_sim.yaml, including the 0.5 m/rad
+# movement gates which that profile inherits from SLAM Toolbox's defaults.
+# These are example values, not a list of SLAM's C++ defaults. Uncommented values
+# configure the backend; start_slam:=false uses an already running SLAM instead.
+slam_toolbox:
+  ros__parameters:
+    # Input laser and robot base. Drivers/Gazebo must supply /scan and the TF
+    # chain odom -> base_link -> laser frame. The example does not start drivers.
+    scan_topic: /scan
+    base_frame: base_link
+
+    # SLAM estimates map->odom and publishes the complete laser OccupancyGrid.
+    # map.launch.py copies map_frame, odom_frame and evidence resolution from the
+    # selected mapper config, and remaps SLAM's map output to reference_map_topic.
+    map_frame: map
+    odom_frame: odom
+    resolution: 0.05
+    mode: mapping
+
+    # Match the original simulation pipeline. Do not use the real robot's 0.05
+    # thresholds here: that inserts many more near-identical scans and increases
+    # graph optimization/scan-matching work. Units are metres and radians.
+    throttle_scans: 1
+    minimum_time_interval: 0.1
+    minimum_travel_distance: 0.5
+    minimum_travel_heading: 0.5
+    max_laser_range: 8.0
+
+    # Match the original simulation map refresh (seconds). Publish map->odom at
+    # 50 Hz and retain 30 seconds of TF. Semantic output has its own timer.
+    map_update_interval: 2.0
+    transform_publish_period: 0.02
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    scan_queue_size: 1
+    # use_sim_time is supplied by map.launch.py to every component.

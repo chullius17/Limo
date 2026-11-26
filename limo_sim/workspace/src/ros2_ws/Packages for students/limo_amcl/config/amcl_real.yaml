@@ -1,0 +1,85 @@
+# Profile: real.
+# Mixed laser/CV AMCL. Active values override the C++ defaults.
+# Commented values are the actual C++ defaults; uncomment to tune them.
+# Parameters are read on lifecycle configure: restart/reconfigure after editing.
+amcl:
+  ros__parameters:
+    # Coordinate frames and inputs. Robot/driver/EKF must already publish odom->base_link.
+    base_frame_id: base_link  # C++: base_footprint.
+    # odom_frame_id: odom
+    # global_frame_id: map
+    scan_topic: /scan  # C++: scan. sensor_msgs/LaserScan, with valid timestamps/TF.
+    map_topic: /limo/map_package/online/maps/laser_map  # C++: map. Static laser-only grid.
+    # tf_broadcast: true  # This must be the ONLY localizer broadcasting map->odom.
+    # transform_tolerance: 1.0  # Seconds: future validity of the published map->odom TF.
+
+    # Particle filter and motion. Preserve the previous online pipeline tuning.
+    min_particles: 300  # C++: 500. KLD lower bound.
+    max_particles: 800  # C++: 2000. KLD upper bound.
+    # robot_model_type: differential  # differential or omnidirectional.
+    # alpha1: 0.2  # Rotation noise from rotation.
+    # alpha2: 0.2  # Rotation noise from translation.
+    # alpha3: 0.2  # Translation noise from translation.
+    # alpha4: 0.2  # Translation noise from rotation.
+    # alpha5: 0.2  # Lateral noise (omnidirectional model only).
+    # update_min_d: 0.25  # Metres of odometry before the next update.
+    # update_min_a: 0.2  # Radians of odometry before the next update.
+    # resample_interval: 1  # Filter updates between resampling operations.
+    # pf_err: 0.05  # KLD sampling error bound.
+    # pf_z: 0.99  # KLD confidence coefficient used by the native PF implementation.
+    # recovery_alpha_fast: 0.0  # Fast recovery averaging; zero disables injection.
+    # recovery_alpha_slow: 0.0  # Slow recovery averaging; zero disables injection.
+
+    # Laser model. Range limits are in metres; sigma_hit is in metres.
+    # laser_model_type: likelihood_field  # beam, likelihood_field, likelihood_field_prob.
+    # max_beams: 60
+    # laser_min_range: -1.0  # Negative: use the scan minimum.
+    # laser_max_range: 100.0  # Negative: use the scan maximum.
+    # laser_likelihood_max_dist: 2.0
+    # sigma_hit: 0.2
+    # lambda_short: 0.1
+    # z_hit: 0.5
+    # z_rand: 0.5
+    # z_short: 0.05
+    # z_max: 0.05
+    # do_beamskip: false  # Only likelihood_field_prob uses beam skipping.
+    # beam_skip_distance: 0.5  # Metres.
+    # beam_skip_threshold: 0.3
+    # beam_skip_error_threshold: 0.9
+
+    # Classified cloud and separate static semantic grid (OccupancyGrid).
+    cv_enabled: true  # C++: false. Missing/unusable CV falls back to laser.
+    # cv_cloud_topic: /limo/cv_package/visual_ptcld/points
+    # cv_map_topic: /limo/map_package/online/maps/cv_obstacle
+    # class_id must be UINT8. Lists must be disjoint; IDs absent here are ignored.
+    # Road votes match cells exactly 0; obstacle votes match >= cv_occupied_threshold.
+    # Keep these roles consistent with the costs used to export the map in limo_map.
+    cv_road_class_ids: [1, 5]  # C++: [1, 5]. Exterior/interior road in the example.
+    cv_obstacle_class_ids: [2, 4, 6]  # C++: [2, 4, 6]. Lines, boardwalk, hard obstacles.
+    # cv_buffer_size: 10  # Maximum buffered classified clouds.
+    # cv_sync_tolerance: 0.2  # Seconds, absolute difference from laser timestamp.
+    # cv_voxel_size: 0.075  # Metres. XY centroids, separately for road and obstacles.
+    # cv_min_points: 5.0  # Minimum occupied XY/polarity voxels, not raw cloud density.
+    cv_min_non_road_voxels: 20  # C++: 1. Require independent obstacle evidence.
+    # cv_occupied_threshold: 50  # Grid cost in [1,100]. Unknown/outside always mismatch.
+
+    # Normalized weights: w_laser^laser_weight_factor * exp(-cv_weight_factor*cv_sad_gain*SAD).
+    # SAD is mean binary mismatch over the voxelized observation.
+    laser_weight_factor: 1.0  # C++: 1.0. Zero skips the laser likelihood entirely.
+    cv_weight_factor: 1.0  # C++: 0.25. Zero disables the CV contribution.
+    # cv_sad_gain: 20.0
+    # cv_quality_gate_enabled: true  # Evaluate CV-only posterior before accepting fusion.
+    # cv_min_information: 0.02  # Minimum CV information gain (KL, nats).
+    # cv_max_position_stddev: 0.5  # Metres: maximum accepted CV posterior spread.
+    # cv_max_yaw_stddev: 0.5  # Radians: maximum accepted CV posterior spread.
+    # workload_logging_enabled: true  # Log CV fusion workload; diagnostic topics publish when subscribed.
+
+    # Initial pose: use RViz 2D Pose Estimate, or enable the configured pose below.
+    # set_initial_pose: false
+    # initial_pose.x: 0.0  # Metres in global_frame_id.
+    # initial_pose.y: 0.0
+    # initial_pose.z: 0.0
+    # initial_pose.yaw: 0.0  # Radians.
+    # always_reset_initial_pose: false  # Require a new initial pose after reactivation.
+    # save_pose_rate: 0.5  # Legacy compatibility setting; this port does not periodically save poses.
+    # use_sim_time is selected by the launch profile, not by this file.
