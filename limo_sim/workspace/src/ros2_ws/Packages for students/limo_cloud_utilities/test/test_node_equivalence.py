@@ -48,12 +48,12 @@ def test_cpp_projection_and_python_plugins_match_legacy_over_dds(
     expected_debug = {} if debug else None
     expected = legacy_output(labels_array, depth_array, original, expected_debug)
     suffix = '{}_{}_{}'.format(profile, encoding.lower(), int(debug))
-    prefix = '/limo_cloud_example_test_' + suffix
+    prefix = '/limo_cloud_utilities_test_' + suffix
     for key, topic in (('classified_image_topic', 'labels'), ('depth_topic', 'depth'),
                        ('camera_info_topic', 'info'), ('pointcloud_topic', 'points')):
         parameters[key] = prefix + '/' + topic
-    binary = Path(get_package_prefix('limo_cloud_example')) / 'lib/limo_cloud_example/limo_cloud_example_node'
-    assert binary.is_file(), 'Build limo_cloud_example before running the DDS equivalence test'
+    binary = Path(get_package_prefix('limo_cloud_utilities')) / 'lib/limo_cloud_utilities/limo_cloud_utilities_node'
+    assert binary.is_file(), 'Build limo_cloud_utilities before running the DDS equivalence test'
     # Exercise the dedicated executable's default Python plugin registration.
     parameters.pop('plugins')
     parameters = {key: value for key, value in parameters.items() if not key.endswith('.type')}
@@ -95,9 +95,9 @@ def test_cpp_projection_and_python_plugins_match_legacy_over_dds(
     depth.step = width * depth_array.itemsize
     depth.encoding = encoding
     depth.data = array('B', depth_array.tobytes())
-    with tempfile.TemporaryDirectory(prefix='limo_cloud_example_') as temporary:
+    with tempfile.TemporaryDirectory(prefix='limo_cloud_utilities_') as temporary:
         config = Path(temporary) / 'parameters.yaml'
-        config.write_text(yaml.safe_dump({'limo_cloud_example': {'ros__parameters': parameters}}))
+        config.write_text(yaml.safe_dump({'limo_cloud_utilities': {'ros__parameters': parameters}}))
         with (Path(temporary) / 'node.log').open('w+') as logs:
             environment = dict(os.environ, ROS_LOG_DIR=temporary, OPENBLAS_NUM_THREADS='1',
                                OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', BLIS_NUM_THREADS='1')

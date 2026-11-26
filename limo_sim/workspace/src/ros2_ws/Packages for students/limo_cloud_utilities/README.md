@@ -1,8 +1,8 @@
-# limo_cloud_example
+# limo_cloud_utilities
 
 A standalone classified-RGBD consumer that combines the `limo_cloud` C++ projector
 with Python plugins reproducing the semantic processing of `visual_ptcld`.
-The processing algorithms are copied locally into [processing](limo_cloud_example/processing).
+The processing algorithms are copied locally into [processing](limo_cloud_utilities/processing).
 
 ## Inputs and output
 
@@ -47,7 +47,7 @@ already be running upstream.
 ## Run
 
 ```bash
-ros2 launch limo_cloud_example cloud.launch.py
+ros2 launch limo_cloud_utilities cloud.launch.py
 ```
 
 See [config/cloud.yaml](config/cloud.yaml) for parameters and plugin settings.
@@ -59,9 +59,9 @@ enables simulation time and debug outputs.
 ## Full CV integration test
 
 ```bash
-ros2 launch limo_cloud_example real.launch.py
-ros2 launch limo_cloud_example sim.launch.py
-ros2 launch limo_cloud_example desktop.launch.py
+ros2 launch limo_cloud_utilities real.launch.py
+ros2 launch limo_cloud_utilities sim.launch.py
+ros2 launch limo_cloud_utilities desktop.launch.py
 ```
 
 Choose `real` for the robot backend, `sim` for the simulated backend plus RViz,
@@ -70,7 +70,7 @@ CameraInfo and robot TF must already be available, as for the original CV launch
 
 These launches reuse `cv_package`'s detector, depth correction, real/sim YAML
 profiles and viewer. The backend replaces `visual_ptcld` with
-`limo_cloud_example_node`, translating semantic settings to plugin parameters;
+`limo_cloud_utilities_node`, translating semantic settings to plugin parameters;
 the original cloud node is disabled. Run this backend in place of the original
 CV backend. The generic `limo_cloud` package remains independent of `cv_package`.
 Use `config_file:=/path/to/cv_profile.yaml` to test a custom CV profile, or

@@ -4,7 +4,7 @@
 # Active values override defaults. Commented values document editable defaults.
 # Optional LOCAL real.yaml/sim.yaml overlays preserve the previous cloud tuning;
 # no runtime code or configuration is loaded from cv_package.
-limo_cloud_example:
+limo_cloud_utilities:
   ros__parameters:
     # Ordered plugin instances. Image hooks run before C++ sparse projection;
     # cloud hooks run afterwards, in this same order. Debug observes pre-boardwalk
@@ -15,7 +15,7 @@ limo_cloud_example:
     # masks:
       # Required Python implementation: derive road boundary/interior masks by
       # dilating background before applying the ROI. Labels 0/>3 are ignored here.
-      # type: python:limo_cloud_example.image_plugins:BoundaryMasks
+      # type: python:limo_cloud_utilities.image_plugins:BoundaryMasks
 
       # Global OpenCV worker count, positive integer. The CV profile sets this.
       # opencv_num_threads: 1
@@ -28,7 +28,7 @@ limo_cloud_example:
     sampling:
       # Required Python implementation: emit explicit ordered (row, col, class_id)
       # requests for the C++ projector; repeated pixels are deliberately preserved.
-      # type: python:limo_cloud_example.image_plugins:PixelSampling
+      # type: python:limo_cloud_utilities.image_plugins:PixelSampling
 
       # Image-space sampling cell side in pixels, positive integer. Road boundary,
       # background and interior road use rounded centroids; yellow keeps all pixels.
@@ -45,7 +45,7 @@ limo_cloud_example:
     # debug:
       # Required Python observer. Preserves the legacy JPEG and points_before_kdtree
       # topics. Uses a publishing-only rclpy context, created only when enabled.
-      # type: python:limo_cloud_example.debug:DebugOutputs
+      # type: python:limo_cloud_utilities.debug:DebugOutputs
 
       # Enable compatibility debug outputs; drawing/JPEG/serialization only occurs
       # when the respective topic has subscribers. Disabled by default.
@@ -57,7 +57,7 @@ limo_cloud_example:
     # boardwalk:
       # Required Python implementation: the same two exact cKDTree neighbor passes
       # as visual_ptcld. Distances are metric BEV XY distances, not image distances.
-      # type: python:limo_cloud_example.cloud_plugins:Boardwalk
+      # type: python:limo_cloud_utilities.cloud_plugins:Boardwalk
 
       # Enable background relabeling. false retains original background class 3.
       # The legacy road_boardwalk_only option requires this to remain true.
@@ -77,7 +77,7 @@ limo_cloud_example:
 
     # class_filter:
       # Required optional legacy output selector, executed before metric voxelization.
-      # type: python:limo_cloud_example.cloud_plugins:RoadBoardwalkOnly
+      # type: python:limo_cloud_utilities.cloud_plugins:RoadBoardwalkOnly
 
       # true retains road 1/5 and boardwalk 4/6, dropping yellow 2/background 3.
       # false keeps all projected classes. The local real profile overrides this to true.
@@ -86,7 +86,7 @@ limo_cloud_example:
     # voxel:
       # Required Python reducer: identical legacy per-class BEV voxel centroids,
       # retaining representative ordering. This plugin requires flatten_to_bev=true.
-      # type: python:limo_cloud_example.cloud_plugins:MetricVoxel
+      # type: python:limo_cloud_utilities.cloud_plugins:MetricVoxel
 
       # Metric XY voxel side length in metres, finite and strictly positive.
       # Different semantic classes never merge, even when they occupy the same voxel.

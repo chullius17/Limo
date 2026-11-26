@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>limo_cloud_example</name>
+  <name>limo_cloud_utilities</name>
   <version>0.0.1</version>
   <description>Python processing plugins reproducing the LIMO visual point-cloud pipeline.</description>
   <maintainer email="giulio.cataldo@studio.unibo.it">Giulio Cataldo</maintainer>

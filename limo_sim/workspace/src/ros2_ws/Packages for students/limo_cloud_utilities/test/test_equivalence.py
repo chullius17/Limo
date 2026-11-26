@@ -5,7 +5,7 @@ import pytest
 
 from helpers import frame_for, legacy_output, plugins, run_plugins, scene, settings
 from limo_cloud import POINT_DTYPE
-from limo_cloud_example.cloud_plugins import Boardwalk
+from limo_cloud_utilities.cloud_plugins import Boardwalk
 
 
 @pytest.mark.parametrize('profile', ['real', 'sim'])
@@ -66,6 +66,6 @@ def test_two_neighbor_passes_use_exact_bounds_and_frozen_seeds():
 
 @pytest.mark.parametrize('size', [0, -1])
 def test_invalid_sampling_configuration_fails_early(size):
-    from limo_cloud_example.image_plugins import PixelSampling
+    from limo_cloud_utilities.image_plugins import PixelSampling
     with pytest.raises(ValueError):
         PixelSampling().configure({'point_voxel_size': size})

@@ -40,7 +40,7 @@ class MappingLaunch(unittest.TestCase):
     def test_simulation_default_is_complete_and_has_one_viewer(self):
         actions = self.launch()
         cv = actions[0]['group'][0]
-        self.assertTrue(cv['source'].endswith('limo_cloud_example/launch/sim.launch.py'))
+        self.assertTrue(cv['source'].endswith('limo_cloud_utilities/launch/sim.launch.py'))
         self.assertEqual(cv['arguments']['mode'], 'backend')
         self.assertEqual(cv['arguments']['start_rviz'], 'false')
         self.assertEqual(cv['arguments']['use_sim_time'], 'true')

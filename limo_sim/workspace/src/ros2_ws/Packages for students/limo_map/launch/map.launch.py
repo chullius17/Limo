@@ -44,7 +44,7 @@ def _launch_mapping(context):
     actions = []
 
     if _boolean(value('start_cv')):
-        cv_share = get_package_share_directory('limo_cloud_example')
+        cv_share = get_package_share_directory('limo_cloud_utilities')
         # Scope child arguments such as config_file/profile so they cannot change
         # the mapper or GUI configuration in the parent launch context.
         actions.append(GroupAction(actions=[IncludeLaunchDescription(
@@ -123,7 +123,7 @@ def generate_launch_description():
         DeclareLaunchArgument('use_sim_time', default_value='',
                               description='Empty follows the profile: sim=true, real=false.'),
         DeclareLaunchArgument('start_cv', default_value='true',
-                              description='Start CV with the limo_cloud_example cloud stage.'),
+                              description='Start CV with the limo_cloud_utilities cloud stage.'),
         DeclareLaunchArgument('start_slam', default_value='true',
                               description='Start SLAM Toolbox to provide /map and map->odom.'),
         DeclareLaunchArgument('start_gui', default_value='true'),

@@ -21,7 +21,7 @@ def load_parameters(filename):
         content = yaml.safe_load(stream)
     if not isinstance(content, dict):
         raise ValueError('Expected a ROS parameter mapping')
-    parameters = content.get('limo_cloud_example', {}).get('ros__parameters')
+    parameters = content.get('limo_cloud_utilities', {}).get('ros__parameters')
     if not isinstance(parameters, dict):
-        raise ValueError('Expected limo_cloud_example.ros__parameters mapping')
+        raise ValueError('Expected limo_cloud_utilities.ros__parameters mapping')
     return flatten(parameters)

@@ -1,6 +1,6 @@
 # Optional local CLOUD-ONLY tuning copied from the previous real CV cloud stage.
 # Inputs must already be classified/aligned/cropped upstream. No detector runs.
-limo_cloud_example:
+limo_cloud_utilities:
   ros__parameters:
     # Reconstruct rays for the lower-half 320x120 input grid supplied upstream.
     input_crop_y_min: 0.5

@@ -88,7 +88,7 @@ def _launch(context):
             managed.append(name)
 
     if _boolean(value('start_cv')):
-        cv_share = get_package_share_directory('limo_cloud_example')
+        cv_share = get_package_share_directory('limo_cloud_utilities')
         # Child config_file/profile arguments cannot overwrite localization settings.
         actions.append(GroupAction(actions=[IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(cv_share, 'launch', profile + '.launch.py')),

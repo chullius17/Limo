@@ -54,7 +54,9 @@ planar speed magnitude, `sqrt(vx² + vy²)`. Forward and reverse share the same
 rainbow scale. It reads `/odometry/filtered`, not `/cmd_vel`; the pose is an EKF
 estimate transformed into the map frame at each odometry message's timestamp,
 not ground truth or the MPC prediction. Footprints include the controller's
-padding and are rotated at every retained robot pose.
+padding and are rotated at every retained robot pose. Their fills and outlines
+are translucent so traversed obstacles remain visible; the global reference is
+drawn above the footprint trail. PNG exports retain the same transparency.
 
 With the real application running on the robot, launch on the PC/Docker:
 

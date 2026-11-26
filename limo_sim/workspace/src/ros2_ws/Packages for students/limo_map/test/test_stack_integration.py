@@ -56,7 +56,7 @@ def main():
                 scan_pub.publish(scan)
                 rclpy.spin_once(node, timeout_sec=0.05)
                 names = {name for name, namespace in node.get_node_names_and_namespaces()}
-                required = {'lane_node', 'depth_correction', 'limo_cloud_example',
+                required = {'lane_node', 'depth_correction', 'limo_cloud_utilities',
                             'slam_toolbox', 'limo_map', 'limo_map_save_gui'}
                 if required <= names and received and save.service_is_ready():
                     break

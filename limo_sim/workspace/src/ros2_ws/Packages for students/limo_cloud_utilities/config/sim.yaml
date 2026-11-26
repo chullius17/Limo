@@ -1,6 +1,6 @@
 # Optional local CLOUD-ONLY tuning copied from the previous simulated CV cloud stage.
 # Inputs must already be classified/aligned/cropped upstream. No detector runs.
-limo_cloud_example:
+limo_cloud_utilities:
   ros__parameters:
     # Read /clock for TF consistency with simulated image timestamps.
     use_sim_time: true

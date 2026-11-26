@@ -98,7 +98,7 @@ class RunningAmcl(unittest.TestCase):
                         future = client.call_async(GetState.Request())
                         self.wait(future.done, 3, process)
                         self.assertEqual(future.result().current_state.id, 3, name)
-                    required = {'lane_node', 'depth_correction', 'limo_cloud_example'}
+                    required = {'lane_node', 'depth_correction', 'limo_cloud_utilities'}
                     self.wait(lambda: required <= {name for name, namespace in
                               node.get_node_names_and_namespaces()}, 10, process)
                     self.assertEqual(node.count_publishers('/limo/cv_package/visual_ptcld/points'), 1)

@@ -407,7 +407,7 @@ class ControlExperimentWindow(QWidget):
         self.axes.add_patch(self.latest_polygon)
         legend = [Line2D([], [], color='black', linestyle='--', label='Global reference'),
                   Line2D([], [], color='#a330b0', label='Estimated executed trajectory'),
-                  Patch(facecolor='#a330b0', alpha=0.4, label='Robot footprint, colored by speed'),
+                  Patch(facecolor='#a330b0', alpha=0.25, label='Robot footprint, colored by speed'),
                   Patch(facecolor='none', edgecolor='black', label='Latest displayed footprint'),
                   Line2D([], [], color='#d04432', marker='>', label='Goal')]
         self.axes.legend(handles=legend, loc='upper left', fontsize=8)
@@ -533,10 +533,14 @@ class ControlExperimentWindow(QWidget):
         if run.samples:
             rgba = self.cmap(self.norm([p.speed for p in run.samples]))
             fill = rgba.copy()
-            fill[:, 3] = 0.15
+            fill[:, 3] = 0.06
+            edges = rgba.copy()
+            # Repeated footprints overlap: soften the outlines as well as the fill
+            # so traversed map obstacles remain visible beneath the speed colors.
+            edges[:, 3] = 0.25
             self.polygons = PolyCollection(
                 [footprint_vertices(p, run.footprint) for p in run.samples],
-                facecolors=fill, edgecolors=rgba, linewidths=0.6, zorder=2)
+                facecolors=fill, edgecolors=edges, linewidths=0.6, zorder=2)
             self.axes.add_collection(self.polygons, autolim=False)
             segments, speeds = [], []
             for a, b in zip(run.samples, run.samples[1:]):
